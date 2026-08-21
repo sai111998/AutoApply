@@ -42,7 +42,7 @@ Without `LLM_API_KEY`, the app still runs. Analyze returns `503` and Match Resul
 
 ## PostgreSQL storage
 
-When Supabase is configured, each analysis is written to `jobs` and `job_matches`.
+When Supabase is configured, profiles, resumes, jobs, matches, and applications persist in Postgres. Analysis results are also written to `jobs` and `job_matches`.
 
 ```
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
@@ -51,12 +51,20 @@ SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 ```
 
-Run both SQL files in the Supabase SQL editor:
+Apply the initial schema once (idempotent):
 
-- `supabase/migrations/00001_init.sql`
-- `supabase/migrations/00002_analysis_results.sql` (`parsed_text`, `summary`, `analysis_payload`)
+1. Open the Supabase SQL Editor.
+2. Paste and run `supabase/migrations/001_initial_schema.sql`.
+3. Confirm tables under **Table Editor**, the private `resumes` bucket under **Storage**, and `on_auth_user_created` under **Database → Triggers**.
 
-`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never prefix it with `VITE_`.
+Or, with a personal access token from https://supabase.com/dashboard/account/tokens in `SUPABASE_ACCESS_TOKEN`:
+
+```
+npm run db:apply
+npm run db:auth-flow
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never prefix it with `VITE_`. For local sign-up testing, turn off **Confirm email** under Authentication → Providers → Email.
 
 ## Analysis contract
 
@@ -106,6 +114,8 @@ The model is instructed to use **only** the supplied resume text. It must not in
 | `npm test` | Backend analysis service and API tests |
 | `npm run build` | Typecheck and frontend bundle |
 | `npm run lint` | ESLint |
+| `npm run db:apply` | Apply `001_initial_schema.sql` to the linked Supabase project |
+| `npm run db:auth-flow` | Sign up → login → create/read/update profile against live Supabase |
 
 ## Out of scope
 
