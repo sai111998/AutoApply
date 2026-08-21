@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { FileText, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -7,8 +7,15 @@ import { EmptyState, ErrorState, SkeletonBlock } from '@/components/ui/EmptyStat
 import { Field, Select, TextArea, TextInput } from '@/components/ui/Field'
 import { Pill, RecommendationBadge, ScoreBadge } from '@/components/ui/Badge'
 import { Tabs } from '@/components/ui/Tabs'
+import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
+import {
+  clearAnalysisDraft,
+  isMeaningfulDraft,
+  loadAnalysisDraft,
+  writeAnalysisDraft,
+} from '@/lib/analysis-draft'
 import { getAnalysisHealth } from '@/lib/ai/client'
 import { formatDate } from '@/lib/format'
 import type { Job, JobMatch, Resume } from '@/types/domain'
@@ -28,18 +35,35 @@ export function JobAnalysisPage() {
     refreshAnalyses,
     deleteAnalysis,
   } = useWorkspace()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const { notify } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = searchParams.get('tab') === 'history' ? 'history' : 'new'
+  const userId = user?.id ?? ''
 
-  const [title, setTitle] = useState('')
-  const [company, setCompany] = useState('')
-  const [location, setLocation] = useState('')
-  const [jobUrl, setJobUrl] = useState('')
-  const [description, setDescription] = useState('')
-  const [resumeId, setResumeId] = useState(masterResume?.id ?? 'custom')
-  const [resumeText, setResumeText] = useState(masterResume?.parsedText ?? '')
+  const initial = useMemo(
+    () =>
+      loadAnalysisDraft(userId, {
+        resumeId: masterResume?.id ?? 'custom',
+        resumeText: masterResume?.parsedText ?? '',
+      }),
+    // Restore once when this page mounts for the signed-in user.
+    // Later resume list updates must not replace a restored draft with defaults.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userId],
+  )
+
+  const [title, setTitle] = useState(initial.draft.title)
+  const [company, setCompany] = useState(initial.draft.company)
+  const [location, setLocation] = useState(initial.draft.location)
+  const [jobUrl, setJobUrl] = useState(initial.draft.jobUrl)
+  const [description, setDescription] = useState(initial.draft.description)
+  const [resumeId, setResumeId] = useState(initial.draft.resumeId)
+  const [resumeText, setResumeText] = useState(initial.draft.resumeText)
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(
+    initial.restored ? initial.draft.updatedAt : null,
+  )
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState(8)
@@ -47,6 +71,15 @@ export function JobAnalysisPage() {
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null)
   const [query, setQuery] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const fieldsRef = useRef({
+    title: initial.draft.title,
+    company: initial.draft.company,
+    location: initial.draft.location,
+    jobUrl: initial.draft.jobUrl,
+    description: initial.draft.description,
+    resumeId: initial.draft.resumeId,
+    resumeText: initial.draft.resumeText,
+  })
 
   useEffect(() => {
     void getAnalysisHealth().then((health) => setLlmConfigured(health.llmConfigured))
@@ -56,11 +89,13 @@ export function JobAnalysisPage() {
     void refreshAnalyses()
   }, [refreshAnalyses])
 
-  useEffect(() => {
-    if (resumeId === 'custom') return
-    const selected = resumes.find((resume) => resume.id === resumeId)
-    if (selected?.parsedText) setResumeText(selected.parsedText)
-  }, [resumeId, resumes])
+  function saveDraftPatch(patch: Partial<typeof fieldsRef.current>) {
+    if (!userId) return
+    const next = { ...fieldsRef.current, ...patch }
+    fieldsRef.current = next
+    const saved = writeAnalysisDraft(userId, { ...next, updatedAt: Date.now() })
+    setDraftSavedAt(saved?.updatedAt ?? null)
+  }
 
   useEffect(() => {
     if (!submitting) return
@@ -72,6 +107,42 @@ export function JobAnalysisPage() {
     }, 900)
     return () => window.clearInterval(timer)
   }, [submitting])
+
+  function resetFormToFallback() {
+    const next = {
+      title: '',
+      company: '',
+      location: '',
+      jobUrl: '',
+      description: '',
+      resumeId: masterResume?.id ?? 'custom',
+      resumeText: masterResume?.parsedText ?? '',
+    }
+    fieldsRef.current = next
+    setTitle(next.title)
+    setCompany(next.company)
+    setLocation(next.location)
+    setJobUrl(next.jobUrl)
+    setDescription(next.description)
+    setResumeId(next.resumeId)
+    setResumeText(next.resumeText)
+    setDraftSavedAt(null)
+  }
+
+  function onResumeSelect(nextId: string) {
+    const selected = resumes.find((resume) => resume.id === nextId)
+    const nextText = nextId === 'custom' ? resumeText : selected?.parsedText || resumeText
+    setResumeId(nextId)
+    if (nextId !== 'custom' && selected?.parsedText) setResumeText(selected.parsedText)
+    saveDraftPatch({ resumeId: nextId, resumeText: nextText })
+  }
+
+  function onClearDraft() {
+    if (!userId) return
+    clearAnalysisDraft(userId)
+    resetFormToFallback()
+    notify('Draft cleared.', 'info')
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -98,6 +169,8 @@ export function JobAnalysisPage() {
         resumeText: resume,
         resumeId: resumeId === 'custom' ? null : resumeId,
       })
+      clearAnalysisDraft(userId)
+      setDraftSavedAt(null)
       notify('Analysis saved to your workspace.')
       navigate(`/matches/${matchId}`)
     } catch (analyzeError) {
@@ -125,6 +198,18 @@ export function JobAnalysisPage() {
 
   const resumeEmpty = !resumeText.trim()
   const jobEmpty = !description.trim()
+  const showDraftStatus = Boolean(
+    draftSavedAt &&
+      isMeaningfulDraft({
+        title,
+        company,
+        location,
+        jobUrl,
+        description,
+        resumeId,
+        resumeText,
+      }),
+  )
 
   return (
     <div>
@@ -188,20 +273,51 @@ export function JobAnalysisPage() {
             )}
             <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => void onSubmit(event)}>
               <Field label="Job title">
-                <TextInput required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Frontend Engineer" />
+                <TextInput
+                  required
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value)
+                    saveDraftPatch({ title: e.target.value })
+                  }}
+                  placeholder="Senior Frontend Engineer"
+                />
               </Field>
               <Field label="Company">
-                <TextInput required value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Acme" />
+                <TextInput
+                  required
+                  value={company}
+                  onChange={(e) => {
+                    setCompany(e.target.value)
+                    saveDraftPatch({ company: e.target.value })
+                  }}
+                  placeholder="Acme"
+                />
               </Field>
               <Field label="Location">
-                <TextInput value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote (US)" />
+                <TextInput
+                  value={location}
+                  onChange={(e) => {
+                    setLocation(e.target.value)
+                    saveDraftPatch({ location: e.target.value })
+                  }}
+                  placeholder="Remote (US)"
+                />
               </Field>
               <Field label="Job URL">
-                <TextInput type="url" value={jobUrl} onChange={(e) => setJobUrl(e.target.value)} placeholder="https://" />
+                <TextInput
+                  type="url"
+                  value={jobUrl}
+                  onChange={(e) => {
+                    setJobUrl(e.target.value)
+                    saveDraftPatch({ jobUrl: e.target.value })
+                  }}
+                  placeholder="https://"
+                />
               </Field>
               <div className="sm:col-span-2">
                 <Field label="Resume to compare">
-                  <Select value={resumeId} onChange={(e) => setResumeId(e.target.value)}>
+                  <Select value={resumeId} onChange={(e) => onResumeSelect(e.target.value)}>
                     {resumes.map((resume) => (
                       <option key={resume.id} value={resume.id}>
                         {resume.versionLabel}
@@ -218,7 +334,10 @@ export function JobAnalysisPage() {
                     required
                     minLength={1}
                     value={description}
-                    onChange={(e) => setDescription(e.target.value)}
+                    onChange={(e) => {
+                      setDescription(e.target.value)
+                      saveDraftPatch({ description: e.target.value })
+                    }}
                     placeholder="Paste the full posting. Aim for the complete description rather than a one-line summary."
                   />
                 </Field>
@@ -236,6 +355,7 @@ export function JobAnalysisPage() {
                     onChange={(e) => {
                       setResumeId('custom')
                       setResumeText(e.target.value)
+                      saveDraftPatch({ resumeId: 'custom', resumeText: e.target.value })
                     }}
                     placeholder="Paste the resume text the model is allowed to use."
                   />
@@ -246,7 +366,16 @@ export function JobAnalysisPage() {
                 <Button type="submit" disabled={submitting || resumeEmpty || jobEmpty}>
                   {submitting ? 'Analyzing…' : 'Analyze'}
                 </Button>
-                {resumeEmpty && <span className="text-sm text-muted">Resume text is required before analysis.</span>}
+                {showDraftStatus && (
+                  <Button type="button" variant="ghost" onClick={onClearDraft}>
+                    Clear draft
+                  </Button>
+                )}
+                {showDraftStatus ? (
+                  <span className="text-xs font-medium text-muted">Saved locally</span>
+                ) : resumeEmpty ? (
+                  <span className="text-sm text-muted">Resume text is required before analysis.</span>
+                ) : null}
               </div>
             </form>
           </Card>
@@ -270,9 +399,14 @@ export function JobAnalysisPage() {
                     <span className="font-semibold text-charcoal">
                       {resumeId === 'custom'
                         ? 'Custom pasted text'
-                        : resumes.find((resume) => resume.id === resumeId)?.versionLabel ?? masterResume?.versionLabel ?? 'None'}
+                        : resumes.find((resume) => resume.id === resumeId)?.versionLabel ??
+                          masterResume?.versionLabel ??
+                          'None'}
                     </span>
                   </p>
+                  {showDraftStatus && (
+                    <p className="text-xs font-medium text-olive">Draft restored from this browser.</p>
+                  )}
                 </div>
               )}
               <p
