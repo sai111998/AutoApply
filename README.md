@@ -1,128 +1,114 @@
 # JobPilot AI
 
-Job search cockpit for managing roles, resumes, and application status. This MVP helps you collect job descriptions, store resume versions, and route analysis through an external AI API. It does **not** auto-submit applications or drive a browser.
-
-## What you can do in the MVP
-
-- Sign in with Supabase Auth, or explore a labeled sample workspace
-- Maintain a candidate profile, skills, and search preferences
-- Upload PDF/DOCX resume versions and mark one as master
-- Paste a job description and save it for analysis
-- Review match results (sample previews or live API output)
-- Track application status in a filterable table
-
-## Stack
-
-- React 19 + TypeScript + Vite
-- Tailwind CSS 4
-- React Router
-- Supabase (Auth, PostgreSQL, Storage)
-- Pluggable analysis client under `src/lib/ai`
+Job search cockpit for managing roles, resumes, and application status. This MVP analyzes a job description against resume text through a **server-side LLM**. It does **not** auto-submit applications or drive a browser.
 
 ## Local development
 
 ```bash
-git checkout cursor/jobpilot-ai-mvp-a203
+cp .env.example .env.local
+# set LLM_API_KEY in .env.local (see below)
 npm install
 npm run dev
+npm test
 ```
 
-Open the URL Vite prints (usually http://localhost:5173/) and click **Explore with sample data**. Email sign-in stays unavailable until Supabase keys are in `.env.local`.
+`npm run dev` starts:
 
-If the page says the host is blocked, restart `npm run dev` after pulling this branch — the Vite config now allows proxied preview hosts.
+- Vite on http://localhost:5173/
+- the analysis API on http://127.0.0.1:8787/ (`POST /api/jobs/analyze`)
 
-If `npm run dev` fails with a missing `package.json`, you are on `main` before this MVP. Use the branch above or PR #1.
+Open the app, click **Explore with sample data**, then Job Analysis. Demo mode pre-fills Alex Rivera’s sample resume text.
 
-## Supabase setup
+## LLM API key (required for live analysis)
 
-1. Create a project at [supabase.com](https://supabase.com).
-2. Copy the project URL and anon key into `.env.local`:
+The model key **must stay on the server**. Do not put it in any `VITE_` variable or frontend file.
+
+In `.env.local`:
+
+```
+LLM_API_KEY=sk-your-key
+LLM_API_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+```
+
+`LLM_API_BASE_URL` should be an OpenAI-compatible Chat Completions root. Examples:
+
+- OpenAI: `https://api.openai.com/v1`
+- Groq: `https://api.groq.com/openai/v1`
+
+The API reads `LLM_API_KEY` from `.env` / `.env.local` only. `GET /api/health` reports `llmConfigured: true/false` and never returns the key.
+
+Without `LLM_API_KEY`, the app still runs. Analyze returns `503` and Match Results shows the error — no fake score is invented.
+
+## PostgreSQL storage
+
+When Supabase is configured, each analysis is written to `jobs` and `job_matches`.
 
 ```
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_ANON_KEY
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 ```
 
-3. Run `supabase/migrations/00001_init.sql` in the SQL editor. That script creates:
+Run both SQL files in the Supabase SQL editor:
 
-- `profiles`
-- `resumes`
-- `jobs`
-- `job_matches`
-- `applications`
-- `skills`
-- `user_preferences`
+- `supabase/migrations/00001_init.sql`
+- `supabase/migrations/00002_analysis_results.sql` (`parsed_text`, `summary`, `analysis_payload`)
 
-It also enables RLS, creates a profile/preferences row on signup, and adds a private `resumes` storage bucket.
+`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never prefix it with `VITE_`.
 
-## Connecting an analysis API later
+## Analysis contract
 
-JobPilot never invents production-looking scores in the browser. New analyses create a `job_matches` row with status `queued` / `unavailable` until a backend responds.
-
-Set:
-
-```
-VITE_AI_API_URL=https://your-analyzer.example
-```
-
-The client POSTs to `{VITE_AI_API_URL}/v1/analyze`:
+`POST /api/jobs/analyze`
 
 ```json
 {
-  "job": {
-    "title": "Senior Frontend Engineer",
-    "company": "Acme",
-    "location": "Remote (US)",
-    "jobUrl": "https://...",
-    "description": "..."
-  },
-  "candidate": {
-    "profile": { "...": "..." },
-    "skills": [{ "name": "TypeScript", "proficiency": "expert" }],
-    "resume": { "id": "...", "versionLabel": "Master v4", "fileName": "resume.pdf" }
-  }
+  "jobDescription": "...",
+  "resumeText": "..."
 }
 ```
 
-Expected `200` body:
+Both fields are required and rejected if empty or whitespace.
 
 ```json
 {
-  "overallScore": 84,
-  "skillsMatched": [{ "name": "React" }],
-  "skillsPartial": [{ "name": "GraphQL", "note": "Used in side projects" }],
-  "skillsMissing": [{ "name": "Kotlin" }],
-  "experienceMatch": { "score": 80, "summary": "..." },
-  "educationMatch": { "score": 70, "summary": "..." },
-  "locationMatch": { "score": 90, "summary": "..." },
-  "workAuthorization": "Compatible; no sponsorship required.",
-  "strengths": ["..."],
-  "concerns": ["..."],
-  "recommendation": "APPLY"
+  "matchScore": 0,
+  "recommendation": "APPLY | REVIEW | SKIP",
+  "matchedSkills": [],
+  "partiallyMatchedSkills": [],
+  "missingSkills": [],
+  "experienceMatch": true,
+  "educationMatch": true,
+  "locationMatch": true,
+  "strengths": [],
+  "concerns": [],
+  "summary": ""
 }
 ```
 
-`202 Accepted` is treated as queued. Invalid payloads fail closed instead of filling in guessed scores.
+The model is instructed to use **only** the supplied resume text. It must not invent jobs, employers, degrees, or skills.
 
-Implementation:
+## Data flow
 
-- `src/lib/ai/client.ts` — selects HTTP vs pending client
-- `src/lib/ai/http-client.ts` — fetch + contract validation
-- `src/lib/ai/pending-client.ts` — default when no URL is set
-
-Sample match records in demo mode are tagged `analysisSource: "sample"` and shown with a **Sample preview** banner.
+1. Job Analysis UI collects the posting and resume text.
+2. The browser POSTs JSON to `/api/jobs/analyze` (Vite proxies to port 8787).
+3. `server/services/analysis.ts` validates the body.
+4. `server/services/llm.ts` calls the LLM with a system prompt that forbids invented experience.
+5. The structured JSON is parsed, stored in Postgres when configured, and returned.
+6. Match Results maps that payload into score, skills, Yes/No dimensions, summary, strengths, and concerns.
 
 ## Scripts
 
-| Command        | Purpose              |
-| -------------- | -------------------- |
-| `npm run dev`  | Vite dev server      |
-| `npm run build`| Typecheck and bundle |
-| `npm run preview` | Preview production build |
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | API + Vite |
+| `npm test` | Backend analysis service and API tests |
+| `npm run build` | Typecheck and frontend bundle |
+| `npm run lint` | ESLint |
 
-## Out of scope (for later)
+## Out of scope
 
 - Automatic job submission
-- Browser automation / form filling on career sites
-- Parsing resume PDFs in the client
-- Cover-letter generation
+- Browser automation
+- Parsing PDF/DOCX bytes in the browser (paste resume text, or use demo parsed text)

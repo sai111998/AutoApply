@@ -21,6 +21,16 @@ export default defineConfig([
     },
   },
   {
+    files: ['server/**/*.ts'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: {
+      'react-refresh/only-export-components': 'off',
+      'react-hooks/rules-of-hooks': 'off',
+    },
+  },
+  {
     files: ['src/context/**/*.{ts,tsx}'],
     rules: {
       'react-refresh/only-export-components': 'off',

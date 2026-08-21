@@ -118,6 +118,21 @@ textarea {
   color: #effaf4;
 }
 
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-fog);
+  border-top-color: var(--color-pine);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .table-wrap {
   overflow-x: auto;
 }

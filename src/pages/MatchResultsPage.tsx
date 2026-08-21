@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, CircleAlert, Sparkles } from 'lucide-react'
+import { ArrowLeft, Ban, CircleAlert, LoaderCircle, Sparkles } from 'lucide-react'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Pill, RecommendationBadge } from '@/components/ui/Badge'
 import { ScoreRing } from '@/components/ui/ScoreRing'
@@ -20,15 +20,17 @@ export function MatchResultsPage() {
   if (!match || !job) {
     return (
       <Card className="p-10 text-center">
-        <p className="text-slate-ink">That match record was not found.</p>
-        <Link className="mt-3 inline-block font-semibold text-pine" to="/analyze">
+        <h2 className="font-display text-2xl text-navy">No match result yet</h2>
+        <p className="mt-2 text-slate-ink">That analysis is empty or was not found in this workspace.</p>
+        <Link className="mt-4 inline-block font-semibold text-pine" to="/analyze">
           Analyze a job
         </Link>
       </Card>
     )
   }
 
-  const pending = match.analysisStatus !== 'complete'
+  const loading = match.analysisStatus === 'queued' || match.analysisStatus === 'pending'
+  const failed = match.analysisStatus === 'failed' || match.analysisStatus === 'unavailable'
 
   return (
     <div>
@@ -50,21 +52,34 @@ export function MatchResultsPage() {
         </div>
       )}
 
-      {pending && (
+      {loading && (
         <Card className="mb-6 p-6">
           <div className="flex items-start gap-3">
-            <CircleAlert className="text-sky" />
+            <LoaderCircle className="animate-spin text-pine" />
             <div>
-              <h2 className="font-semibold text-navy">
-                {match.analysisStatus === 'failed' ? 'Analysis did not complete' : 'Awaiting AI analysis'}
-              </h2>
+              <h2 className="font-semibold text-navy">Analyzing with the LLM</h2>
               <p className="mt-1 max-w-3xl text-sm text-slate-ink">
-                {match.errorMessage ||
-                  'This job is saved. Connect an analysis API to fill score, skills, and recommendation fields. JobPilot does not generate stand-in production scores locally.'}
+                Waiting for POST /api/jobs/analyze. Scores stay empty until the server returns a structured result.
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Pill tone="pending">{match.analysisStatus}</Pill>
-                {resume && <Pill>{resume.versionLabel}</Pill>}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {failed && (
+        <Card className="mb-6 p-6">
+          <div className="flex items-start gap-3">
+            <CircleAlert className="text-clay" />
+            <div>
+              <h2 className="font-semibold text-navy">Analysis did not complete</h2>
+              <p className="mt-1 max-w-3xl text-sm text-slate-ink">
+                {match.errorMessage || 'The analysis API returned an error. No substitute score was invented.'}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Pill tone="skip">{match.analysisStatus}</Pill>
+                <Link className="text-sm font-semibold text-pine" to="/analyze">
+                  Try another analysis
+                </Link>
               </div>
             </div>
           </div>
@@ -98,7 +113,7 @@ export function MatchResultsPage() {
               Work authorization considerations
             </p>
             <p className="mt-2 text-sm text-ink">
-              {match.workAuthorizationNotes || 'Will be filled when the analysis API returns a result.'}
+              {match.workAuthorizationNotes || 'Not included in this analysis contract.'}
             </p>
           </div>
           {application && (
@@ -114,12 +129,19 @@ export function MatchResultsPage() {
         </Card>
 
         <div className="space-y-6">
+          {match.summary && (
+            <Card className="p-6">
+              <h2 className="font-display text-2xl text-navy">Summary</h2>
+              <p className="mt-3 text-sm leading-6 text-ink">{match.summary}</p>
+            </Card>
+          )}
+
           <Card className="p-6">
             <h2 className="font-display text-2xl text-navy">Skills</h2>
             <div className="mt-5 grid gap-5 md:grid-cols-3">
-              <SkillColumn title="Matched" tone="strong" items={match.skillsMatched} empty="None yet" />
-              <SkillColumn title="Partially matched" tone="review" items={match.skillsPartial} empty="None yet" />
-              <SkillColumn title="Missing" tone="skip" items={match.skillsMissing} empty="None listed" />
+              <SkillColumn title="Matched" tone="strong" items={match.skillsMatched} empty="None listed in the resume vs posting." />
+              <SkillColumn title="Partially matched" tone="review" items={match.skillsPartial} empty="None listed." />
+              <SkillColumn title="Missing" tone="skip" items={match.skillsMissing} empty="None listed." />
             </div>
           </Card>
 
@@ -129,20 +151,24 @@ export function MatchResultsPage() {
                 <Sparkles size={18} className="text-pine" />
                 Strengths
               </h2>
-              <List items={match.strengths} empty="Strengths will appear after analysis." />
+              <List items={match.strengths} empty="No strengths returned yet." />
             </Card>
             <Card className="p-6">
               <h2 className="flex items-center gap-2 font-display text-2xl text-navy">
                 <Ban size={18} className="text-clay" />
                 Concerns
               </h2>
-              <List items={match.concerns} empty="Concerns will appear after analysis." />
+              <List items={match.concerns} empty="No concerns returned yet." />
             </Card>
           </div>
 
           <Card className="p-6">
             <h2 className="font-display text-2xl text-navy">Job description</h2>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-ink">{job.description}</p>
+            {job.description.trim() ? (
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-ink">{job.description}</p>
+            ) : (
+              <p className="mt-3 text-sm text-slate-ink">No job description was stored for this role.</p>
+            )}
           </Card>
         </div>
       </div>
@@ -151,15 +177,16 @@ export function MatchResultsPage() {
 }
 
 function Dimension({ label, value }: { label: string; value: DimensionMatch | null }) {
+  const display =
+    value?.matched === true ? 'Yes' : value?.matched === false ? 'No' : value?.score == null ? '—' : String(value.score)
+
   return (
     <div className="rounded-2xl border border-line px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-semibold">{label}</p>
-        <p className="font-display text-xl text-navy">{value?.score ?? '—'}</p>
+        <p className="font-display text-xl text-navy">{display}</p>
       </div>
-      <p className="mt-1 text-sm text-slate-ink">
-        {value?.summary ?? 'Pending analysis API output.'}
-      </p>
+      <p className="mt-1 text-sm text-slate-ink">{value?.summary ?? 'Pending analysis API output.'}</p>
     </div>
   )
 }

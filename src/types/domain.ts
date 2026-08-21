@@ -55,6 +55,7 @@ export interface Resume {
   isMaster: boolean
   fileSize: number
   storagePath: string | null
+  parsedText: string
   createdAt: string
 }
 
@@ -76,6 +77,7 @@ export interface SkillSignal {
 
 export interface DimensionMatch {
   score: number | null
+  matched?: boolean | null
   summary: string
 }
 
@@ -99,6 +101,7 @@ export interface JobMatch {
   analysisSource: AnalysisSource
   provider: string | null
   errorMessage: string | null
+  summary: string | null
   createdAt: string
   analyzedAt: string | null
 }

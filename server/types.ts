@@ -1,6 +1,6 @@
 export type Recommendation = 'APPLY' | 'REVIEW' | 'SKIP'
 
-export interface AnalyzeJobApiRequest {
+export interface AnalyzeJobRequestBody {
   jobDescription: string
   resumeText: string
   userId?: string
@@ -11,7 +11,7 @@ export interface AnalyzeJobApiRequest {
   jobUrl?: string
 }
 
-export interface AnalyzeJobApiResult {
+export interface AnalysisResult {
   matchScore: number
   recommendation: Recommendation
   matchedSkills: string[]
@@ -23,11 +23,20 @@ export interface AnalyzeJobApiResult {
   strengths: string[]
   concerns: string[]
   summary: string
+}
+
+export interface AnalyzeJobResponseBody extends AnalysisResult {
   persisted: boolean
   jobId: string | null
   matchId: string | null
 }
 
-export type AnalyzeJobClientResponse =
-  | { status: 'complete'; result: AnalyzeJobApiResult }
-  | { status: 'failed'; message: string }
+export class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'HttpError'
+  }
+}

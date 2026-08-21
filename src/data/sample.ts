@@ -65,6 +65,32 @@ export const sampleSkills: Skill[] = [
   { id: 's10', userId: DEMO_USER_ID, name: 'Product thinking', proficiency: 'advanced', yearsExperience: 6 },
 ]
 
+export const SAMPLE_RESUME_TEXT = `Alex Rivera
+Austin, TX
+alex.rivera@example.com
+
+Summary
+Senior product-minded frontend engineer with 8 years building React and TypeScript applications, design systems, and accessible user interfaces. Comfortable working across Node.js services and PostgreSQL when needed.
+
+Experience
+Senior Frontend Engineer, Northstar Labs — 2021 to present
+- Led a React and TypeScript design system used by four product teams.
+- Built accessible dashboard UI, including keyboard support and screen-reader reviews.
+- Wrote Jest and Playwright coverage for critical checkout and settings flows.
+- Partnered with product on roadmap tradeoffs and UX quality.
+
+Frontend Engineer, Harbor Software — 2018 to 2021
+- Shipped GraphQL-backed product surfaces in React.
+- Maintained CSS and Tailwind component libraries.
+- Mentored engineers on testing and accessibility.
+
+Skills
+React, TypeScript, Node.js, GraphQL, design systems, accessibility, PostgreSQL, Jest, Playwright, CSS, Tailwind, product thinking.
+
+Education
+B.A., University of Texas at Austin
+`
+
 export const sampleResumes: Resume[] = [
   {
     id: resumeMaster,
@@ -75,6 +101,7 @@ export const sampleResumes: Resume[] = [
     isMaster: true,
     fileSize: 186400,
     storagePath: null,
+    parsedText: SAMPLE_RESUME_TEXT,
     createdAt: '2026-08-04T16:10:00.000Z',
   },
   {
@@ -86,6 +113,7 @@ export const sampleResumes: Resume[] = [
     isMaster: false,
     fileSize: 179220,
     storagePath: null,
+    parsedText: SAMPLE_RESUME_TEXT,
     createdAt: '2026-08-11T11:42:00.000Z',
   },
   {
@@ -97,6 +125,7 @@ export const sampleResumes: Resume[] = [
     isMaster: false,
     fileSize: 142880,
     storagePath: null,
+    parsedText: '',
     createdAt: '2026-05-18T09:05:00.000Z',
   },
 ]
@@ -218,6 +247,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-18T13:04:00.000Z',
     analyzedAt: '2026-08-18T13:04:00.000Z',
   },
@@ -247,6 +277,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-16T10:24:00.000Z',
     analyzedAt: '2026-08-16T10:24:00.000Z',
   },
@@ -275,6 +306,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-14T15:50:00.000Z',
     analyzedAt: '2026-08-14T15:50:00.000Z',
   },
@@ -303,6 +335,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-13T09:18:00.000Z',
     analyzedAt: '2026-08-13T09:18:00.000Z',
   },
@@ -326,6 +359,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-10T18:36:00.000Z',
     analyzedAt: '2026-08-10T18:36:00.000Z',
   },
@@ -349,6 +383,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-08T12:08:00.000Z',
     analyzedAt: '2026-08-08T12:08:00.000Z',
   },
@@ -372,6 +407,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-07T16:44:00.000Z',
     analyzedAt: '2026-08-07T16:44:00.000Z',
   },
@@ -395,6 +431,7 @@ export const sampleMatches: JobMatch[] = [
     analysisSource: 'sample',
     provider: 'sample-preview',
     errorMessage: null,
+    summary: null,
     createdAt: '2026-08-02T08:20:00.000Z',
     analyzedAt: '2026-08-02T08:20:00.000Z',
   },

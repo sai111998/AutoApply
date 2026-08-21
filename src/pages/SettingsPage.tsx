@@ -1,9 +1,9 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, Select, TextArea, TextInput } from '@/components/ui/Field'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { getJobAnalysisClient } from '@/lib/ai/client'
+import { getAnalysisHealth } from '@/lib/ai/client'
 import type { UserPreferences, WorkArrangement } from '@/types/domain'
 import { WORK_ARRANGEMENT_LABELS } from '@/types/domain'
 
@@ -13,7 +13,11 @@ export function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const aiConfigured = getJobAnalysisClient().isConfigured()
+  const [aiConfigured, setAiConfigured] = useState(false)
+
+  useEffect(() => {
+    void getAnalysisHealth().then((health) => setAiConfigured(health.llmConfigured))
+  }, [])
 
   function update<K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) {
     setForm((current) => ({ ...current, [key]: value }))
@@ -72,8 +76,8 @@ export function SettingsPage() {
             </label>
             <p className={`rounded-xl px-3 py-2 text-sm ${aiConfigured ? 'bg-emerald-50 text-pine' : 'bg-paper text-slate-ink'}`}>
               {aiConfigured
-                ? `Analysis endpoint: ${import.meta.env.VITE_AI_API_URL}/v1/analyze`
-                : 'VITE_AI_API_URL is not set. Analyses remain queued until a backend is connected.'}
+                ? 'Analysis runs through POST /api/jobs/analyze using the server-side LLM_API_KEY.'
+                : 'LLM_API_KEY is not set on the server. Add it to .env.local — never a VITE_ variable.'}
             </p>
           </div>
         </Card>

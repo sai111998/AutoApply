@@ -7,7 +7,8 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getJobAnalysisClient } from '@/lib/ai/client'
+import { analyzeJobRequest } from '@/lib/ai/client'
+import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import { createId, nextActionForStatus } from '@/lib/format'
 import {
   applicationToRow,
@@ -49,6 +50,7 @@ interface AnalyzeJobInput {
   location: string
   jobUrl: string
   description: string
+  resumeText: string
 }
 
 interface WorkspaceContextValue extends WorkspaceSnapshot {
@@ -217,19 +219,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     async (file: File, versionLabel: string) => {
       if (!user) throw new Error('Not signed in')
       const extension = file.name.split('.').pop()?.toLowerCase()
-      if (extension !== 'pdf' && extension !== 'docx') {
-        throw new Error('Upload a PDF or DOCX resume.')
+      if (extension !== 'pdf' && extension !== 'docx' && extension !== 'txt') {
+        throw new Error('Upload a PDF, DOCX, or TXT resume.')
       }
 
       const resume: Resume = {
         id: createId(),
         userId: user.id,
         fileName: file.name,
-        fileType: file.type || (extension === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+        fileType:
+          file.type ||
+          (extension === 'pdf'
+            ? 'application/pdf'
+            : extension === 'txt'
+              ? 'text/plain'
+              : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
         versionLabel: versionLabel.trim() || file.name,
         isMaster: snapshot.resumes.length === 0,
         fileSize: file.size,
         storagePath: null,
+        parsedText: extension === 'txt' ? await file.text() : '',
         createdAt: new Date().toISOString(),
       }
 
@@ -274,16 +283,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const analyzeJob = useCallback(
     async (input: AnalyzeJobInput) => {
       if (!user) throw new Error('Not signed in')
+      const jobDescription = input.description.trim()
+      const resumeText = input.resumeText.trim()
+      if (!jobDescription) throw new Error('jobDescription must not be empty')
+      if (!resumeText) throw new Error('resumeText must not be empty')
+
       const now = new Date().toISOString()
       const master = snapshot.resumes.find((resume) => resume.isMaster) ?? null
-      const job: Job = {
+      const composedDescription = [
+        input.title.trim() && `Title: ${input.title.trim()}`,
+        input.company.trim() && `Company: ${input.company.trim()}`,
+        input.location.trim() && `Location: ${input.location.trim()}`,
+        input.jobUrl.trim() && `URL: ${input.jobUrl.trim()}`,
+        '',
+        jobDescription,
+      ]
+        .filter((line) => line !== '')
+        .join('\n')
+
+      let job: Job = {
         id: createId(),
         userId: user.id,
         title: input.title.trim(),
         company: input.company.trim(),
         location: input.location.trim(),
         jobUrl: input.jobUrl.trim(),
-        description: input.description.trim(),
+        description: jobDescription,
         createdAt: now,
       }
 
@@ -307,11 +332,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         analysisSource: 'api',
         provider: null,
         errorMessage: null,
+        summary: null,
         createdAt: now,
         analyzedAt: null,
       }
 
-      const application: Application = {
+      let application: Application = {
         id: createId(),
         userId: user.id,
         jobId: job.id,
@@ -325,53 +351,37 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         updatedAt: now,
       }
 
-      const client = getJobAnalysisClient()
-      const response = await client.analyze({
-        job: {
-          title: job.title,
-          company: job.company,
-          location: job.location,
-          jobUrl: job.jobUrl,
-          description: job.description,
-        },
-        candidate: {
-          profile: snapshot.profile,
-          skills: snapshot.skills,
-          resume: master
-            ? { id: master.id, versionLabel: master.versionLabel, fileName: master.fileName }
-            : null,
-        },
+      const response = await analyzeJobRequest({
+        jobDescription: composedDescription,
+        resumeText,
+        userId: isDemo ? undefined : user.id,
+        resumeId: master?.id,
+        title: job.title,
+        company: job.company,
+        location: job.location,
+        jobUrl: job.jobUrl,
       })
 
       if (response.status === 'complete') {
-        const result = response.result
         match = {
           ...match,
-          overallScore: result.overallScore,
-          skillsMatched: result.skillsMatched,
-          skillsPartial: result.skillsPartial,
-          skillsMissing: result.skillsMissing,
-          experienceMatch: result.experienceMatch,
-          educationMatch: result.educationMatch,
-          locationMatch: result.locationMatch,
-          workAuthorizationNotes: result.workAuthorization,
-          strengths: result.strengths,
-          concerns: result.concerns,
-          recommendation: result.recommendation,
-          analysisStatus: 'complete',
-          analysisSource: 'api',
-          provider: result.provider ?? 'external-api',
-          analyzedAt: new Date().toISOString(),
+          ...mapApiResultToMatchFields(response.result),
         }
-      } else if (response.status === 'queued') {
-        match = { ...match, analysisStatus: 'queued', errorMessage: response.message }
-      } else if (response.status === 'unavailable') {
-        match = { ...match, analysisStatus: 'unavailable', errorMessage: response.message }
+        if (response.result.jobId && response.result.matchId) {
+          job = { ...job, id: response.result.jobId }
+          match = { ...match, id: response.result.matchId, jobId: job.id }
+          application = { ...application, jobId: job.id, matchId: match.id }
+        }
       } else {
-        match = { ...match, analysisStatus: 'failed', errorMessage: response.message }
+        match = {
+          ...match,
+          analysisStatus: 'failed',
+          errorMessage: response.message,
+        }
       }
 
-      if (!isDemo && supabase) {
+      const backendStored = response.status === 'complete' && response.result.persisted
+      if (!isDemo && supabase && !backendStored) {
         const jobInsert = await supabase.from('jobs').insert(jobToRow(job))
         if (jobInsert.error) throw jobInsert.error
         const matchInsert = await supabase.from('job_matches').insert(matchToRow(match))
@@ -389,7 +399,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       return match.id
     },
-    [isDemo, replace, snapshot.profile, snapshot.resumes, snapshot.skills, user],
+    [isDemo, replace, snapshot.resumes, user],
   )
 
   const updateApplication = useCallback(

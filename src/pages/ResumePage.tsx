@@ -59,7 +59,7 @@ export function ResumePage() {
               <input
                 className="field"
                 type="file"
-                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                accept=".pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 onChange={(event) => setFile(event.target.files?.[0] ?? null)}
               />
             </Field>

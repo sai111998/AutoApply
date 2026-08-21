@@ -41,6 +41,7 @@ type ResumeRow = {
   is_master: boolean
   file_size: number | null
   storage_path: string | null
+  parsed_text: string | null
   created_at: string
 }
 
@@ -77,6 +78,7 @@ type MatchRow = {
   error_message: string | null
   created_at: string
   analyzed_at: string | null
+  summary: string | null
 }
 
 type ApplicationRow = {
@@ -169,6 +171,7 @@ export function mapResume(row: ResumeRow): Resume {
     isMaster: row.is_master,
     fileSize: row.file_size ?? 0,
     storagePath: row.storage_path,
+    parsedText: row.parsed_text ?? '',
     createdAt: row.created_at,
   }
 }
@@ -183,6 +186,7 @@ export function resumeToRow(resume: Resume) {
     is_master: resume.isMaster,
     file_size: resume.fileSize,
     storage_path: resume.storagePath,
+    parsed_text: resume.parsedText,
     created_at: resume.createdAt,
   }
 }
@@ -234,6 +238,7 @@ export function mapMatch(row: MatchRow): JobMatch {
     analysisSource: row.analysis_source,
     provider: row.provider,
     errorMessage: row.error_message,
+    summary: row.summary ?? null,
     createdAt: row.created_at,
     analyzedAt: row.analyzed_at,
   }
@@ -262,6 +267,7 @@ export function matchToRow(match: JobMatch) {
     error_message: match.errorMessage,
     created_at: match.createdAt,
     analyzed_at: match.analyzedAt,
+    summary: match.summary,
   }
 }
 
