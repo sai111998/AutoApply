@@ -89,7 +89,7 @@ export function ApplicationsPage() {
                   <td className="font-semibold">{job?.company}</td>
                   <td>
                     {match ? (
-                      <Link className="text-pine hover:underline" to={`/matches/${match.id}`}>
+                      <Link className="font-medium text-olive hover:text-olive-dark" to={`/matches/${match.id}`}>
                         {job?.title}
                       </Link>
                     ) : (

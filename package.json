@@ -11,7 +11,9 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:apply": "tsx scripts/apply-schema.ts",
+    "db:auth-flow": "tsx scripts/test-auth-flow.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
