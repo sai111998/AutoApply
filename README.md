@@ -22,12 +22,16 @@ Job search cockpit for managing roles, resumes, and application status. This MVP
 ## Local development
 
 ```bash
+git checkout cursor/jobpilot-ai-mvp-a203
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:5173 and choose **Explore with sample data** to walk the full UI without credentials.
+Open the URL Vite prints (usually http://localhost:5173/) and click **Explore with sample data**. Email sign-in stays unavailable until Supabase keys are in `.env.local`.
+
+If the page says the host is blocked, restart `npm run dev` after pulling this branch — the Vite config now allows proxied preview hosts.
+
+If `npm run dev` fails with a missing `package.json`, you are on `main` before this MVP. Use the branch above or PR #1.
 
 ## Supabase setup
 

@@ -67,29 +67,14 @@ export function LoginPage() {
             <BrandMark />
           </div>
           <h2 className="font-display text-3xl text-navy">Welcome back</h2>
-          <p className="mt-2 text-slate-ink">Sign in to your workspace or explore the product with sample data.</p>
-          <form className="mt-8 space-y-4" onSubmit={(event) => void onSubmit(event)}>
-            <Field label="Email">
-              <TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-            </Field>
-            <Field label="Password">
-              <TextInput type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-            </Field>
-            {error && <p className="text-sm text-clay">{error}</p>}
-            {!supabaseEnabled && (
-              <p className="text-sm text-slate-ink">
-                Supabase keys are not configured in this environment. Use demo mode, or add
-                VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
-              </p>
-            )}
-            <Button type="submit" className="w-full" disabled={submitting || !supabaseEnabled}>
-              {submitting ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </form>
+          <p className="mt-2 text-slate-ink">
+            {supabaseEnabled
+              ? 'Sign in to your workspace or explore the product with sample data.'
+              : 'Supabase is not configured yet. Open the sample workspace to use the app immediately.'}
+          </p>
           <Button
             type="button"
-            variant="secondary"
-            className="mt-3 w-full"
+            className="mt-8 w-full"
             onClick={() => {
               enterDemo()
               navigate('/')
@@ -97,6 +82,25 @@ export function LoginPage() {
           >
             Explore with sample data
           </Button>
+          <form className="mt-8 space-y-4" onSubmit={(event) => void onSubmit(event)}>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-ink">Or sign in</p>
+            <Field label="Email">
+              <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </Field>
+            <Field label="Password">
+              <TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </Field>
+            {error && <p className="text-sm text-clay">{error}</p>}
+            {!supabaseEnabled && (
+              <p className="text-sm text-slate-ink">
+                Email sign-in needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. Until then, use the sample workspace
+                above.
+              </p>
+            )}
+            <Button type="submit" variant="secondary" className="w-full" disabled={submitting}>
+              {submitting ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
           <p className="mt-6 text-sm text-slate-ink">
             No account?{' '}
             <Link className="font-semibold text-pine" to="/signup">

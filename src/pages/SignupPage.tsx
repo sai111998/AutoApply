@@ -38,33 +38,13 @@ export function SignupPage() {
         <BrandMark />
         <h1 className="mt-8 font-display text-3xl text-navy">Create your workspace</h1>
         <p className="mt-2 text-slate-ink">
-          JobPilot stores profiles, resumes, and applications in your Supabase project.
+          {supabaseEnabled
+            ? 'JobPilot stores profiles, resumes, and applications in your Supabase project.'
+            : 'Supabase is not configured yet. Open the sample workspace to use the app immediately.'}
         </p>
-        <form className="mt-8 space-y-4" onSubmit={(event) => void onSubmit(event)}>
-          <Field label="Full name">
-            <TextInput required value={fullName} onChange={(e) => setFullName(e.target.value)} />
-          </Field>
-          <Field label="Email">
-            <TextInput type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </Field>
-          <Field label="Password">
-            <TextInput type="password" minLength={8} required value={password} onChange={(e) => setPassword(e.target.value)} />
-          </Field>
-          {error && <p className="text-sm text-clay">{error}</p>}
-          {message && <p className="text-sm text-pine">{message}</p>}
-          {!supabaseEnabled && (
-            <p className="text-sm text-slate-ink">
-              Supabase is not configured. You can still explore the product with sample data.
-            </p>
-          )}
-          <Button type="submit" className="w-full" disabled={submitting || !supabaseEnabled}>
-            {submitting ? 'Creating account…' : 'Create account'}
-          </Button>
-        </form>
         <Button
           type="button"
-          variant="secondary"
-          className="mt-3 w-full"
+          className="mt-8 w-full"
           onClick={() => {
             enterDemo()
             navigate('/')
@@ -72,6 +52,28 @@ export function SignupPage() {
         >
           Explore with sample data
         </Button>
+        <form className="mt-8 space-y-4" onSubmit={(event) => void onSubmit(event)}>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-ink">Or create an account</p>
+          <Field label="Full name">
+            <TextInput value={fullName} onChange={(e) => setFullName(e.target.value)} />
+          </Field>
+          <Field label="Email">
+            <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Password">
+            <TextInput type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          {error && <p className="text-sm text-clay">{error}</p>}
+          {message && <p className="text-sm text-pine">{message}</p>}
+          {!supabaseEnabled && (
+            <p className="text-sm text-slate-ink">
+              Account creation needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+            </p>
+          )}
+          <Button type="submit" variant="secondary" className="w-full" disabled={submitting}>
+            {submitting ? 'Creating account…' : 'Create account'}
+          </Button>
+        </form>
         <p className="mt-6 text-sm text-slate-ink">
           Already have an account?{' '}
           <Link className="font-semibold text-pine" to="/login">
