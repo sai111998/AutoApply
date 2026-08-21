@@ -87,6 +87,13 @@ describe('Job Analysis unsaved draft', () => {
     expect(restored.draft.resumeText).toBe('React, TypeScript, 6 years.')
   })
 
+  it('keeps the newest meaningful draft when an empty write is attempted', () => {
+    const userId = 'user-keep'
+    writeAnalysisDraft(userId, typedDraft({ description: 'Newest posting notes.' }))
+    writeAnalysisDraft(userId, emptyAnalysisDraft())
+    expect(readAnalysisDraft(userId)?.description).toBe('Newest posting notes.')
+  })
+
   it('does not overwrite a stored draft with empty defaults during initialization', () => {
     const userId = 'user-init'
     writeAnalysisDraft(userId, typedDraft({ description: 'Keep this posting.' }))
@@ -105,6 +112,20 @@ describe('Job Analysis unsaved draft', () => {
 
     expect(readAnalysisDraft('user-done')).toBeNull()
     expect(readAnalysisDraft('user-other')?.description).toBe('Should remain.')
+  })
+
+  it('does not treat an empty stored payload as a restored draft', () => {
+    const userId = 'user-empty-payload'
+    memory.set(analysisDraftKey(userId), JSON.stringify(emptyAnalysisDraft()))
+
+    const loaded = loadAnalysisDraft(userId, {
+      resumeId: 'master-id',
+      resumeText: 'Master resume text',
+    })
+
+    expect(loaded.restored).toBe(false)
+    expect(loaded.draft.resumeId).toBe('master-id')
+    expect(loaded.draft.resumeText).toBe('Master resume text')
   })
 
   it('Clear draft removes the saved draft so the next visit uses fallbacks', () => {

@@ -415,10 +415,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             await persistAnalysisRecords(supabase, { job, match, application })
             await refreshAnalyses()
           } catch (persistError) {
-            setHistoryError(
-              persistError instanceof Error ? persistError.message : 'Analysis completed but could not be saved.',
-            )
+            const message =
+              persistError instanceof Error ? persistError.message : 'Analysis completed but could not be saved.'
+            setHistoryError(message)
+            throw new Error(message)
           }
+        }
+
+        if (match.analysisStatus !== 'complete') {
+          throw new Error(match.errorMessage || 'Analysis did not complete. Your draft is still saved in this browser.')
         }
 
         return match.id

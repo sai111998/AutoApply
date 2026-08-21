@@ -14,7 +14,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  if (!loading && user) return <Navigate to="/" replace />
+  if (!loading && user) return <Navigate to="/dashboard" replace />
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -22,7 +22,7 @@ export function LoginPage() {
     setError(null)
     try {
       await signIn(email, password)
-      navigate('/')
+      navigate('/dashboard')
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : 'Could not sign in')
     } finally {
@@ -33,7 +33,9 @@ export function LoginPage() {
   return (
     <div className="auth-grid">
       <section className="relative hidden overflow-hidden bg-olive-dark px-10 py-12 text-white min-[901px]:flex min-[901px]:flex-col">
-        <BrandMark light />
+        <Link to="/" aria-label="JobPilot AI home">
+          <BrandMark light />
+        </Link>
         <div className="relative mt-auto max-w-md pb-8">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-olive-soft">Job search workspace</p>
           <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight">See the fit before you apply.</h1>
@@ -57,7 +59,9 @@ export function LoginPage() {
       <section className="grid place-items-center bg-canvas px-6 py-12">
         <div className="w-full max-w-md rounded-2xl border border-line bg-white p-8 shadow-card">
           <div className="mb-8 min-[901px]:hidden">
-            <BrandMark />
+            <Link to="/" aria-label="JobPilot AI home">
+              <BrandMark />
+            </Link>
           </div>
           <h2 className="text-3xl font-semibold tracking-tight text-charcoal">Welcome back</h2>
           <p className="mt-2 text-sm text-muted">
@@ -70,7 +74,7 @@ export function LoginPage() {
             className="mt-8 w-full"
             onClick={() => {
               enterDemo()
-              navigate('/')
+              navigate('/dashboard')
             }}
           >
             Explore with sample data
@@ -98,6 +102,10 @@ export function LoginPage() {
             No account?{' '}
             <Link className="font-semibold text-olive hover:text-olive-dark" to="/signup">
               Create one
+            </Link>
+            {' · '}
+            <Link className="font-semibold text-olive hover:text-olive-dark" to="/">
+              Back to home
             </Link>
           </p>
         </div>

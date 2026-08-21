@@ -80,6 +80,10 @@ export function writeAnalysisDraft(userId: string, draft: AnalysisDraft): Analys
   const storage = getLocalStorage()
   if (!storage) return null
   const key = analysisDraftKey(userId)
+  const existing = parseDraft(storage.getItem(key))
+  if (existing && isMeaningfulDraft(existing) && !isMeaningfulDraft(draft)) {
+    return existing
+  }
   if (!isMeaningfulDraft(draft)) {
     storage.removeItem(key)
     return null
@@ -99,7 +103,7 @@ export function loadAnalysisDraft(
   fallback: { resumeId: string; resumeText: string },
 ): { draft: AnalysisDraft; restored: boolean } {
   const stored = readAnalysisDraft(userId)
-  if (stored) return { draft: stored, restored: true }
+  if (stored && isMeaningfulDraft(stored)) return { draft: stored, restored: true }
   return {
     draft: {
       ...emptyAnalysisDraft(),

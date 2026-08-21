@@ -15,7 +15,7 @@ import { useWorkspace } from '@/context/WorkspaceContext'
 import { useState } from 'react'
 
 const links = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/profile', label: 'My Profile', icon: UserRound },
   { to: '/resume', label: 'Master Resume', icon: FileText },
   { to: '/analyze', label: 'Job Analysis', icon: ScanSearch },
@@ -31,7 +31,7 @@ export function AppLayout() {
 
   async function handleSignOut() {
     await signOut()
-    navigate('/login')
+    navigate('/')
   }
 
   return (
@@ -49,7 +49,7 @@ export function AppLayout() {
             <NavLink
               key={link.to}
               to={link.to}
-              end={link.to === '/'}
+              end={link.to === '/dashboard'}
               onClick={() => setOpen(false)}
               className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
             >

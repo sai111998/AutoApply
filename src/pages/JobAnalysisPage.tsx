@@ -64,6 +64,7 @@ export function JobAnalysisPage() {
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(
     initial.restored ? initial.draft.updatedAt : null,
   )
+  const [showDraftBanner, setShowDraftBanner] = useState(initial.restored)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState(8)
@@ -141,6 +142,7 @@ export function JobAnalysisPage() {
     if (!userId) return
     clearAnalysisDraft(userId)
     resetFormToFallback()
+    setShowDraftBanner(false)
     notify('Draft cleared.', 'info')
   }
 
@@ -232,6 +234,26 @@ export function JobAnalysisPage() {
       {historyError && (
         <div className="mb-6">
           <ErrorState title="Could not load or save history" description={historyError} onRetry={() => void refreshAnalyses()} />
+        </div>
+      )}
+
+      {showDraftBanner && tab === 'new' && (
+        <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-olive-border bg-olive-soft/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-olive-dark">Draft restored</p>
+            <p className="mt-1 text-sm text-muted">
+              Your unsaved job analysis is still in this browser. Continue where you left off, or clear it to start
+              fresh.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={() => setShowDraftBanner(false)}>
+              Continue draft
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClearDraft}>
+              Clear draft
+            </Button>
+          </div>
         </div>
       )}
 
