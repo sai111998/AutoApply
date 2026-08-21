@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { ToastProvider } from '@/context/ToastContext'
 import { AuthProvider } from '@/context/AuthContext'
 import { WorkspaceProvider } from '@/context/WorkspaceContext'
 import { AppLayout } from '@/components/layout/AppLayout'
@@ -17,26 +18,28 @@ import { SignupPage } from '@/pages/SignupPage'
 export default function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <WorkspaceProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-            <Route element={<ProtectedRoute />}>
-              <Route element={<AppLayout />}>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/profile" element={<ProfilePage />} />
-                <Route path="/resume" element={<ResumePage />} />
-                <Route path="/analyze" element={<JobAnalysisPage />} />
-                <Route path="/matches/:matchId" element={<MatchResultsPage />} />
-                <Route path="/applications" element={<ApplicationsPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
+      <ToastProvider>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignupPage />} />
+              <Route element={<ProtectedRoute />}>
+                <Route element={<AppLayout />}>
+                  <Route path="/" element={<DashboardPage />} />
+                  <Route path="/profile" element={<ProfilePage />} />
+                  <Route path="/resume" element={<ResumePage />} />
+                  <Route path="/analyze" element={<JobAnalysisPage />} />
+                  <Route path="/matches/:matchId" element={<MatchResultsPage />} />
+                  <Route path="/applications" element={<ApplicationsPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Route>
               </Route>
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </WorkspaceProvider>
-      </AuthProvider>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </WorkspaceProvider>
+        </AuthProvider>
+      </ToastProvider>
     </ErrorBoundary>
   )
 }

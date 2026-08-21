@@ -56,11 +56,15 @@ describe('parseAnalyzeRequest', () => {
       jobDescription: 'Senior frontend engineer',
       resumeText: 'Built React apps for 6 years.',
       userId: 'user-1',
+      jobId: '3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e5f',
+      matchId: '4c0e1d3b-8e22-4d4b-a023-9b2c3d4e5f60',
       title: 'Senior Frontend Engineer',
     })
     expect(parsed.jobDescription).toBe('Senior frontend engineer')
     expect(parsed.resumeText).toBe('Built React apps for 6 years.')
     expect(parsed.userId).toBe('user-1')
+    expect(parsed.jobId).toBe('3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e5f')
+    expect(parsed.matchId).toBe('4c0e1d3b-8e22-4d4b-a023-9b2c3d4e5f60')
   })
 })
 

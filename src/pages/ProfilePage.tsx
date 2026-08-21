@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, Select, TextInput } from '@/components/ui/Field'
 import { Pill } from '@/components/ui/Badge'
+import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { createId, formatSalary } from '@/lib/format'
 import type { Profile, Skill, SkillProficiency, WorkArrangement, WorkAuthorization } from '@/types/domain'
@@ -11,6 +12,7 @@ import { PROFICIENCY_LABELS, WORK_ARRANGEMENT_LABELS, WORK_AUTHORIZATION_LABELS 
 
 export function ProfilePage() {
   const { profile, skills, saveProfile } = useWorkspace()
+  const { notify } = useToast()
   const [form, setForm] = useState<Profile>(profile)
   const [skillList, setSkillList] = useState<Skill[]>(skills)
   const [newSkill, setNewSkill] = useState('')
@@ -43,6 +45,7 @@ export function ProfilePage() {
     try {
       await saveProfile(form, skillList)
       setMessage('Profile saved.')
+      notify('Profile saved.')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Could not save profile')
     } finally {
@@ -146,12 +149,12 @@ export function ProfilePage() {
               {saving ? 'Saving…' : 'Save profile'}
             </Button>
           </div>
-          {message && <p className="sm:col-span-2 text-sm text-pine">{message}</p>}
-          {error && <p className="sm:col-span-2 text-sm text-clay">{error}</p>}
+          {message && <p className="sm:col-span-2 text-sm text-olive">{message}</p>}
+          {error && <p className="sm:col-span-2 text-sm text-danger">{error}</p>}
         </Card>
 
         <Card className="p-6">
-          <h2 className="font-display text-2xl text-navy">Skills</h2>
+          <h2 className="text-lg font-semibold text-charcoal">Skills</h2>
           <p className="mt-1 text-sm text-slate-ink">Used later by the analysis API as candidate skill context.</p>
           <div className="mt-4 flex flex-wrap gap-2">
             {skillList.map((skill) => (
