@@ -38,6 +38,7 @@ export function JobAnalysisPage() {
     historyError,
     refreshAnalyses,
     deleteAnalysis,
+    hydrateResumeText,
   } = useWorkspace()
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -72,6 +73,7 @@ export function JobAnalysisPage() {
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null)
   const [query, setQuery] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [extracting, setExtracting] = useState(false)
   const fieldsRef = useRef({
     title: initial.draft.title,
     company: initial.draft.company,
@@ -96,6 +98,27 @@ export function JobAnalysisPage() {
       fieldsRef.current = { ...fieldsRef.current, resumeId: defaultResumeId }
     }
   }, [defaultResumeId, resumeId])
+
+  useEffect(() => {
+    if (!resumeId) return
+    const resume = resumes.find((item) => item.id === resumeId)
+    if (!resume || resume.parsedText.trim()) return
+    let cancelled = false
+    setExtracting(true)
+    setError(null)
+    void hydrateResumeText(resumeId)
+      .catch((extractError: unknown) => {
+        if (!cancelled) {
+          setError(extractError instanceof Error ? extractError.message : 'Could not extract text from this resume.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setExtracting(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [hydrateResumeText, resumeId, resumes])
 
   function saveDraftPatch(patch: Partial<typeof fieldsRef.current>) {
     if (!userId) return
@@ -218,7 +241,7 @@ export function JobAnalysisPage() {
         resumeText: selectedResumeText,
       }),
   )
-  const canAnalyze = Boolean(resumeId && selectedResumeText && description.trim() && !submitting)
+  const canAnalyze = Boolean(resumeId && selectedResumeText && description.trim() && !submitting && !extracting)
 
   return (
     <div>
@@ -349,7 +372,7 @@ export function JobAnalysisPage() {
 
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="submit" disabled={!canAnalyze}>
-                  {submitting ? 'Analyzing…' : 'Analyze Job'}
+                  {submitting ? 'Analyzing…' : extracting ? 'Extracting resume…' : 'Analyze Job'}
                 </Button>
                 {showDraftStatus && (
                   <Button type="button" variant="ghost" onClick={onClearDraft}>
@@ -368,11 +391,13 @@ export function JobAnalysisPage() {
           <div className="space-y-4">
             <Card className="p-6">
               <h2 className="text-lg font-semibold text-charcoal">Before you run it</h2>
-              {!selectedResumeText ? (
+              {extracting ? (
+                <p className="mt-3 text-sm text-muted">Extracting text from the stored resume so analysis can run.</p>
+              ) : !selectedResumeText ? (
                 <EmptyState
                   icon={<FileText size={18} />}
                   title="No stored resume text yet"
-                  description="Select a stored resume with extracted text. Job Analysis uses that file automatically."
+                  description="Job Analysis uses the selected resume automatically. If this PDF has no extractable text, re-upload a text-based PDF or a .txt file from Master Resume."
                 />
               ) : (
                 <div className="mt-3 space-y-3 text-sm text-muted">

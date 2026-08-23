@@ -9,6 +9,7 @@ import {
   toResponseBody,
   type PersistFn,
 } from './services/analysis'
+import { extractResumeText } from './services/resume-text'
 import { HttpError } from './types'
 
 export interface AppOptions {
@@ -32,6 +33,23 @@ export function createApp(options: AppOptions): Express {
       databaseConfigured: Boolean(options.config.supabaseUrl && options.config.supabaseServiceRoleKey),
     })
   })
+
+  app.post(
+    '/api/resumes/extract',
+    express.raw({ type: () => true, limit: '12mb' }),
+    async (req: Request, res: Response) => {
+      try {
+        const fileName = typeof req.headers['x-file-name'] === 'string' ? req.headers['x-file-name'] : ''
+        const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? [])
+        const text = await extractResumeText(fileName, buffer)
+        res.json({ text })
+      } catch (error) {
+        const status = error instanceof HttpError ? error.status : 500
+        const message = error instanceof Error ? error.message : 'Unexpected error'
+        res.status(status).json({ error: message })
+      }
+    },
+  )
 
   app.post('/api/jobs/analyze', async (req: Request, res: Response) => {
     try {

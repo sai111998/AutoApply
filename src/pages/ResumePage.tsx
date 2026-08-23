@@ -103,7 +103,12 @@ export function ResumePage() {
                     <p className="text-sm text-slate-ink">
                       {resume.fileName} · {formatFileSize(resume.fileSize)} · {formatDate(resume.createdAt)}
                     </p>
-                    <div className="mt-2">{resume.isMaster ? <Pill tone="strong">Master</Pill> : <Pill>Version</Pill>}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {resume.isMaster ? <Pill tone="strong">Master</Pill> : <Pill>Version</Pill>}
+                      <Pill tone={resume.parsedText.trim() ? 'strong' : 'review'}>
+                        {resume.parsedText.trim() ? 'Text ready' : 'No extracted text'}
+                      </Pill>
+                    </div>
                   </div>
                 </div>
                 {!resume.isMaster && (

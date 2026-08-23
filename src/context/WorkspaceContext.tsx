@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { analyzeJobRequest } from '@/lib/ai/client'
+import { analyzeJobRequest, extractResumeTextRequest } from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import {
   deleteAnalysisRecords,
@@ -59,6 +59,7 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   saveProfile: (profile: Profile, skills: Skill[]) => Promise<void>
   uploadResume: (file: File, versionLabel: string) => Promise<void>
   setMasterResume: (resumeId: string) => Promise<void>
+  hydrateResumeText: (resumeId: string) => Promise<string>
   analyzeJob: (input: AnalyzeJobInput) => Promise<string>
   refreshAnalyses: () => Promise<void>
   deleteAnalysis: (matchId: string) => Promise<void>
@@ -251,7 +252,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         isMaster: snapshot.resumes.length === 0,
         fileSize: file.size,
         storagePath: null,
-        parsedText: extension === 'txt' ? await file.text() : '',
+        parsedText: await extractResumeTextRequest(file),
         createdAt: new Date().toISOString(),
       }
 
@@ -278,6 +279,45 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [isDemo, replace, snapshot.resumes.length, user],
   )
 
+  const hydrateResumeText = useCallback(
+    async (resumeId: string) => {
+      const current = snapshotRef.current.resumes.find((resume) => resume.id === resumeId) ?? null
+      if (!current) throw new Error('Select a stored resume before analyzing.')
+      if (current.parsedText.trim()) return current.parsedText
+
+      if (!current.storagePath || isDemo || !supabase) {
+        throw new Error('The selected resume has no extracted text. Re-upload the PDF or a .txt resume from Master Resume.')
+      }
+
+      const downloaded = await supabase.storage.from('resumes').download(current.storagePath)
+      if (downloaded.error || !downloaded.data) {
+        throw new Error(downloaded.error?.message ?? 'Could not download the stored resume to extract text.')
+      }
+
+      const file = new File([downloaded.data], current.fileName, {
+        type: current.fileType || downloaded.data.type || 'application/octet-stream',
+      })
+      const parsedText = await extractResumeTextRequest(file)
+
+      replace((state) => ({
+        ...state,
+        resumes: state.resumes.map((resume) => (resume.id === resumeId ? { ...resume, parsedText } : resume)),
+      }))
+
+      if (user) {
+        const { error: updateError } = await supabase
+          .from('resumes')
+          .update({ parsed_text: parsedText })
+          .eq('id', resumeId)
+          .eq('user_id', user.id)
+        if (updateError) throw updateError
+      }
+
+      return parsedText
+    },
+    [isDemo, replace, user],
+  )
+
   const setMasterResume = useCallback(
     async (resumeId: string) => {
       replace((current) => ({
@@ -299,11 +339,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (analyzeLock.current) throw new Error('An analysis is already running.')
       const jobDescription = input.description.trim()
       const selected = snapshot.resumes.find((resume) => resume.id === input.resumeId) ?? null
-      const resumeText = selected?.parsedText.trim() ?? ''
       if (!jobDescription) throw new Error('Paste a job description to analyze.')
       if (!selected) throw new Error('Select a stored resume before analyzing.')
+      const resumeText = (selected.parsedText.trim() || (await hydrateResumeText(selected.id))).trim()
       if (!resumeText) {
-        throw new Error('The selected resume has no extracted text. Upload a text resume or set parsed text on Master Resume.')
+        throw new Error('The selected resume has no extracted text. Re-upload the PDF or a .txt resume from Master Resume.')
       }
 
       analyzeLock.current = true
@@ -415,7 +455,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         analyzeLock.current = false
       }
     },
-    [isDemo, refreshAnalyses, replace, snapshot.resumes, user],
+    [hydrateResumeText, isDemo, refreshAnalyses, replace, snapshot.resumes, user],
   )
 
   const deleteAnalysis = useCallback(
@@ -513,6 +553,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       saveProfile,
       uploadResume,
       setMasterResume,
+      hydrateResumeText,
       analyzeJob,
       refreshAnalyses,
       deleteAnalysis,
@@ -525,6 +566,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       error,
       historyError,
       historyLoading,
+      hydrateResumeText,
       loading,
       masterResume,
       refreshAnalyses,

@@ -195,6 +195,19 @@ describe('POST /api/jobs/analyze', () => {
   })
 })
 
+describe('POST /api/resumes/extract', () => {
+  it('extracts plain text from a .txt resume', async () => {
+    const app = createApp({ config, llm: llmStub() })
+    const response = await request(app)
+      .post('/api/resumes/extract')
+      .set('X-File-Name', 'resume.txt')
+      .set('Content-Type', 'text/plain')
+      .send('Java and Spring Boot engineer')
+    expect(response.status).toBe(200)
+    expect(response.body.text).toBe('Java and Spring Boot engineer')
+  })
+})
+
 describe('GET /api/health', () => {
   it('reports whether the LLM key is present without returning it', async () => {
     const app = createApp({ config })

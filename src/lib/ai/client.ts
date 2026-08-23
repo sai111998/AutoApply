@@ -54,6 +54,33 @@ export async function getAnalysisHealth(): Promise<{
   }
 }
 
+export async function extractResumeTextRequest(file: File): Promise<string> {
+  const response = await fetch(apiUrl('/api/resumes/extract'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-File-Name': file.name,
+    },
+    body: await file.arrayBuffer(),
+  })
+  const body: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message =
+      body && typeof body === 'object' && 'error' in body && typeof (body as { error: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : `Resume extraction returned ${response.status}.`
+    throw new Error(message)
+  }
+  if (!body || typeof body !== 'object' || typeof (body as { text?: unknown }).text !== 'string') {
+    throw new Error('Resume extraction returned an unexpected payload.')
+  }
+  const text = (body as { text: string }).text.trim()
+  if (!text) {
+    throw new Error('No text could be extracted from this resume. Upload a text-based PDF or a .txt file.')
+  }
+  return text
+}
+
 export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<AnalyzeJobClientResponse> {
   try {
     const response = await fetch(apiUrl('/api/jobs/analyze'), {
