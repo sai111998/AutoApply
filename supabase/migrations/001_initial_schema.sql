@@ -89,6 +89,8 @@ create table if not exists public.resumes (
   file_size integer,
   storage_path text,
   parsed_text text,
+  evidence_profile jsonb,
+  evidence_hash text,
   created_at timestamptz not null default now()
 );
 
@@ -100,6 +102,8 @@ alter table public.resumes add column if not exists is_master boolean not null d
 alter table public.resumes add column if not exists file_size integer;
 alter table public.resumes add column if not exists storage_path text;
 alter table public.resumes add column if not exists parsed_text text;
+alter table public.resumes add column if not exists evidence_profile jsonb;
+alter table public.resumes add column if not exists evidence_hash text;
 alter table public.resumes add column if not exists created_at timestamptz not null default now();
 
 create table if not exists public.jobs (

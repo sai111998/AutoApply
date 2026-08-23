@@ -45,7 +45,6 @@ export async function persistAnalysis(
   })
 
   if (jobInsert.error) {
-    console.error('Failed to persist job', jobInsert.error.message)
     return { persisted: false, jobId: null, matchId: null }
   }
 
@@ -55,46 +54,41 @@ export async function persistAnalysis(
     job_id: jobId,
     resume_id: request.resumeId ?? null,
     overall_score: result.matchScore,
-    skills_matched: result.matchedSkills.map((name) => ({ name })),
-    skills_partial: result.partiallyMatchedSkills.map((name) => ({ name })),
-    skills_missing: result.missingSkills.map((name) => ({ name })),
+    skills_matched: result.requiredSkills.matched.concat(result.preferredSkills.matched),
+    skills_partial: result.requiredSkills.partial.concat(result.preferredSkills.partial),
+    skills_missing: result.requiredSkills.missing.concat(result.preferredSkills.missing),
     experience_match: {
       score: result.experienceMatch ? 100 : 0,
       matched: result.experienceMatch,
-      summary: result.experienceMatch
-        ? 'The resume states experience that meets the posting.'
-        : 'The resume does not state experience that meets the posting.',
+      summary: result.experience.gap || result.experience.candidateEvidence,
     },
     education_match: {
       score: result.educationMatch ? 100 : 0,
       matched: result.educationMatch,
-      summary: result.educationMatch
-        ? 'Education is compatible with the posting, or no education requirement was stated.'
-        : 'The resume does not state education that meets the posting.',
+      summary: result.education.details,
     },
     location_match: {
       score: result.locationMatch ? 100 : 0,
       matched: result.locationMatch,
-      summary: result.locationMatch
-        ? 'Location or work arrangement in the resume is compatible with the posting.'
-        : 'The resume does not support the posting location or work arrangement.',
+      summary: result.locationFit.details,
     },
-    work_authorization_notes: 'Work authorization was not included in this analysis contract.',
+    work_authorization_notes:
+      result.report.missingEvidence.find((item) => /authorization|sponsor/i.test(item)) ||
+      'Work authorization was compared only when the posting and resume stated it.',
     strengths: result.strengths,
     concerns: result.concerns,
     recommendation: result.recommendation,
     analysis_status: 'complete',
     analysis_source: 'api',
-    provider: 'llm',
+    provider: 'match-engine',
     error_message: null,
     created_at: now,
     analyzed_at: now,
     summary: result.summary,
-    analysis_payload: result,
+    analysis_payload: result.report,
   })
 
   if (matchInsert.error) {
-    console.error('Failed to persist job match', matchInsert.error.message)
     return { persisted: false, jobId, matchId: null }
   }
 

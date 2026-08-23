@@ -1,6 +1,11 @@
+import { hashResumeText, loadResumeProfile, saveResumeProfile } from '../match/cache'
+import { scoreMatch, toLegacyArrays } from '../match/engine'
+import { publicErrorMessage } from '../match/errors'
+import { groundJobProfile, groundResumeProfile } from '../match/ground'
+import { parseJobProfile, parseResumeProfile } from '../match/parse-extract'
+import type { MatchReport } from '../match/types'
 import type { LlmClient } from './llm'
 import { persistAnalysis, type PersistResult } from './persist'
-import { parseAnalysisResult } from './parse-result'
 import { optionalText, requireNonEmptyText } from './validate'
 import type { ServerConfig } from '../config'
 import type { AnalysisResult, AnalyzeJobRequestBody, AnalyzeJobResponseBody } from '../types'
@@ -29,27 +34,82 @@ export function parseAnalyzeRequest(body: unknown): AnalyzeJobRequestBody {
 
 export type PersistFn = typeof persistAnalysis
 
+function toAnalysisResult(report: MatchReport): AnalysisResult {
+  const legacy = toLegacyArrays(report)
+  return {
+    matchScore: report.matchScore,
+    recommendation: report.recommendation,
+    confidence: report.confidence,
+    ...legacy,
+    strengths: report.strengths,
+    concerns: report.concerns,
+    summary: report.summary,
+    requiredSkills: report.requiredSkills,
+    preferredSkills: report.preferredSkills,
+    experience: report.experience,
+    responsibilities: report.responsibilities,
+    education: report.education,
+    certifications: report.certifications,
+    locationFit: report.location,
+    missingEvidence: report.missingEvidence,
+    report,
+  }
+}
+
 export async function analyzeJobDescription(
   config: ServerConfig,
   llm: LlmClient,
   request: AnalyzeJobRequestBody,
   persist: PersistFn = persistAnalysis,
 ): Promise<{ result: AnalysisResult; persist: PersistResult }> {
-  const raw = await llm.complete(request.jobDescription, request.resumeText)
-  let result: AnalysisResult
-  try {
-    result = parseAnalysisResult(raw)
-  } catch (error) {
-    throw new HttpError(502, error instanceof Error ? error.message : 'Invalid analysis payload')
+  const resumeHash = hashResumeText(request.resumeText)
+  let resumeProfile = await loadResumeProfile(config, request.resumeId, resumeHash)
+
+  if (!resumeProfile) {
+    let rawResume: unknown
+    try {
+      rawResume = await llm.extractResume(request.resumeText)
+    } catch (error) {
+      if (error instanceof HttpError) throw error
+      throw new HttpError(502, publicErrorMessage(error, 'Resume extraction failed.'))
+    }
+    try {
+      resumeProfile = groundResumeProfile(parseResumeProfile(rawResume), request.resumeText)
+    } catch (error) {
+      throw new HttpError(502, error instanceof Error ? error.message : 'Invalid resume extraction payload')
+    }
+    await saveResumeProfile(config, request.resumeId, resumeHash, resumeProfile)
   }
-  const persistResult = await persist(config, request, result)
+
+  let rawJob: unknown
+  try {
+    rawJob = await llm.extractJob(request.jobDescription)
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    throw new HttpError(502, publicErrorMessage(error, 'Job extraction failed.'))
+  }
+
+  let jobProfile
+  try {
+    jobProfile = groundJobProfile(parseJobProfile(rawJob), request.jobDescription)
+  } catch (error) {
+    throw new HttpError(502, error instanceof Error ? error.message : 'Invalid job extraction payload')
+  }
+
+  const report = scoreMatch(resumeProfile, jobProfile, request.resumeText)
+  const result = toAnalysisResult(report)
+
+  let persistResult: PersistResult
+  try {
+    persistResult = await persist(config, request, result)
+  } catch {
+    persistResult = { persisted: false, jobId: null, matchId: null }
+  }
+
   return { result, persist: persistResult }
 }
 
-export function toResponseBody(
-  result: AnalysisResult,
-  persist: PersistResult,
-): AnalyzeJobResponseBody {
+export function toResponseBody(result: AnalysisResult, persist: PersistResult): AnalyzeJobResponseBody {
   return {
     ...result,
     persisted: persist.persisted,

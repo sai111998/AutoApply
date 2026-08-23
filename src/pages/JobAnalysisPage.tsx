@@ -2,19 +2,21 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
-import { Field, TextArea, TextInput } from '@/components/ui/Field'
+import { Field, Select, TextArea, TextInput } from '@/components/ui/Field'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { getAnalysisHealth } from '@/lib/ai/client'
 
 export function JobAnalysisPage() {
-  const { analyzeJob, masterResume, profile } = useWorkspace()
+  const { analyzeJob, masterResume, resumes, profile } = useWorkspace()
   const navigate = useNavigate()
+  const usableResumes = resumes.filter((resume) => resume.parsedText.trim())
   const [title, setTitle] = useState('')
   const [company, setCompany] = useState('')
   const [location, setLocation] = useState('')
   const [jobUrl, setJobUrl] = useState('')
   const [description, setDescription] = useState('')
-  const [resumeText, setResumeText] = useState(masterResume?.parsedText ?? '')
+  const [resumeId, setResumeId] = useState(masterResume?.id ?? usableResumes[0]?.id ?? '')
+  const [resumeText, setResumeText] = useState(masterResume?.parsedText ?? usableResumes[0]?.parsedText ?? '')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null)
@@ -24,19 +26,33 @@ export function JobAnalysisPage() {
   }, [])
 
   useEffect(() => {
-    setResumeText((current) => current || masterResume?.parsedText || '')
-  }, [masterResume])
+    if (!resumeId && masterResume?.id) {
+      setResumeId(masterResume.id)
+      setResumeText(masterResume.parsedText)
+    }
+  }, [masterResume, resumeId])
+
+  function onResumeSelect(nextId: string) {
+    const selected = usableResumes.find((resume) => resume.id === nextId)
+    setResumeId(nextId)
+    setResumeText(selected?.parsedText ?? '')
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
+    if (submitting) return
     const jobDescription = description.trim()
     const resume = resumeText.trim()
-    if (!jobDescription) {
-      setError('jobDescription must not be empty')
+    if (!title.trim() || !company.trim()) {
+      setError('Job title and company are required.')
       return
     }
-    if (!resume) {
-      setError('resumeText must not be empty')
+    if (!jobDescription) {
+      setError('Paste a job description to analyze.')
+      return
+    }
+    if (!resumeId || !resume) {
+      setError('Select a resume with text before analyzing.')
       return
     }
     setSubmitting(true)
@@ -49,6 +65,7 @@ export function JobAnalysisPage() {
         jobUrl,
         description: jobDescription,
         resumeText: resume,
+        resumeId,
       })
       navigate(`/matches/${matchId}`)
     } catch (analyzeError) {
@@ -58,7 +75,7 @@ export function JobAnalysisPage() {
     }
   }
 
-  const resumeEmpty = !resumeText.trim()
+  const resumeEmpty = !resumeText.trim() || !resumeId
   const jobEmpty = !description.trim()
 
   return (
@@ -66,15 +83,14 @@ export function JobAnalysisPage() {
       <PageHeader
         eyebrow="Intake"
         title="Job Analysis"
-        description="Paste a job description and the resume text to send. The browser never sees the LLM API key; scoring runs on POST /api/jobs/analyze."
+        description="Select a stored resume and paste a job description. The match engine uses only that resume text as evidence."
       />
 
-      {resumeEmpty && (
+      {usableResumes.length === 0 && (
         <Card className="mb-6 p-6">
-          <h2 className="font-display text-2xl text-navy">Resume text needed</h2>
+          <h2 className="font-display text-2xl text-navy">Resume required</h2>
           <p className="mt-2 text-sm text-slate-ink">
-            Analysis only uses the resume text you supply. Add text below, or set a master resume that includes parsed
-            text. The model will not invent experience that is not in this text.
+            Add a master resume with parsed text before running an analysis. The model will not invent experience.
           </p>
         </Card>
       )}
@@ -95,24 +111,37 @@ export function JobAnalysisPage() {
               <TextInput type="url" value={jobUrl} onChange={(e) => setJobUrl(e.target.value)} placeholder="https://" />
             </Field>
             <div className="sm:col-span-2">
+              <Field label="Resume">
+                <Select required value={resumeId} onChange={(e) => onResumeSelect(e.target.value)}>
+                  <option value="">Select a resume</option>
+                  {usableResumes.map((resume) => (
+                    <option key={resume.id} value={resume.id}>
+                      {resume.versionLabel}
+                      {resume.isMaster ? ' (master)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            <div className="sm:col-span-2">
               <Field label="Job description">
                 <TextArea
                   required
                   minLength={1}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Paste the full posting. This is sent as jobDescription to the analysis API."
+                  placeholder="Paste the full posting. Required vs preferred language in the posting is used by the match engine."
                 />
               </Field>
             </div>
             <div className="sm:col-span-2">
-              <Field label="Resume text">
+              <Field label="Resume text (from selected resume)">
                 <TextArea
                   required
                   minLength={1}
                   value={resumeText}
                   onChange={(e) => setResumeText(e.target.value)}
-                  placeholder="Paste the resume text the model is allowed to use. Nothing outside this text will be treated as candidate experience."
+                  placeholder="Select a stored resume. You can edit the text the model is allowed to use."
                 />
               </Field>
             </div>
@@ -124,7 +153,7 @@ export function JobAnalysisPage() {
               {submitting && (
                 <span className="inline-flex items-center gap-2 text-sm text-slate-ink">
                   <span className="spinner" />
-                  Sending job description and resume to the server-side LLM…
+                  Extracting evidence, then scoring. Duplicate submissions are blocked.
                 </span>
               )}
             </div>
@@ -133,11 +162,11 @@ export function JobAnalysisPage() {
 
         <div className="space-y-4">
           <Card className="p-6">
-            <h2 className="font-display text-2xl text-navy">What happens next</h2>
+            <h2 className="font-display text-2xl text-navy">How matching works</h2>
             <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm text-slate-ink">
-              <li>The UI POSTs <code className="rounded bg-fog px-1">jobDescription</code> and <code className="rounded bg-fog px-1">resumeText</code> to <code className="rounded bg-fog px-1">/api/jobs/analyze</code>.</li>
-              <li>The API key stays on the server and the model may only use the resume text you sent.</li>
-              <li>The structured result is stored in Postgres when Supabase is configured, then shown on Match Results.</li>
+              <li>The selected resume is turned into a grounded evidence profile (cached when unchanged).</li>
+              <li>The job description is split into required vs preferred qualifications.</li>
+              <li>A transparent score is calculated on the server. Preferred skills cannot hide a missing required skill.</li>
             </ol>
             <p className={`mt-4 rounded-xl px-3 py-2 text-sm ${llmConfigured ? 'bg-emerald-50 text-pine' : 'bg-[#fbf6ea] text-ink'}`}>
               {llmConfigured
@@ -153,16 +182,11 @@ export function JobAnalysisPage() {
               Candidate: <span className="font-semibold text-ink">{profile.fullName || 'Unnamed'}</span>
             </p>
             <p className="mt-1 text-sm text-slate-ink">
-              Master resume:{' '}
+              Selected resume:{' '}
               <span className="font-semibold text-ink">
-                {masterResume ? masterResume.versionLabel : 'None selected'}
+                {usableResumes.find((resume) => resume.id === resumeId)?.versionLabel ?? 'None selected'}
               </span>
             </p>
-            {!masterResume && (
-              <p className="mt-3 text-sm text-clay">
-                Upload a master resume if you want a stored version linked to this analysis.
-              </p>
-            )}
           </Card>
         </div>
       </div>

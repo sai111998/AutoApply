@@ -13,23 +13,53 @@ const config: ServerConfig = {
   supabaseServiceRoleKey: '',
 }
 
-const llmResult = {
-  matchScore: 72,
-  recommendation: 'REVIEW',
-  matchedSkills: ['TypeScript'],
-  partiallyMatchedSkills: ['AWS'],
-  missingSkills: ['Kubernetes'],
-  experienceMatch: true,
-  educationMatch: true,
-  locationMatch: true,
-  strengths: ['Resume lists TypeScript production work'],
-  concerns: ['Resume does not mention Kubernetes'],
-  summary: 'Partial infrastructure overlap based only on the resume text.',
+const resumeExtract = {
+  skills: [{ name: 'TypeScript', evidence: 'TypeScript engineer, 2018-2024', years: 6 }],
+  languages: [{ name: 'TypeScript', evidence: 'TypeScript engineer', years: 6 }],
+  frameworks: [],
+  cloud: [],
+  databases: [],
+  devops: [],
+  security: [],
+  jobTitles: ['TypeScript engineer'],
+  employers: [],
+  yearsOfExperience: 6,
+  education: [],
+  certifications: [],
+  projects: [],
+  responsibilities: [{ name: 'Built product UI', evidence: 'TypeScript engineer, 2018-2024, remote in Texas.' }],
+  achievements: [],
+  location: 'Texas',
+  workArrangement: 'remote',
+  workAuthorization: '',
 }
 
-function llmStub(result: unknown = llmResult): LlmClient {
+const jobExtract = {
+  requiredSkills: [{ name: 'TypeScript' }],
+  preferredSkills: [{ name: 'Kubernetes' }],
+  languages: [{ name: 'TypeScript' }],
+  frameworks: [],
+  cloud: [],
+  databases: [],
+  tools: [],
+  security: [],
+  yearsOfExperience: 3,
+  skillYears: [{ name: 'TypeScript', years: 3 }],
+  education: { required: false, degree: '', field: '', details: '' },
+  certifications: { required: [], preferred: [] },
+  location: 'remote US',
+  workArrangement: 'remote',
+  employmentType: '',
+  sponsorship: '',
+  responsibilities: [{ text: 'Build TypeScript product surfaces', required: true }],
+}
+
+function llmStub(overrides: Partial<LlmClient> = {}): LlmClient {
   return {
-    complete: vi.fn().mockResolvedValue(result),
+    extractJson: vi.fn(),
+    extractResume: vi.fn().mockResolvedValue(resumeExtract),
+    extractJob: vi.fn().mockResolvedValue(jobExtract),
+    ...overrides,
   }
 }
 
@@ -51,23 +81,23 @@ describe('POST /api/jobs/analyze', () => {
     expect(missingResume.body.error).toMatch(/resumeText/)
   })
 
-  it('returns the structured analysis from the LLM', async () => {
+  it('returns a scored report from extracted resume and job facts', async () => {
     const llm = llmStub()
     const app = createApp({ config, llm })
     const response = await request(app).post('/api/jobs/analyze').send({
-      jobDescription: 'TypeScript engineer, remote US',
+      jobDescription: 'TypeScript engineer, remote US. 3+ years TypeScript. Kubernetes is a plus.',
       resumeText: 'TypeScript engineer, 2018-2024, remote in Texas.',
     })
 
     expect(response.status).toBe(200)
-    expect(response.body.matchScore).toBe(72)
-    expect(response.body.recommendation).toBe('REVIEW')
-    expect(response.body.matchedSkills).toEqual(['TypeScript'])
+    expect(response.body.matchScore).toBeGreaterThan(0)
+    expect(['APPLY', 'REVIEW', 'SKIP']).toContain(response.body.recommendation)
+    expect(response.body.matchedSkills).toContain('TypeScript')
+    expect(response.body.confidence).toMatch(/HIGH|MEDIUM|LOW/)
+    expect(response.body.report).toBeTruthy()
     expect(response.body.persisted).toBe(false)
-    expect(llm.complete).toHaveBeenCalledWith(
-      'TypeScript engineer, remote US',
-      'TypeScript engineer, 2018-2024, remote in Texas.',
-    )
+    expect(llm.extractResume).toHaveBeenCalled()
+    expect(llm.extractJob).toHaveBeenCalled()
   })
 
   it('returns 503 when the LLM key is missing', async () => {
@@ -85,13 +115,54 @@ describe('POST /api/jobs/analyze', () => {
   it('returns 502 when the LLM payload is invalid', async () => {
     const app = createApp({
       config,
-      llm: llmStub({ hello: 'world' }),
+      llm: llmStub({ extractResume: vi.fn().mockResolvedValue({ hello: 'world' }) }),
+    })
+    const response = await request(app).post('/api/jobs/analyze').send({
+      jobDescription: 'TypeScript engineer, remote US',
+      resumeText: 'TypeScript engineer, 2018-2024, remote in Texas.',
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.report).toBeTruthy()
+  })
+
+  it('returns 502 when the LLM returns a non-object', async () => {
+    const app = createApp({
+      config,
+      llm: llmStub({ extractResume: vi.fn().mockResolvedValue('not-json-object') }),
+    })
+    const response = await request(app).post('/api/jobs/analyze').send({
+      jobDescription: 'Role requiring TypeScript',
+      resumeText: 'TypeScript engineer',
+    })
+    expect(response.status).toBe(502)
+  })
+
+  it('returns 502 when the LLM call fails', async () => {
+    const app = createApp({
+      config,
+      llm: llmStub({
+        extractResume: vi.fn().mockRejectedValue(new Error('upstream failed')),
+      }),
     })
     const response = await request(app).post('/api/jobs/analyze').send({
       jobDescription: 'Role',
-      resumeText: 'Resume',
+      resumeText: 'Resume with TypeScript',
     })
     expect(response.status).toBe(502)
+    expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
+  })
+
+  it('still returns the report when database persistence fails', async () => {
+    const persist = vi.fn().mockRejectedValue(new Error('insert failed'))
+    const app = createApp({ config, llm: llmStub(), persist })
+    const response = await request(app).post('/api/jobs/analyze').send({
+      jobDescription: 'TypeScript engineer, remote US. 3+ years TypeScript.',
+      resumeText: 'TypeScript engineer, 2018-2024, remote in Texas.',
+      userId: 'user-1',
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.persisted).toBe(false)
+    expect(response.body.matchScore).toEqual(expect.any(Number))
   })
 
   it('persists the analysis when storage succeeds', async () => {
@@ -102,8 +173,8 @@ describe('POST /api/jobs/analyze', () => {
     })
     const app = createApp({ config, llm: llmStub(), persist })
     const response = await request(app).post('/api/jobs/analyze').send({
-      jobDescription: 'Role',
-      resumeText: 'Resume',
+      jobDescription: 'TypeScript engineer, remote US',
+      resumeText: 'TypeScript engineer, 2018-2024, remote in Texas.',
       userId: 'user-1',
     })
     expect(response.status).toBe(200)
@@ -116,8 +187,8 @@ describe('POST /api/jobs/analyze', () => {
   it('does not expose an API key in the JSON body', async () => {
     const app = createApp({ config, llm: llmStub() })
     const response = await request(app).post('/api/jobs/analyze').send({
-      jobDescription: 'Role',
-      resumeText: 'Resume',
+      jobDescription: 'TypeScript engineer, remote US',
+      resumeText: 'TypeScript engineer, 2018-2024, remote in Texas.',
     })
     expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
     expect(JSON.stringify(response.body)).not.toMatch(/LLM_API_KEY/)

@@ -18,6 +18,7 @@ export type ApplicationStatus =
   | 'withdrawn'
 
 export type Recommendation = 'APPLY' | 'REVIEW' | 'SKIP'
+export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW'
 
 export type AnalysisStatus = 'pending' | 'queued' | 'complete' | 'failed' | 'unavailable'
 
@@ -73,6 +74,8 @@ export interface Job {
 export interface SkillSignal {
   name: string
   note?: string
+  source?: 'required' | 'preferred'
+  evidence?: string
 }
 
 export interface DimensionMatch {
@@ -104,6 +107,8 @@ export interface JobMatch {
   summary: string | null
   createdAt: string
   analyzedAt: string | null
+  confidence?: Confidence | null
+  report?: import('@/lib/ai/types').MatchReport | null
 }
 
 export interface Application {

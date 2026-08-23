@@ -79,6 +79,7 @@ type MatchRow = {
   created_at: string
   analyzed_at: string | null
   summary: string | null
+  analysis_payload?: JobMatch['report'] | null
 }
 
 type ApplicationRow = {
@@ -241,6 +242,8 @@ export function mapMatch(row: MatchRow): JobMatch {
     summary: row.summary ?? null,
     createdAt: row.created_at,
     analyzedAt: row.analyzed_at,
+    confidence: row.analysis_payload?.confidence ?? null,
+    report: row.analysis_payload ?? null,
   }
 }
 
@@ -268,6 +271,7 @@ export function matchToRow(match: JobMatch) {
     created_at: match.createdAt,
     analyzed_at: match.analyzedAt,
     summary: match.summary,
+    analysis_payload: match.report ?? null,
   }
 }
 

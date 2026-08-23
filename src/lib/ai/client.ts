@@ -21,7 +21,11 @@ function isAnalysisResult(value: unknown): value is AnalyzeJobApiResult {
     typeof record.locationMatch === 'boolean' &&
     Array.isArray(record.strengths) &&
     Array.isArray(record.concerns) &&
-    typeof record.summary === 'string'
+    typeof record.summary === 'string' &&
+    (record.confidence === undefined ||
+      record.confidence === 'HIGH' ||
+      record.confidence === 'MEDIUM' ||
+      record.confidence === 'LOW')
   )
 }
 

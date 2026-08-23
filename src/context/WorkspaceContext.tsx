@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -51,6 +52,7 @@ interface AnalyzeJobInput {
   jobUrl: string
   description: string
   resumeText: string
+  resumeId?: string | null
 }
 
 interface WorkspaceContextValue extends WorkspaceSnapshot {
@@ -90,6 +92,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptyWorkspace('anon', ''))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const analyzeLock = useRef(false)
 
   const replace = useCallback(
     (updater: (current: WorkspaceSnapshot) => WorkspaceSnapshot) => {
@@ -283,13 +286,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const analyzeJob = useCallback(
     async (input: AnalyzeJobInput) => {
       if (!user) throw new Error('Not signed in')
+      if (analyzeLock.current) throw new Error('An analysis is already running.')
       const jobDescription = input.description.trim()
       const resumeText = input.resumeText.trim()
-      if (!jobDescription) throw new Error('jobDescription must not be empty')
-      if (!resumeText) throw new Error('resumeText must not be empty')
+      if (!jobDescription) throw new Error('Paste a job description to analyze.')
+      if (!resumeText) throw new Error('Select a resume with text before analyzing.')
 
+      analyzeLock.current = true
+      try {
       const now = new Date().toISOString()
-      const master = snapshot.resumes.find((resume) => resume.isMaster) ?? null
+      const selected =
+        snapshot.resumes.find((resume) => resume.id === input.resumeId) ??
+        snapshot.resumes.find((resume) => resume.isMaster) ??
+        null
       const composedDescription = [
         input.title.trim() && `Title: ${input.title.trim()}`,
         input.company.trim() && `Company: ${input.company.trim()}`,
@@ -316,7 +325,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         id: createId(),
         userId: user.id,
         jobId: job.id,
-        resumeId: master?.id ?? null,
+        resumeId: selected?.id ?? null,
         overallScore: null,
         skillsMatched: [],
         skillsPartial: [],
@@ -342,7 +351,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         userId: user.id,
         jobId: job.id,
         matchId: match.id,
-        resumeId: master?.id ?? null,
+        resumeId: selected?.id ?? null,
         status: 'ready',
         dateAdded: now.slice(0, 10),
         dateApplied: null,
@@ -355,7 +364,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         jobDescription: composedDescription,
         resumeText,
         userId: isDemo ? undefined : user.id,
-        resumeId: master?.id,
+        resumeId: selected?.id,
         title: job.title,
         company: job.company,
         location: job.location,
@@ -381,23 +390,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       const backendStored = response.status === 'complete' && response.result.persisted
-      if (!isDemo && supabase && !backendStored) {
-        const jobInsert = await supabase.from('jobs').insert(jobToRow(job))
-        if (jobInsert.error) throw jobInsert.error
-        const matchInsert = await supabase.from('job_matches').insert(matchToRow(match))
-        if (matchInsert.error) throw matchInsert.error
-        const appInsert = await supabase.from('applications').insert(applicationToRow(application))
-        if (appInsert.error) throw appInsert.error
+        if (!isDemo && supabase && !backendStored) {
+          const jobInsert = await supabase.from('jobs').insert(jobToRow(job))
+          if (jobInsert.error) throw new Error('The analysis finished but could not be saved. Please try again.')
+          const matchInsert = await supabase.from('job_matches').insert(matchToRow(match))
+          if (matchInsert.error) throw new Error('The analysis finished but could not be saved. Please try again.')
+          const appInsert = await supabase.from('applications').insert(applicationToRow(application))
+          if (appInsert.error) throw new Error('The analysis finished but could not be saved. Please try again.')
+        }
+
+        replace((current) => ({
+          ...current,
+          jobs: [job, ...current.jobs],
+          matches: [match, ...current.matches],
+          applications: [application, ...current.applications],
+        }))
+
+        return match.id
+      } finally {
+        analyzeLock.current = false
       }
-
-      replace((current) => ({
-        ...current,
-        jobs: [job, ...current.jobs],
-        matches: [match, ...current.matches],
-        applications: [application, ...current.applications],
-      }))
-
-      return match.id
     },
     [isDemo, replace, snapshot.resumes, user],
   )
