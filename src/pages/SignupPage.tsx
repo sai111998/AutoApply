@@ -15,7 +15,7 @@ export function SignupPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  if (!loading && user) return <Navigate to="/" replace />
+  if (!loading && user) return <Navigate to="/dashboard" replace />
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -35,8 +35,10 @@ export function SignupPage() {
   return (
     <div className="grid min-h-screen place-items-center px-6 py-12">
       <div className="w-full max-w-md">
-        <BrandMark />
-        <h1 className="mt-8 font-display text-3xl text-navy">Create your workspace</h1>
+        <Link to="/" aria-label="JobPilot AI home">
+          <BrandMark />
+        </Link>
+        <h1 className="mt-8 text-3xl font-semibold tracking-tight text-charcoal">Create your workspace</h1>
         <p className="mt-2 text-slate-ink">
           {supabaseEnabled
             ? 'JobPilot stores profiles, resumes, and applications in your Supabase project.'
@@ -47,7 +49,7 @@ export function SignupPage() {
           className="mt-8 w-full"
           onClick={() => {
             enterDemo()
-            navigate('/')
+            navigate('/dashboard')
           }}
         >
           Explore with sample data
@@ -63,8 +65,8 @@ export function SignupPage() {
           <Field label="Password">
             <TextInput type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
-          {error && <p className="text-sm text-clay">{error}</p>}
-          {message && <p className="text-sm text-pine">{message}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
+          {message && <p className="text-sm text-olive">{message}</p>}
           {!supabaseEnabled && (
             <p className="text-sm text-slate-ink">
               Account creation needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
@@ -74,12 +76,16 @@ export function SignupPage() {
             {submitting ? 'Creating account…' : 'Create account'}
           </Button>
         </form>
-        <p className="mt-6 text-sm text-slate-ink">
-          Already have an account?{' '}
-          <Link className="font-semibold text-pine" to="/login">
-            Sign in
-          </Link>
-        </p>
+          <p className="mt-6 text-sm text-slate-ink">
+            Already have an account?{' '}
+            <Link className="font-semibold text-olive hover:text-olive-dark" to="/login">
+              Sign in
+            </Link>
+            {' · '}
+            <Link className="font-semibold text-olive hover:text-olive-dark" to="/">
+              Back to home
+            </Link>
+          </p>
       </div>
     </div>
   )

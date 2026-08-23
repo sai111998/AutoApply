@@ -10,19 +10,19 @@ import {
 } from 'react'
 import { analyzeJobRequest } from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
+import {
+  deleteAnalysisRecords,
+  fetchAnalysisHistory,
+  persistAnalysisRecords,
+  upsertById,
+} from '@/lib/analysis-persist'
 import { createId, nextActionForStatus, titleFromJobDescription } from '@/lib/format'
 import {
-  applicationToRow,
   emptyWorkspace,
-  jobToRow,
-  mapApplication,
-  mapJob,
-  mapMatch,
   mapPreferences,
   mapProfile,
   mapResume,
   mapSkill,
-  matchToRow,
   preferencesToRow,
   profileToRow,
   resumeToRow,
@@ -52,12 +52,16 @@ interface AnalyzeJobInput {
 
 interface WorkspaceContextValue extends WorkspaceSnapshot {
   loading: boolean
+  historyLoading: boolean
   error: string | null
+  historyError: string | null
   masterResume: Resume | null
   saveProfile: (profile: Profile, skills: Skill[]) => Promise<void>
   uploadResume: (file: File, versionLabel: string) => Promise<void>
   setMasterResume: (resumeId: string) => Promise<void>
   analyzeJob: (input: AnalyzeJobInput) => Promise<string>
+  refreshAnalyses: () => Promise<void>
+  deleteAnalysis: (matchId: string) => Promise<void>
   updateApplication: (id: string, patch: Partial<Pick<Application, 'status' | 'notes' | 'dateApplied'>>) => Promise<void>
   savePreferences: (preferences: UserPreferences) => Promise<void>
 }
@@ -86,8 +90,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { user, isDemo, loading: authLoading } = useAuth()
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptyWorkspace('anon', ''))
   const [loading, setLoading] = useState(true)
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const analyzeLock = useRef(false)
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
 
   const replace = useCallback(
     (updater: (current: WorkspaceSnapshot) => WorkspaceSnapshot) => {
@@ -99,6 +107,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
     [isDemo],
   )
+
+  const refreshAnalyses = useCallback(async () => {
+    if (!user || isDemo || !supabase) return
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const history = await fetchAnalysisHistory(supabase, user.id)
+      if (history.error) {
+        setHistoryError(history.error)
+        return
+      }
+      replace((current) => ({
+        ...current,
+        jobs: history.jobs,
+        matches: history.matches,
+        applications: history.applications,
+      }))
+    } catch (refreshError) {
+      setHistoryError(refreshError instanceof Error ? refreshError.message : 'Could not load analysis history')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [isDemo, replace, user])
 
   useEffect(() => {
     let cancelled = false
@@ -113,6 +144,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       setLoading(true)
       setError(null)
+      setHistoryError(null)
 
       if (isDemo) {
         setSnapshot(readDemo())
@@ -128,37 +160,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       try {
         const userId = user.id
-        const [
-          profileRes,
-          skillsRes,
-          resumesRes,
-          jobsRes,
-          matchesRes,
-          applicationsRes,
-          preferencesRes,
-        ] = await Promise.all([
+        const [profileRes, skillsRes, resumesRes, preferencesRes] = await Promise.all([
           supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
           supabase.from('skills').select('*').eq('user_id', userId).order('name'),
           supabase.from('resumes').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-          supabase.from('jobs').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-          supabase.from('job_matches').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-          supabase.from('applications').select('*').eq('user_id', userId).order('date_added', { ascending: false }),
           supabase.from('user_preferences').select('*').eq('user_id', userId).maybeSingle(),
         ])
 
-        const failures = [
-          profileRes.error,
-          skillsRes.error,
-          resumesRes.error,
-          jobsRes.error,
-          matchesRes.error,
-          applicationsRes.error,
-          preferencesRes.error,
-        ].filter(Boolean)
-
+        const failures = [profileRes.error, skillsRes.error, resumesRes.error, preferencesRes.error].filter(Boolean)
         if (failures.length) {
           throw new Error(failures[0]?.message ?? 'Failed to load workspace')
         }
+
+        const history = await fetchAnalysisHistory(supabase, userId)
+        if (history.error) setHistoryError(history.error)
 
         let base = emptyWorkspace(userId, user.email, user.fullName ?? '')
         if (profileRes.data) base = { ...base, profile: mapProfile(profileRes.data, user.email) }
@@ -175,9 +190,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...base,
           skills: (skillsRes.data ?? []).map(mapSkill),
           resumes: (resumesRes.data ?? []).map(mapResume),
-          jobs: (jobsRes.data ?? []).map(mapJob),
-          matches: (matchesRes.data ?? []).map(mapMatch),
-          applications: (applicationsRes.data ?? []).map(mapApplication),
+          jobs: history.jobs,
+          matches: history.matches,
+          applications: history.applications,
         }
 
         if (!cancelled) setSnapshot(next)
@@ -293,110 +308,146 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
       analyzeLock.current = true
       try {
-      const now = new Date().toISOString()
+        const now = new Date().toISOString()
 
-      let job: Job = {
-        id: createId(),
-        userId: user.id,
-        title: titleFromJobDescription(jobDescription),
-        company: 'Unknown company',
-        location: '',
-        jobUrl: '',
-        description: jobDescription,
-        createdAt: now,
-      }
-
-      let match: JobMatch = {
-        id: createId(),
-        userId: user.id,
-        jobId: job.id,
-        resumeId: selected?.id ?? null,
-        overallScore: null,
-        skillsMatched: [],
-        skillsPartial: [],
-        skillsMissing: [],
-        experienceMatch: null,
-        educationMatch: null,
-        locationMatch: null,
-        workAuthorizationNotes: null,
-        strengths: [],
-        concerns: [],
-        recommendation: null,
-        analysisStatus: 'queued',
-        analysisSource: 'api',
-        provider: null,
-        errorMessage: null,
-        summary: null,
-        createdAt: now,
-        analyzedAt: null,
-      }
-
-      let application: Application = {
-        id: createId(),
-        userId: user.id,
-        jobId: job.id,
-        matchId: match.id,
-        resumeId: selected?.id ?? null,
-        status: 'ready',
-        dateAdded: now.slice(0, 10),
-        dateApplied: null,
-        nextAction: nextActionForStatus('ready'),
-        notes: '',
-        updatedAt: now,
-      }
-
-      const response = await analyzeJobRequest({
-        jobDescription,
-        resumeText,
-        userId: isDemo ? undefined : user.id,
-        resumeId: selected.id,
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        jobUrl: job.jobUrl,
-      })
-
-      if (response.status === 'complete') {
-        match = {
-          ...match,
-          ...mapApiResultToMatchFields(response.result),
+        const job: Job = {
+          id: createId(),
+          userId: user.id,
+          title: titleFromJobDescription(jobDescription),
+          company: 'Unknown company',
+          location: '',
+          jobUrl: '',
+          description: jobDescription,
+          createdAt: now,
         }
-        if (response.result.jobId && response.result.matchId) {
-          job = { ...job, id: response.result.jobId }
-          match = { ...match, id: response.result.matchId, jobId: job.id }
-          application = { ...application, jobId: job.id, matchId: match.id }
-        }
-      } else {
-        match = {
-          ...match,
-          analysisStatus: 'failed',
-          errorMessage: response.message,
-        }
-      }
 
-      const backendStored = response.status === 'complete' && response.result.persisted
-        if (!isDemo && supabase && !backendStored) {
-          const jobInsert = await supabase.from('jobs').insert(jobToRow(job))
-          if (jobInsert.error) throw new Error('The analysis finished but could not be saved. Please try again.')
-          const matchInsert = await supabase.from('job_matches').insert(matchToRow(match))
-          if (matchInsert.error) throw new Error('The analysis finished but could not be saved. Please try again.')
-          const appInsert = await supabase.from('applications').insert(applicationToRow(application))
-          if (appInsert.error) throw new Error('The analysis finished but could not be saved. Please try again.')
+        let match: JobMatch = {
+          id: createId(),
+          userId: user.id,
+          jobId: job.id,
+          resumeId: selected.id,
+          overallScore: null,
+          skillsMatched: [],
+          skillsPartial: [],
+          skillsMissing: [],
+          experienceMatch: null,
+          educationMatch: null,
+          locationMatch: null,
+          workAuthorizationNotes: null,
+          strengths: [],
+          concerns: [],
+          recommendation: null,
+          analysisStatus: 'queued',
+          analysisSource: 'api',
+          provider: null,
+          errorMessage: null,
+          summary: null,
+          createdAt: now,
+          analyzedAt: null,
+        }
+
+        const application: Application = {
+          id: createId(),
+          userId: user.id,
+          jobId: job.id,
+          matchId: match.id,
+          resumeId: selected.id,
+          status: 'ready',
+          dateAdded: now.slice(0, 10),
+          dateApplied: null,
+          nextAction: nextActionForStatus('ready'),
+          notes: '',
+          updatedAt: now,
+        }
+
+        const response = await analyzeJobRequest({
+          jobDescription,
+          resumeText,
+          userId: isDemo ? undefined : user.id,
+          resumeId: selected.id,
+          jobId: job.id,
+          matchId: match.id,
+          applicationId: application.id,
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          jobUrl: job.jobUrl,
+        })
+
+        if (response.status === 'complete') {
+          match = {
+            ...match,
+            ...mapApiResultToMatchFields(response.result),
+          }
+        } else {
+          match = {
+            ...match,
+            analysisStatus: 'failed',
+            errorMessage: response.message,
+          }
         }
 
         replace((current) => ({
           ...current,
-          jobs: [job, ...current.jobs],
-          matches: [match, ...current.matches],
-          applications: [application, ...current.applications],
+          jobs: upsertById(current.jobs, job),
+          matches: upsertById(current.matches, match),
+          applications: upsertById(current.applications, application),
         }))
+
+        if (!isDemo && supabase) {
+          try {
+            await persistAnalysisRecords(supabase, { job, match, application })
+            await refreshAnalyses()
+          } catch (persistError) {
+            const message =
+              persistError instanceof Error ? persistError.message : 'Analysis completed but could not be saved.'
+            setHistoryError(message)
+            throw new Error(message)
+          }
+        }
+
+        if (match.analysisStatus !== 'complete') {
+          throw new Error(match.errorMessage || 'Analysis did not complete. Your draft is still saved in this browser.')
+        }
 
         return match.id
       } finally {
         analyzeLock.current = false
       }
     },
-    [isDemo, replace, snapshot.resumes, user],
+    [isDemo, refreshAnalyses, replace, snapshot.resumes, user],
+  )
+
+  const deleteAnalysis = useCallback(
+    async (matchId: string) => {
+      const current = snapshotRef.current
+      const match = current.matches.find((item) => item.id === matchId)
+      if (!match) return
+      const application = current.applications.find((item) => item.matchId === matchId) ?? null
+
+      if (!isDemo && supabase && user) {
+        await deleteAnalysisRecords(supabase, user.id, {
+          matchId,
+          jobId: match.jobId,
+          applicationId: application?.id ?? null,
+        })
+        await refreshAnalyses()
+        return
+      }
+
+      replace((state) => {
+        const remainingMatches = state.matches.filter((item) => item.id !== matchId)
+        const remainingApplications = state.applications.filter((item) => item.matchId !== matchId)
+        const jobStillUsed = remainingMatches.some((item) => item.jobId === match.jobId)
+        return {
+          ...state,
+          matches: remainingMatches,
+          applications: remainingApplications,
+          jobs: jobStillUsed ? state.jobs : state.jobs.filter((job) => job.id !== match.jobId),
+        }
+      })
+    },
+    [isDemo, refreshAnalyses, replace, user],
   )
 
   const updateApplication = useCallback(
@@ -455,20 +506,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => ({
       ...snapshot,
       loading,
+      historyLoading,
       error,
+      historyError,
       masterResume,
       saveProfile,
       uploadResume,
       setMasterResume,
       analyzeJob,
+      refreshAnalyses,
+      deleteAnalysis,
       updateApplication,
       savePreferences,
     }),
     [
       analyzeJob,
+      deleteAnalysis,
       error,
+      historyError,
+      historyLoading,
       loading,
       masterResume,
+      refreshAnalyses,
       savePreferences,
       saveProfile,
       setMasterResume,

@@ -9,6 +9,9 @@ export interface AnalyzeJobApiRequest {
   resumeText: string
   userId?: string
   resumeId?: string
+  jobId?: string
+  matchId?: string
+  applicationId?: string
   title?: string
   company?: string
   location?: string

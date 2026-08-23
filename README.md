@@ -17,7 +17,7 @@ npm test
 - Vite on http://localhost:5173/
 - the analysis API on http://127.0.0.1:8787/ (`POST /api/jobs/analyze`)
 
-Open the app, click **Explore with sample data**, then Job Analysis. Demo mode pre-fills Alex Rivera’s sample resume text.
+Open http://localhost:5173/ to view the public landing page. Click **Get Started** or **Sign In**, then **Explore with sample data**. After sign-in, the workspace lives at `/dashboard`. Job Analysis is under **Job Analysis**. Demo mode pre-fills Alex Rivera’s sample resume text.
 
 ## LLM API key (required for live analysis)
 

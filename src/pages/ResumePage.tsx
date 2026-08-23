@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, TextInput } from '@/components/ui/Field'
 import { Pill } from '@/components/ui/Badge'
+import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { formatDate, formatFileSize } from '@/lib/format'
@@ -11,6 +12,7 @@ import { formatDate, formatFileSize } from '@/lib/format'
 export function ResumePage() {
   const { isDemo } = useAuth()
   const { resumes, uploadResume, setMasterResume } = useWorkspace()
+  const { notify } = useToast()
   const [file, setFile] = useState<File | null>(null)
   const [versionLabel, setVersionLabel] = useState('')
   const [message, setMessage] = useState<string | null>(null)
@@ -31,6 +33,7 @@ export function ResumePage() {
       setFile(null)
       setVersionLabel('')
       setMessage('Resume stored. Set a master version for future analyses.')
+      notify('Resume stored.')
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Upload failed')
     } finally {
@@ -48,7 +51,7 @@ export function ResumePage() {
 
       <div className="grid gap-6 lg:grid-cols-[0.9fr_1.3fr]">
         <Card className="p-6">
-          <h2 className="font-display text-2xl text-navy">Upload a version</h2>
+          <h2 className="text-lg font-semibold text-charcoal">Upload a version</h2>
           <p className="mt-1 text-sm text-slate-ink">
             {isDemo
               ? 'Demo mode keeps file metadata in this browser session. Connect Supabase storage to persist files.'
@@ -75,8 +78,8 @@ export function ResumePage() {
                 {file.name} · {formatFileSize(file.size)}
               </p>
             )}
-            {error && <p className="text-sm text-clay">{error}</p>}
-            {message && <p className="text-sm text-pine">{message}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
+            {message && <p className="text-sm text-olive">{message}</p>}
             <Button type="submit" disabled={uploading}>
               {uploading ? 'Uploading…' : 'Store resume'}
             </Button>
@@ -85,14 +88,14 @@ export function ResumePage() {
 
         <Card className="overflow-hidden">
           <div className="border-b border-line px-6 py-4">
-            <h2 className="font-display text-2xl text-navy">Resume versions</h2>
+            <h2 className="text-lg font-semibold text-charcoal">Resume versions</h2>
             <p className="text-sm text-slate-ink">{resumes.length} stored</p>
           </div>
           <ul className="divide-y divide-fog">
             {resumes.map((resume) => (
               <li key={resume.id} className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3">
-                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-paper text-pine">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-olive-soft text-olive">
                     <FileText size={18} />
                   </div>
                   <div>
