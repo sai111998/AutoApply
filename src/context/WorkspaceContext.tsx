@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { analyzeJobRequest } from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
-import { createId, nextActionForStatus } from '@/lib/format'
+import { createId, nextActionForStatus, titleFromJobDescription } from '@/lib/format'
 import {
   applicationToRow,
   emptyWorkspace,
@@ -46,13 +46,8 @@ import { useAuth } from './AuthContext'
 const DEMO_WORKSPACE_KEY = 'jobpilot.workspace'
 
 interface AnalyzeJobInput {
-  title: string
-  company: string
-  location: string
-  jobUrl: string
   description: string
-  resumeText: string
-  resumeId?: string | null
+  resumeId: string
 }
 
 interface WorkspaceContextValue extends WorkspaceSnapshot {
@@ -288,35 +283,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!user) throw new Error('Not signed in')
       if (analyzeLock.current) throw new Error('An analysis is already running.')
       const jobDescription = input.description.trim()
-      const resumeText = input.resumeText.trim()
+      const selected = snapshot.resumes.find((resume) => resume.id === input.resumeId) ?? null
+      const resumeText = selected?.parsedText.trim() ?? ''
       if (!jobDescription) throw new Error('Paste a job description to analyze.')
-      if (!resumeText) throw new Error('Select a resume with text before analyzing.')
+      if (!selected) throw new Error('Select a stored resume before analyzing.')
+      if (!resumeText) {
+        throw new Error('The selected resume has no extracted text. Upload a text resume or set parsed text on Master Resume.')
+      }
 
       analyzeLock.current = true
       try {
       const now = new Date().toISOString()
-      const selected =
-        snapshot.resumes.find((resume) => resume.id === input.resumeId) ??
-        snapshot.resumes.find((resume) => resume.isMaster) ??
-        null
-      const composedDescription = [
-        input.title.trim() && `Title: ${input.title.trim()}`,
-        input.company.trim() && `Company: ${input.company.trim()}`,
-        input.location.trim() && `Location: ${input.location.trim()}`,
-        input.jobUrl.trim() && `URL: ${input.jobUrl.trim()}`,
-        '',
-        jobDescription,
-      ]
-        .filter((line) => line !== '')
-        .join('\n')
 
       let job: Job = {
         id: createId(),
         userId: user.id,
-        title: input.title.trim(),
-        company: input.company.trim(),
-        location: input.location.trim(),
-        jobUrl: input.jobUrl.trim(),
+        title: titleFromJobDescription(jobDescription),
+        company: 'Unknown company',
+        location: '',
+        jobUrl: '',
         description: jobDescription,
         createdAt: now,
       }
@@ -361,10 +346,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       const response = await analyzeJobRequest({
-        jobDescription: composedDescription,
+        jobDescription,
         resumeText,
         userId: isDemo ? undefined : user.id,
-        resumeId: selected?.id,
+        resumeId: selected.id,
         title: job.title,
         company: job.company,
         location: job.location,

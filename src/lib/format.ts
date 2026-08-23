@@ -63,3 +63,9 @@ export function createId(): string {
   }
   return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
+
+export function titleFromJobDescription(description: string): string {
+  const line = description.split('\n').map((part) => part.trim()).find(Boolean)
+  if (!line) return 'Untitled role'
+  return line.length > 120 ? `${line.slice(0, 117)}...` : line
+}
