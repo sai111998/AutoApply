@@ -1,7 +1,46 @@
-import PDFDocument from 'pdfkit'
+import { HttpError } from '../types'
 import type { TailoredResume } from './types'
 
-export function renderResumePdf(resume: TailoredResume): Promise<Buffer> {
+type PdfDocumentCtor = new (options?: Record<string, unknown>) => {
+  on(event: 'data', listener: (chunk: Buffer) => void): unknown
+  on(event: 'end', listener: () => void): unknown
+  on(event: 'error', listener: (error: Error) => void): unknown
+  font(name: string): PdfKitDoc
+  fontSize(size: number): PdfKitDoc
+  fillColor(color: string): PdfKitDoc
+  text(value: string, options?: Record<string, unknown>): PdfKitDoc
+  moveDown(lines?: number): PdfKitDoc
+  moveTo(x: number, y: number): PdfKitDoc
+  lineTo(x: number, y: number): PdfKitDoc
+  strokeColor(color: string): PdfKitDoc
+  lineWidth(width: number): PdfKitDoc
+  stroke(): PdfKitDoc
+  addPage(): PdfKitDoc
+  end(): void
+  y: number
+  page: { height: number; width: number; margins: { left: number; right: number; bottom: number } }
+}
+
+type PdfKitDoc = InstanceType<PdfDocumentCtor>
+
+async function loadPdfDocument(): Promise<PdfDocumentCtor> {
+  try {
+    const loaded = (await import('pdfkit')) as unknown as { default: PdfDocumentCtor }
+    if (typeof loaded.default !== 'function') {
+      throw new Error('pdfkit export missing')
+    }
+    return loaded.default
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    throw new HttpError(
+      503,
+      'PDF generation is unavailable. Run npm install in the project root, then restart the server.',
+    )
+  }
+}
+
+export async function renderResumePdf(resume: TailoredResume): Promise<Buffer> {
+  const PDFDocument = await loadPdfDocument()
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'LETTER',
@@ -12,7 +51,7 @@ export function renderResumePdf(resume: TailoredResume): Promise<Buffer> {
       },
     })
     const chunks: Buffer[] = []
-    doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+    doc.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
     doc.on('end', () => resolve(Buffer.concat(chunks)))
     doc.on('error', reject)
 
