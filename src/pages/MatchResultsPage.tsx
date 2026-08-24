@@ -146,6 +146,18 @@ export function MatchResultsPage() {
         </div>
       )}
 
+      {match.parentMatchId && (
+        <div className="mb-6 rounded-2xl border border-olive-border bg-olive-soft px-4 py-3 text-sm text-olive-dark">
+          Updated analysis of a tailored resume. The original match report is unchanged.
+          {(() => {
+            const previous = matches.find((item) => item.id === match.parentMatchId)
+            if (previous?.overallScore == null || match.overallScore == null) return null
+            const delta = match.overallScore - previous.overallScore
+            return ` Previous score ${previous.overallScore}/100 · Updated ${match.overallScore}/100 · ${delta > 0 ? '+' : ''}${delta} points.`
+          })()}
+        </div>
+      )}
+
       {match.analysisSource === 'sample' && (
         <div className="mb-6 rounded-2xl border border-olive-border bg-olive-soft px-4 py-3 text-sm text-olive-dark">
           Sample preview — this record is included so you can review the match UI. It is not a live production analysis.

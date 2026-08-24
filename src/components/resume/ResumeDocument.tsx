@@ -36,7 +36,7 @@ export function ResumeDocument({
               </p>
               <p className="text-xs text-muted">{role.dates}</p>
               <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
-                {role.bullets.map((bullet) => (
+                {role.bullets.filter((bullet) => bullet.trim()).map((bullet) => (
                   <li key={bullet}>{bullet}</li>
                 ))}
               </ul>

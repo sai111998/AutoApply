@@ -89,6 +89,8 @@ export interface JobMatch {
   userId: string
   jobId: string
   resumeId: string | null
+  parentMatchId?: string | null
+  resumeVersionId?: string | null
   overallScore: number | null
   skillsMatched: SkillSignal[]
   skillsPartial: SkillSignal[]
@@ -184,6 +186,9 @@ export interface TailoringPlan {
   experienceToEmphasize: string[]
 }
 
+export type ResumeVersionStatus = 'generating' | 'completed' | 'failed' | 'kept'
+export type ResumeVersionAuthor = 'ai' | 'user'
+
 export interface ResumeVersion {
   id: string
   userId: string
@@ -195,6 +200,12 @@ export interface ResumeVersion {
   tailoringSummary: TailoringPlan
   changes: TailorChange[]
   warnings: string[]
+  status: ResumeVersionStatus
+  createdBy: ResumeVersionAuthor
+  isSelected: boolean
+  generationId: string
+  comparisonAnalysisId: string | null
+  originalContent: TailoredResumeContent | null
   createdAt: string
   updatedAt: string
 }

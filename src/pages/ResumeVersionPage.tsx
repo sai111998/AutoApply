@@ -82,22 +82,6 @@ export function ResumeVersionPage() {
       />
 
       <ResumeDocument title="Resume preview" resume={version.resumeContent} highlight />
-
-      {version.changes.length > 0 && (
-        <Card className="mt-6 p-6">
-          <h2 className="text-lg font-semibold text-charcoal">Changes</h2>
-          <ul className="mt-4 space-y-3">
-            {version.changes.map((change) => (
-              <li key={`${change.kind}-${change.label}`} className="rounded-2xl border border-line px-4 py-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-olive">
-                  {change.kind === 'emphasis' ? 'Added emphasis' : change.kind}
-                </p>
-                <p className="mt-1 text-sm text-charcoal">{change.label}</p>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
     </div>
   )
 }

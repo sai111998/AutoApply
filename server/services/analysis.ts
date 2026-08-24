@@ -29,6 +29,9 @@ export function parseAnalyzeRequest(body: unknown): AnalyzeJobRequestBody {
       company: optionalText(record.company),
       location: optionalText(record.location),
       jobUrl: optionalText(record.jobUrl),
+      resumeProfile: record.resumeProfile,
+      jobProfile: record.jobProfile,
+      persistResults: record.persistResults === false ? false : undefined,
     }
   } catch (error) {
     throw new HttpError(400, error instanceof Error ? error.message : 'Invalid request')
@@ -66,7 +69,9 @@ export async function analyzeJobDescription(
   persist: PersistFn = persistAnalysis,
 ): Promise<{ result: AnalysisResult; persist: PersistResult }> {
   const resumeHash = hashResumeText(request.resumeText)
-  let resumeProfile = await loadResumeProfile(config, request.resumeId, resumeHash)
+  let resumeProfile = request.resumeProfile
+    ? groundResumeProfile(parseResumeProfile(request.resumeProfile), request.resumeText)
+    : await loadResumeProfile(config, request.resumeId, resumeHash)
 
   if (!resumeProfile) {
     let rawResume: unknown
@@ -84,23 +89,38 @@ export async function analyzeJobDescription(
     await saveResumeProfile(config, request.resumeId, resumeHash, resumeProfile)
   }
 
-  let rawJob: unknown
-  try {
-    rawJob = await llm.extractJob(request.jobDescription)
-  } catch (error) {
-    if (error instanceof HttpError) throw error
-    throw new HttpError(502, publicErrorMessage(error, 'Job extraction failed.'))
-  }
-
   let jobProfile
-  try {
-    jobProfile = groundJobProfile(parseJobProfile(rawJob), request.jobDescription)
-  } catch (error) {
-    throw new HttpError(502, error instanceof Error ? error.message : 'Invalid job extraction payload')
+  if (request.jobProfile) {
+    try {
+      jobProfile = groundJobProfile(parseJobProfile(request.jobProfile), request.jobDescription)
+    } catch (error) {
+      throw new HttpError(502, error instanceof Error ? error.message : 'Invalid job profile payload')
+    }
+  } else {
+    let rawJob: unknown
+    try {
+      rawJob = await llm.extractJob(request.jobDescription)
+    } catch (error) {
+      if (error instanceof HttpError) throw error
+      throw new HttpError(502, publicErrorMessage(error, 'Job extraction failed.'))
+    }
+
+    try {
+      jobProfile = groundJobProfile(parseJobProfile(rawJob), request.jobDescription)
+    } catch (error) {
+      throw new HttpError(502, error instanceof Error ? error.message : 'Invalid job extraction payload')
+    }
   }
 
   const report = scoreMatch(resumeProfile, jobProfile, request.resumeText)
   const result = toAnalysisResult(report)
+
+  if (request.persistResults === false) {
+    return {
+      result,
+      persist: { persisted: false, jobId: request.jobId ?? null, matchId: request.matchId ?? null },
+    }
+  }
 
   let persistResult: PersistResult
   try {

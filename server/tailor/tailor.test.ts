@@ -365,5 +365,7 @@ describe('resume tailoring', () => {
     const sql = readFileSync(path.resolve(process.cwd(), 'supabase/migrations/003_resume_versions.sql'), 'utf8')
     expect(sql).toMatch(/enable row level security/)
     expect(sql).toMatch(/auth\.uid\(\) = user_id/)
+    const statusSql = readFileSync(path.resolve(process.cwd(), 'supabase/migrations/004_resume_version_status.sql'), 'utf8')
+    expect(statusSql).toMatch(/auth\.uid\(\) = user_id/)
   })
 })

@@ -98,6 +98,9 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
         company: payload.company,
         location: payload.location,
         jobUrl: payload.jobUrl,
+        resumeProfile: payload.resumeProfile,
+        jobProfile: payload.jobProfile,
+        persistResults: payload.persistResults,
       }),
     })
 

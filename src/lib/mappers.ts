@@ -64,6 +64,8 @@ type MatchRow = {
   user_id: string
   job_id: string
   resume_id: string | null
+  parent_match_id?: string | null
+  resume_version_id?: string | null
   overall_score: number | null
   skills_matched: JobMatch['skillsMatched']
   skills_partial: JobMatch['skillsPartial']
@@ -227,6 +229,8 @@ export function mapMatch(row: MatchRow): JobMatch {
     userId: row.user_id,
     jobId: row.job_id,
     resumeId: row.resume_id,
+    parentMatchId: row.parent_match_id ?? null,
+    resumeVersionId: row.resume_version_id ?? null,
     overallScore: row.overall_score,
     skillsMatched: row.skills_matched ?? [],
     skillsPartial: row.skills_partial ?? [],
@@ -256,6 +260,8 @@ export function matchToRow(match: JobMatch) {
     user_id: match.userId,
     job_id: match.jobId,
     resume_id: match.resumeId,
+    parent_match_id: match.parentMatchId ?? null,
+    resume_version_id: match.resumeVersionId ?? null,
     overall_score: match.overallScore,
     skills_matched: match.skillsMatched,
     skills_partial: match.skillsPartial,
@@ -349,8 +355,29 @@ type ResumeVersionRow = {
   tailoring_summary: TailoringPlan
   changes: ResumeVersion['changes']
   warnings: string[] | null
+  status?: ResumeVersion['status'] | null
+  created_by?: ResumeVersion['createdBy'] | null
+  is_selected?: boolean | null
+  generation_id?: string | null
+  comparison_analysis_id?: string | null
+  original_content?: TailoredResumeContent | null
   created_at: string
   updated_at: string
+}
+
+function emptyResumeContent(): TailoredResumeContent {
+  return {
+    summary: '',
+    skills: [],
+    experience: [],
+    projects: [],
+    education: [],
+    certifications: [],
+    changes: [],
+    omissions: [],
+    warnings: [],
+    contact: { name: '', email: '', location: '' },
+  }
 }
 
 export function mapResumeVersion(row: ResumeVersionRow): ResumeVersion {
@@ -361,10 +388,21 @@ export function mapResumeVersion(row: ResumeVersionRow): ResumeVersion {
     jobId: row.job_id,
     analysisId: row.analysis_id,
     versionName: row.version_name,
-    resumeContent: row.resume_content,
-    tailoringSummary: row.tailoring_summary,
+    resumeContent: row.resume_content ?? emptyResumeContent(),
+    tailoringSummary: row.tailoring_summary ?? {
+      skillsToEmphasize: [],
+      relatedSkills: [],
+      missingSkills: [],
+      experienceToEmphasize: [],
+    },
     changes: row.changes ?? [],
     warnings: row.warnings ?? [],
+    status: row.status ?? 'completed',
+    createdBy: row.created_by ?? 'ai',
+    isSelected: Boolean(row.is_selected),
+    generationId: row.generation_id ?? row.id,
+    comparisonAnalysisId: row.comparison_analysis_id ?? null,
+    originalContent: row.original_content ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -382,6 +420,12 @@ export function resumeVersionToRow(version: ResumeVersion) {
     tailoring_summary: version.tailoringSummary,
     changes: version.changes,
     warnings: version.warnings,
+    status: version.status,
+    created_by: version.createdBy,
+    is_selected: version.isSelected,
+    generation_id: version.generationId,
+    comparison_analysis_id: version.comparisonAnalysisId,
+    original_content: version.originalContent,
     created_at: version.createdAt,
     updated_at: version.updatedAt,
   }

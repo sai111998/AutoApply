@@ -143,7 +143,9 @@ export function ResumePage() {
               <p className="text-sm text-muted">{master.versionLabel} · {master.fileName}</p>
             </li>
           ))}
-          {resumeVersions.map((version) => {
+          {resumeVersions
+            .filter((item) => item.status !== 'generating')
+            .map((version) => {
             const source = resumes.find((item) => item.id === version.sourceResumeId)
             const job = jobs.find((item) => item.id === version.jobId)
             return (
@@ -154,6 +156,11 @@ export function ResumePage() {
                     From {source?.versionLabel ?? 'master'} · {job ? `${job.title} at ${job.company}` : 'Saved copy'} ·{' '}
                     {formatDate(version.createdAt)}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {version.isSelected && <Pill tone="strong">Selected for this job</Pill>}
+                    {version.createdBy === 'user' && <Pill tone="info">User edited</Pill>}
+                    {version.status === 'failed' && <Pill tone="skip">Failed</Pill>}
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Link

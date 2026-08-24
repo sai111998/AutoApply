@@ -24,6 +24,13 @@ export function upsertById<T extends { id: string }>(items: T[], incoming: T): T
   return next
 }
 
+export async function persistMatchRecord(client: SupabaseClient, match: JobMatch) {
+  const matchResult = await client
+    .from('job_matches')
+    .upsert(matchToRow(match), { onConflict: 'id', defaultToNull: false })
+  if (matchResult.error) throw matchResult.error
+}
+
 export async function persistAnalysisRecords(
   client: SupabaseClient,
   records: { job: Job; match: JobMatch; application: Application },

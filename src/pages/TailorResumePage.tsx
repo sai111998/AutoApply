@@ -1,50 +1,89 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Download, Pencil, RefreshCw, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
-import { EmptyState, ErrorState, SkeletonBlock } from '@/components/ui/EmptyState'
+import { EmptyState, ErrorState } from '@/components/ui/EmptyState'
 import { Pill, RecommendationBadge, ScoreBadge } from '@/components/ui/Badge'
 import { Tabs } from '@/components/ui/Tabs'
-import { TextArea, TextInput } from '@/components/ui/Field'
+import { ResumeDocument } from '@/components/resume/ResumeDocument'
+import { ResumeEditor } from '@/components/resume/ResumeEditor'
 import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { ResumeDocument } from '@/components/resume/ResumeDocument'
-import { downloadResumePdfRequest, tailorResumeRequest, validateTailoredResumeRequest } from '@/lib/ai/client'
-import { createId, formatDate } from '@/lib/format'
+import { downloadResumePdfRequest } from '@/lib/ai/client'
+import { formatDate } from '@/lib/format'
 import { planFromMatch } from '@/lib/tailor-plan'
-import type { TailoredResumeContent, TailoringPlan } from '@/types/domain'
+import {
+  findActiveVersion,
+  getInflightGeneration,
+  shouldStartGeneration,
+  startTailorGeneration,
+  tailorSessionKey,
+} from '@/lib/tailor-session'
+import { scoreChange, sanitizeTailoredContent } from '@/lib/tailored-text'
+import type { JobMatch, ResumeVersion, TailoredResumeContent } from '@/types/domain'
+
+const PROGRESS_STEPS = [
+  'Reading resume',
+  'Reviewing job requirements',
+  'Optimizing relevant experience',
+  'Preparing tailored version',
+]
 
 export function TailorResumePage() {
   const { matchId } = useParams()
   const navigate = useNavigate()
   const { notify } = useToast()
   const { user, isDemo } = useAuth()
-  const { matches, jobs, resumes, saveResumeVersion, resumeVersions = [] } = useWorkspace()
+  const {
+    matches,
+    jobs,
+    resumes,
+    resumeVersions = [],
+    saveResumeVersion,
+    selectResumeVersion,
+    analyzeTailoredVersion,
+  } = useWorkspace()
+
   const match = matches.find((item) => item.id === matchId)
   const job = match ? jobs.find((item) => item.id === match.jobId) : undefined
-  const resume = match?.resumeId ? resumes.find((item) => item.id === match.resumeId) : resumes.find((item) => item.isMaster)
+  const resume = match?.resumeId
+    ? resumes.find((item) => item.id === match.resumeId)
+    : resumes.find((item) => item.isMaster)
 
-  const previewPlan = useMemo(
-    () => (match && resume ? planFromMatch(match, resume.parsedText) : {
-      skillsToEmphasize: [],
-      relatedSkills: [],
-      missingSkills: [],
-      experienceToEmphasize: [],
-    }),
-    [match, resume],
-  )
-  const [plan, setPlan] = useState<TailoringPlan>(previewPlan)
-  const [original, setOriginal] = useState<TailoredResumeContent | null>(null)
-  const [tailored, setTailored] = useState<TailoredResumeContent | null>(null)
-  const [status, setStatus] = useState<'idle' | 'loading' | 'complete' | 'invalid' | 'failed'>('idle')
-  const [message, setMessage] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
   const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<TailoredResumeContent | null>(null)
   const [compare, setCompare] = useState<'original' | 'tailored' | 'split'>('split')
-  const [saving, setSaving] = useState(false)
+  const [busy, setBusy] = useState<'keep' | 'save' | 'analyze' | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [updatedMatch, setUpdatedMatch] = useState<JobMatch | null>(null)
+  const bootstrapped = useRef<string | null>(null)
 
   const canTailor = Boolean(resume?.parsedText.trim() && job?.description.trim() && match?.analysisStatus === 'complete')
+  const sessionKey = user && resume && job ? tailorSessionKey(user.id, resume.id, job.id) : ''
+  const inflight = sessionKey ? getInflightGeneration(sessionKey) : null
+  const version = resume && job ? findActiveVersion(resumeVersions, resume.id, job.id) : null
+  const comparisonMatch =
+    updatedMatch ??
+    (version?.comparisonAnalysisId
+      ? matches.find((item) => item.id === version.comparisonAnalysisId) ?? null
+      : null)
+
+  const previewPlan = useMemo(
+    () =>
+      match && resume
+        ? planFromMatch(match, resume.parsedText)
+        : { skillsToEmphasize: [], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] },
+    [match, resume],
+  )
+  const plan = version?.tailoringSummary?.skillsToEmphasize?.length ? version.tailoringSummary : previewPlan
+  const tailored = draft ?? (version?.status === 'generating' ? null : version?.resumeContent ?? null)
+  const original = version?.originalContent ?? null
+  const generating = Boolean(inflight) || version?.status === 'generating'
+  const failed = version?.status === 'failed' && !inflight
+  const complete = Boolean(tailored && (version?.status === 'completed' || version?.status === 'kept') && !editing)
 
   const requestPayload = useMemo(
     () => ({
@@ -54,9 +93,6 @@ export function TailorResumePage() {
       resumeId: resume?.id,
       jobId: job?.id,
       matchId: match?.id,
-      candidateName: undefined,
-      candidateEmail: undefined,
-      candidateLocation: undefined,
       matchReport: match?.report ?? null,
       matchSignals: match
         ? {
@@ -71,23 +107,57 @@ export function TailorResumePage() {
     [isDemo, job, match, resume, user],
   )
 
-  async function generate() {
-    if (!canTailor) return
-    setStatus('loading')
-    setMessage(null)
+  function startGeneration(force: boolean) {
+    if (!user || !resume || !job || !match || !canTailor) return
+    if (!force && inflight) return
+    const existing = findActiveVersion(resumeVersions, resume.id, job.id)
+    if (!shouldStartGeneration(existing, force) && !force) return
+    startTailorGeneration({
+      userId: user.id,
+      sourceResumeId: resume.id,
+      jobId: job.id,
+      analysisId: match.id,
+      versionName: `Tailored — ${job.title} — ${job.company}`,
+      payload: requestPayload,
+      persist: saveResumeVersion,
+      force,
+      existingVersionId: force ? undefined : existing?.status === 'generating' ? existing.id : undefined,
+      existingGenerationId: force ? undefined : existing?.status === 'generating' ? existing.generationId : undefined,
+    })
     setEditing(false)
-    try {
-      const result = await tailorResumeRequest(requestPayload)
-      setPlan((result.plan as TailoringPlan) ?? previewPlan)
-      setOriginal((result.original as TailoredResumeContent) ?? null)
-      setTailored((result.tailored as TailoredResumeContent) ?? null)
-      setStatus((result.status as typeof status) || 'failed')
-      setMessage(typeof result.message === 'string' ? result.message : null)
-    } catch (error) {
-      setStatus('failed')
-      setMessage(error instanceof Error ? error.message : 'Resume tailoring failed.')
-    }
+    setDraft(null)
+    setMessage(null)
+    setTick((value) => value + 1)
   }
+
+  useEffect(() => {
+    if (!user || !resume || !job || !match || !canTailor) return
+    const key = `${match.id}:${resume.id}`
+    if (bootstrapped.current === key) return
+    bootstrapped.current = key
+    const existing = findActiveVersion(resumeVersions, resume.id, job.id)
+    if (shouldStartGeneration(existing, false) || (existing?.status === 'generating' && !getInflightGeneration(sessionKey))) {
+      startGeneration(false)
+    }
+    // startGeneration reads latest workspace via persist callback
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canTailor, job?.id, match?.id, resume?.id, user?.id])
+
+  useEffect(() => {
+    if (!inflight) return
+    let cancelled = false
+    const timer = window.setInterval(() => setTick((value) => value + 1), 700)
+    void inflight.promise.finally(() => {
+      if (!cancelled) {
+        setTick((value) => value + 1)
+        setDraft(null)
+      }
+    })
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [inflight])
 
   if (!match || !job) {
     return (
@@ -114,52 +184,66 @@ export function TailorResumePage() {
     )
   }
 
-  async function onSave() {
-    if (!tailored || !resume || !user || !job || !match || status !== 'complete') return
-    setSaving(true)
+  const activeContent = draft ?? tailored
+  const comparison = scoreChange(match.overallScore, comparisonMatch?.overallScore ?? null)
+  const stepIndex = inflight ? Math.min(PROGRESS_STEPS.length - 1, Math.floor((Date.now() - inflight.startedAt) / 900)) : generating ? 1 : 0
+
+  async function onKeep() {
+    if (!version || !match || version.status === 'generating') return
+    setBusy('keep')
+    setMessage(null)
     try {
-      const check = await validateTailoredResumeRequest({ ...requestPayload, tailored })
-      if (!check.ok) {
-        setStatus('invalid')
-        setMessage(
-          typeof check.body.message === 'string'
-            ? check.body.message
-            : 'Some generated content could not be verified against your master resume. Please review and regenerate.',
-        )
-        return
-      }
-      const now = new Date().toISOString()
-      await saveResumeVersion({
-        id: createId(),
-        userId: user.id,
-        sourceResumeId: resume.id,
-        jobId: job.id,
-        analysisId: match.id,
-        versionName: `Tailored — ${job.title} — ${job.company}`,
-        resumeContent: tailored,
-        tailoringSummary: plan,
-        changes: tailored.changes,
-        warnings: tailored.warnings,
-        createdAt: now,
-        updatedAt: now,
-      })
-      notify('Tailored resume saved as a new version. Master resume is unchanged.')
-      navigate('/resume')
+      await selectResumeVersion(version.id)
+      setBusy('analyze')
+      const next = await analyzeTailoredVersion(version.id, match.id, { select: true })
+      setUpdatedMatch(next)
+      notify('Tailored resume kept. Master resume is unchanged.')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not save this version.')
+      setMessage(error instanceof Error ? error.message : 'Could not keep this resume.')
     } finally {
-      setSaving(false)
+      setBusy(null)
+    }
+  }
+
+  async function onSaveEdits() {
+    if (!version || !draft || !resume || !match) return
+    setBusy('save')
+    setMessage(null)
+    try {
+      const saved: ResumeVersion = {
+        ...version,
+        resumeContent: sanitizeTailoredContent(draft),
+        createdBy: 'user',
+        status: version.isSelected ? 'kept' : 'completed',
+        warnings: [...version.warnings.filter((item) => item !== 'user-edited'), 'user-edited'],
+        updatedAt: new Date().toISOString(),
+      }
+      await saveResumeVersion(saved)
+      setEditing(false)
+      setDraft(null)
+      setBusy('analyze')
+      const next = await analyzeTailoredVersion(saved.id, match.id, {
+        select: saved.isSelected,
+        version: saved,
+      })
+      setUpdatedMatch(next)
+      notify('Edited tailored resume saved. Master resume is unchanged.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save your edits.')
+    } finally {
+      setBusy(null)
     }
   }
 
   async function onDownload() {
-    if (!tailored) return
+    const content = activeContent ? sanitizeTailoredContent(activeContent) : null
+    if (!content) return
     try {
-      const blob = await downloadResumePdfRequest(tailored, tailored.contact)
+      const blob = await downloadResumePdfRequest(content, content.contact)
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `${(tailored.contact.name || 'resume').replace(/\s+/g, '_')}_tailored.pdf`
+      link.download = `${(content.contact.name || 'resume').replace(/\s+/g, '_')}_tailored.pdf`
       link.click()
       URL.revokeObjectURL(url)
     } catch (error) {
@@ -167,14 +251,14 @@ export function TailorResumePage() {
     }
   }
 
-  const savedCount = resumeVersions.filter((item) => item.analysisId === match.id).length
+  void tick
 
   return (
     <div>
       <PageHeader
         eyebrow="Resume studio"
         title="AI Resume Tailoring"
-        description="Rewrite emphasis and wording from your stored resume. Nothing is invented, and the master file stays put until you save a version."
+        description="A job-specific version of your stored resume. The master file is never replaced unless you keep a version."
         actions={
           <Button variant="secondary" onClick={() => navigate(`/matches/${match.id}`)}>
             <ArrowLeft size={16} />
@@ -185,14 +269,10 @@ export function TailorResumePage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Job information</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Job</p>
           <h2 className="mt-2 text-lg font-semibold text-charcoal">{job.title}</h2>
           <p className="text-sm text-muted">{job.company}</p>
           <p className="text-sm text-muted">{job.location || 'Location not specified'}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <ScoreBadge score={match.overallScore} />
-            <RecommendationBadge value={match.recommendation} />
-          </div>
         </Card>
         <Card className="p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Source resume</p>
@@ -202,9 +282,12 @@ export function TailorResumePage() {
           {resume.isMaster && <p className="mt-2 text-xs font-semibold text-olive">Master — will not be overwritten</p>}
         </Card>
         <Card className="p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Versions for this role</p>
-          <p className="mt-2 text-3xl font-semibold text-charcoal">{savedCount}</p>
-          <p className="text-sm text-muted">Saved tailored copies. Master remains separate.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Original match</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <ScoreBadge score={match.overallScore} />
+            <RecommendationBadge value={match.recommendation} />
+          </div>
+          {version?.createdBy === 'user' && <p className="mt-3 text-xs font-semibold text-olive">User-edited version</p>}
         </Card>
       </div>
 
@@ -213,142 +296,192 @@ export function TailorResumePage() {
           <Sparkles size={18} className="text-olive" />
           Tailoring summary
         </h2>
-        <p className="mt-1 text-sm text-muted">Missing job requirements are listed as gaps, not as content to add.</p>
+        <p className="mt-1 text-sm text-muted">Missing job requirements stay gaps. They are not added to the resume.</p>
         <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <PlanList title="Skills to emphasize" items={status === 'idle' ? previewPlan.skillsToEmphasize : plan.skillsToEmphasize} tone="strong" empty="No overlapping skills yet." />
-          <PlanList title="Related skills" items={status === 'idle' ? previewPlan.relatedSkills : plan.relatedSkills} tone="info" empty="No related skills listed." />
-          <PlanList title="Experience to emphasize" items={status === 'idle' ? previewPlan.experienceToEmphasize : plan.experienceToEmphasize} tone="info" empty="No overlapping themes yet." />
-          <PlanList title="Potential gaps" items={status === 'idle' ? previewPlan.missingSkills : plan.missingSkills} tone="review" empty="No unsupported requirements listed." />
+          <PlanList title="Skills to emphasize" items={plan.skillsToEmphasize} tone="strong" empty="No overlapping skills yet." />
+          <PlanList title="Related skills" items={plan.relatedSkills} tone="info" empty="No related skills listed." />
+          <PlanList title="Experience to emphasize" items={plan.experienceToEmphasize} tone="info" empty="No overlapping themes yet." />
+          <PlanList title="Potential gaps" items={plan.missingSkills} tone="review" empty="No unsupported requirements listed." />
         </div>
-        {status === 'idle' && (
-          <div className="mt-6">
-            <Button onClick={() => void generate()} disabled={!canTailor}>
-              <Sparkles size={16} />
-              Generate tailored resume
-            </Button>
-            <p className="mt-2 text-xs text-muted">
-              The master resume is not changed until you approve and save a version.
-            </p>
-          </div>
-        )}
       </Card>
 
-      {status === 'loading' && (
+      {generating && (
         <Card className="mt-6 p-6">
-          <p className="text-sm font-semibold text-olive-dark">Tailoring from the stored resume…</p>
-          <div className="mt-4 grid gap-3">
-            <SkeletonBlock className="h-4 w-5/6" />
-            <SkeletonBlock className="h-4 w-2/3" />
-            <SkeletonBlock className="h-40" />
-          </div>
+          <p className="text-sm font-semibold text-olive-dark">
+            Analyzing your resume and tailoring it for this job...
+          </p>
+          <p className="mt-1 text-sm text-muted">You can leave this page. Generation continues in the background.</p>
+          <ol className="mt-5 space-y-3">
+            {PROGRESS_STEPS.map((label, index) => {
+              const done = index < stepIndex
+              const current = index === stepIndex
+              return (
+                <li key={label} className="flex items-center gap-3 text-sm">
+                  <span
+                    className={`grid h-6 w-6 place-items-center rounded-full text-xs font-semibold ${
+                      done ? 'bg-olive text-white' : current ? 'border border-olive text-olive' : 'border border-line text-muted'
+                    }`}
+                  >
+                    {done ? '✓' : current ? '●' : '○'}
+                  </span>
+                  <span className={done || current ? 'text-charcoal' : 'text-muted'}>{label}</span>
+                </li>
+              )
+            })}
+          </ol>
         </Card>
+      )}
+
+      {busy === 'analyze' && (
+        <div className="mt-6 rounded-2xl border border-olive-border bg-olive-soft px-4 py-3 text-sm text-olive-dark">
+          Your resume has been updated. Re-analyzing your match...
+        </div>
       )}
 
       {message && (
         <div className="mt-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">{message}</div>
       )}
 
-      {original && tailored && status === 'complete' && (
-        <>
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-charcoal">Preview</h2>
-            <Tabs
-              value={compare}
-              onChange={(next) => setCompare(next as typeof compare)}
-              items={[
-                { id: 'split', label: 'Compare' },
-                { id: 'original', label: 'Original' },
-                { id: 'tailored', label: 'Tailored' },
-              ]}
-            />
-          </div>
-
-          <div className={`mt-4 grid gap-4 ${compare === 'split' ? 'lg:grid-cols-2' : ''}`}>
-            {(compare === 'split' || compare === 'original') && (
-              <ResumeDocument title="Original resume" resume={original} muted />
-            )}
-            {(compare === 'split' || compare === 'tailored') && (
-              editing ? (
-                <ResumeEditor resume={tailored} onChange={setTailored} />
-              ) : (
-                <ResumeDocument
-                  title="Tailored resume"
-                  resume={tailored}
-                  highlight
-                  changedSections={changedSections(original, tailored)}
-                />
-              )
-            )}
-          </div>
-
-          <Card className="mt-6 p-6">
-            <h2 className="text-lg font-semibold text-charcoal">Changes</h2>
-            <ul className="mt-4 space-y-3">
-              {tailored.changes.map((change) => (
-                <li key={`${change.kind}-${change.label}`} className="rounded-2xl border border-line px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-olive">
-                    {change.kind === 'emphasis' ? 'Added emphasis' : change.kind}
-                  </p>
-                  <p className="mt-1 text-sm text-charcoal">{change.label}</p>
-                  {change.before && <p className="mt-1 text-sm text-muted">“{change.before}”</p>}
-                  {change.after && <p className="text-sm text-charcoal">→ “{change.after}”</p>}
-                </li>
-              ))}
-              {tailored.omissions.map((item) => (
-                <li key={item} className="rounded-2xl border border-line px-4 py-3 text-sm text-muted">
-                  Omitted from the resume: {item} (not supported by the master resume)
-                </li>
-              ))}
-              {tailored.changes.length === 0 && tailored.omissions.length === 0 && (
-                <li className="text-sm text-muted">No tracked edits yet.</li>
-              )}
-            </ul>
-          </Card>
-
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Button onClick={() => void onSave()} disabled={saving}>
-              Approve & Save Version
-            </Button>
-            <Button variant="secondary" onClick={() => void generate()}>
-              <RefreshCw size={16} />
-              Regenerate
-            </Button>
-            <Button variant="secondary" onClick={() => setEditing((value) => !value)}>
-              <Pencil size={16} />
-              {editing ? 'Done editing' : 'Edit'}
-            </Button>
-            <Button variant="secondary" onClick={() => void onDownload()}>
-              <Download size={16} />
-              Download PDF
-            </Button>
-            <Button variant="ghost" onClick={() => navigate(`/matches/${match.id}`)}>
-              Cancel
-            </Button>
-          </div>
-        </>
+      {failed && (
+        <Card className="mt-6 p-6">
+          <h2 className="text-lg font-semibold text-charcoal">Tailoring did not finish</h2>
+          <p className="mt-2 text-sm text-muted">{version?.warnings[0] || 'Please try again. Your master resume is unchanged.'}</p>
+          <Button className="mt-4" onClick={() => startGeneration(true)}>
+            <RefreshCw size={16} />
+            Try Again
+          </Button>
+        </Card>
       )}
 
-      {(status === 'invalid' || status === 'failed') && (
-        <div className="mt-6 flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => void generate()}>
-            <RefreshCw size={16} />
-            Regenerate
+      {comparisonMatch && comparison && (
+        <Card className="mt-6 p-6">
+          <h2 className="text-lg font-semibold text-charcoal">Updated match score</h2>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <ScoreStat label="Original match" value={comparison.previous} />
+            <ScoreStat label="Updated match" value={comparison.updated} highlight />
+            <ScoreStat
+              label="Change"
+              value={comparison.delta}
+              prefix={comparison.delta > 0 ? '+' : ''}
+              suffix=" points"
+            />
+          </div>
+          <Button className="mt-5" onClick={() => navigate(`/matches/${comparisonMatch.id}`)}>
+            View updated match results
           </Button>
-          <Button variant="ghost" onClick={() => navigate(`/matches/${match.id}`)}>
-            Cancel
-          </Button>
-        </div>
+          {match.analysisSource === 'sample' && (
+            <p className="mt-3 text-xs text-muted">
+              The original score is from the saved match report. The updated score is from the live match engine on this tailored resume.
+            </p>
+          )}
+        </Card>
+      )}
+
+      {(complete || editing) && activeContent && (
+        <>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-charcoal">Tailored resume</h2>
+            {!editing && (
+              <Tabs
+                value={compare}
+                onChange={(next) => setCompare(next as typeof compare)}
+                items={[
+                  { id: 'split', label: 'Compare' },
+                  { id: 'original', label: 'Original' },
+                  { id: 'tailored', label: 'Tailored' },
+                ]}
+              />
+            )}
+          </div>
+
+          {editing && draft ? (
+            <div className="mt-4 space-y-4">
+              <ResumeEditor resume={draft} onChange={setDraft} />
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void onSaveEdits()} disabled={busy !== null}>
+                  Save Changes
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEditing(false)
+                    setDraft(null)
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className={`mt-4 grid gap-4 ${compare === 'split' && original ? 'lg:grid-cols-2' : ''}`}>
+                {(compare === 'split' || compare === 'original') && original && (
+                  <ResumeDocument title="Original resume" resume={original} muted />
+                )}
+                {(compare === 'split' || compare === 'tailored') && (
+                  <ResumeDocument title="Tailored resume" resume={activeContent} highlight />
+                )}
+              </div>
+              <div className="mt-6 flex flex-wrap items-center gap-2">
+                {version?.isSelected ? (
+                  <span className="inline-flex items-center rounded-xl bg-olive-soft px-3 py-2 text-sm font-semibold text-olive-dark">
+                    Selected for this job
+                  </span>
+                ) : (
+                  <Button onClick={() => void onKeep()} disabled={busy !== null}>
+                    Keep This Resume
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setDraft(structuredClone(activeContent))
+                    setEditing(true)
+                  }}
+                >
+                  <Pencil size={16} />
+                  Edit Resume
+                </Button>
+                <Button variant="secondary" onClick={() => startGeneration(true)} disabled={Boolean(inflight)}>
+                  <RefreshCw size={16} />
+                  Regenerate
+                </Button>
+                <Button variant="secondary" onClick={() => void onDownload()}>
+                  <Download size={16} />
+                  Download PDF
+                </Button>
+              </div>
+            </>
+          )}
+        </>
       )}
     </div>
   )
 }
 
-function changedSections(original: TailoredResumeContent, tailored: TailoredResumeContent): string[] {
-  const sections: string[] = []
-  if (original.summary !== tailored.summary) sections.push('summary')
-  if (original.skills.join('|') !== tailored.skills.join('|')) sections.push('skills')
-  if (JSON.stringify(original.experience) !== JSON.stringify(tailored.experience)) sections.push('experience')
-  return sections
+function ScoreStat({
+  label,
+  value,
+  highlight,
+  prefix = '',
+  suffix = ' / 100',
+}: {
+  label: string
+  value: number
+  highlight?: boolean
+  prefix?: string
+  suffix?: string
+}) {
+  return (
+    <div className={`rounded-2xl px-4 py-3 ${highlight ? 'bg-olive-soft' : 'bg-canvas'}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">{label}</p>
+      <p className="mt-1 font-display text-3xl text-charcoal">
+        {prefix}
+        {value}
+        {suffix}
+      </p>
+    </div>
+  )
 }
 
 function PlanList({
@@ -374,54 +507,5 @@ function PlanList({
         ))}
       </div>
     </div>
-  )
-}
-
-function ResumeEditor({
-  resume,
-  onChange,
-}: {
-  resume: TailoredResumeContent
-  onChange: (next: TailoredResumeContent) => void
-}) {
-  return (
-    <Card className="p-6">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-olive">Edit tailored resume</p>
-      <div className="mt-4 space-y-4">
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium">Summary</span>
-          <TextArea rows={4} value={resume.summary} onChange={(e) => onChange({ ...resume, summary: e.target.value })} />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium">Skills (comma separated)</span>
-          <TextInput
-            value={resume.skills.join(', ')}
-            onChange={(e) =>
-              onChange({
-                ...resume,
-                skills: e.target.value.split(',').map((item) => item.trim()).filter(Boolean),
-              })
-            }
-          />
-        </label>
-        {resume.experience.map((role, index) => (
-          <label key={`${role.company}-${index}`} className="block text-sm">
-            <span className="mb-1 block font-medium">
-              {role.title} · {role.company}
-            </span>
-            <TextArea
-              rows={5}
-              value={role.bullets.join('\n')}
-              onChange={(e) => {
-                const experience = resume.experience.map((item, itemIndex) =>
-                  itemIndex === index ? { ...item, bullets: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean) } : item,
-                )
-                onChange({ ...resume, experience })
-              }}
-            />
-          </label>
-        ))}
-      </div>
-    </Card>
   )
 }

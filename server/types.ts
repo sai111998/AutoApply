@@ -14,6 +14,9 @@ export interface AnalyzeJobRequestBody {
   company?: string
   location?: string
   jobUrl?: string
+  resumeProfile?: unknown
+  jobProfile?: unknown
+  persistResults?: boolean
 }
 
 export interface AnalysisResult {
