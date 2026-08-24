@@ -17,9 +17,12 @@ import { planFromMatch } from '@/lib/tailor-plan'
 import {
   findActiveVersion,
   getInflightGeneration,
+  isStaleGenerating,
+  markGeneratingFailed,
   shouldStartGeneration,
   startTailorGeneration,
   tailorSessionKey,
+  USER_TAILOR_ERROR,
 } from '@/lib/tailor-session'
 import { scoreChange, sanitizeTailoredContent } from '@/lib/tailored-text'
 import type { JobMatch, ResumeVersion, TailoredResumeContent } from '@/types/domain'
@@ -81,8 +84,9 @@ export function TailorResumePage() {
   const plan = version?.tailoringSummary?.skillsToEmphasize?.length ? version.tailoringSummary : previewPlan
   const tailored = draft ?? (version?.status === 'generating' ? null : version?.resumeContent ?? null)
   const original = version?.originalContent ?? null
-  const generating = Boolean(inflight) || version?.status === 'generating'
-  const failed = version?.status === 'failed' && !inflight
+  const staleGenerating = isStaleGenerating(version)
+  const generating = Boolean(inflight) || (version?.status === 'generating' && !staleGenerating)
+  const failed = (version?.status === 'failed' || staleGenerating) && !inflight
   const complete = Boolean(tailored && (version?.status === 'completed' || version?.status === 'kept') && !editing)
 
   const requestPayload = useMemo(
@@ -136,6 +140,10 @@ export function TailorResumePage() {
     if (bootstrapped.current === key) return
     bootstrapped.current = key
     const existing = findActiveVersion(resumeVersions, resume.id, job.id)
+    if (existing?.status === 'generating' && isStaleGenerating(existing) && !getInflightGeneration(sessionKey)) {
+      void saveResumeVersion(markGeneratingFailed(existing))
+      return
+    }
     if (shouldStartGeneration(existing, false) || (existing?.status === 'generating' && !getInflightGeneration(sessionKey))) {
       startGeneration(false)
     }
@@ -307,10 +315,8 @@ export function TailorResumePage() {
 
       {generating && (
         <Card className="mt-6 p-6">
-          <p className="text-sm font-semibold text-olive-dark">
-            Analyzing your resume and tailoring it for this job...
-          </p>
-          <p className="mt-1 text-sm text-muted">You can leave this page. Generation continues in the background.</p>
+          <p className="text-sm font-semibold text-olive-dark">Generating your tailored resume...</p>
+          <p className="mt-1 text-sm text-muted">This usually takes less than a minute. Switching pages in JobPilot keeps this request running.</p>
           <ol className="mt-5 space-y-3">
             {PROGRESS_STEPS.map((label, index) => {
               const done = index < stepIndex
@@ -344,8 +350,8 @@ export function TailorResumePage() {
 
       {failed && (
         <Card className="mt-6 p-6">
-          <h2 className="text-lg font-semibold text-charcoal">Tailoring did not finish</h2>
-          <p className="mt-2 text-sm text-muted">{version?.warnings[0] || 'Please try again. Your master resume is unchanged.'}</p>
+          <h2 className="text-lg font-semibold text-charcoal">Resume tailoring failed.</h2>
+          <p className="mt-2 text-sm text-muted">{version?.warnings[0] || USER_TAILOR_ERROR}</p>
           <Button className="mt-4" onClick={() => startGeneration(true)}>
             <RefreshCw size={16} />
             Try Again

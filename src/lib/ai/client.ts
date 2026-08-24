@@ -128,18 +128,33 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
 }
 
 export async function tailorResumeRequest(payload: Record<string, unknown>) {
-  const response = await fetch(apiUrl('/api/resumes/tailor'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
-  if (!body) throw new Error('Resume tailoring returned an unexpected payload.')
-  if (!response.ok && response.status !== 422) {
-    const message = typeof body.error === 'string' ? body.error : 'Resume tailoring failed.'
-    throw new Error(message)
-  }
-  return body
+  const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 70_000)
+    try {
+      const response = await fetch(apiUrl('/api/resumes/tailor'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!body) throw new Error('Your resume could not be tailored right now. Please try again.')
+      if (!response.ok && response.status !== 422) {
+        const raw = typeof body.error === 'string' ? body.error : ''
+        if (/key|secret|service.role|stack/i.test(raw) || !raw.trim()) {
+          throw new Error('Your resume could not be tailored right now. Please try again.')
+        }
+        throw new Error(raw)
+      }
+      return body
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Your resume could not be tailored right now. Please try again.')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+    }
 }
 
 export async function validateTailoredResumeRequest(payload: Record<string, unknown>) {

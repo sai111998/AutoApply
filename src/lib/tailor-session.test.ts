@@ -5,6 +5,7 @@ import {
   clearInflightGenerations,
   findActiveVersion,
   getInflightGeneration,
+  isStaleGenerating,
   markVersionSelected,
   shouldStartGeneration,
   startTailorGeneration,
@@ -171,6 +172,156 @@ describe('tailor session persistence', () => {
     })
     expect(shouldStartGeneration(version({ status: 'generating', userId: 'user-a', jobId: 'job-1', sourceResumeId: 'resume-1' }), false)).toBe(false)
   })
+
+  it('does not stay generating when the generating persist throws', async () => {
+    const persist = vi.fn(async (item: ResumeVersion) => {
+      if (item.status === 'generating') throw new Error('schema cache: could not find the status column')
+    })
+    const tailor = vi.fn(async () => ({
+      status: 'complete',
+      tailored: sampleContent(),
+      original: sampleContent({ summary: 'Original' }),
+      plan: { skillsToEmphasize: ['Java'], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] },
+    }))
+    const session = startTailorGeneration({
+      userId: 'user-a',
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      analysisId: 'match-1',
+      versionName: 'Tailored',
+      payload: {},
+      persist,
+      tailor,
+    })
+    const result = await session.promise
+    expect(result.status).toBe('completed')
+    expect(tailor).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks failed when the LLM/tailor request throws', async () => {
+    const persist = vi.fn(async () => undefined)
+    const tailor = vi.fn(async () => {
+      throw new Error('LLM API returned 502')
+    })
+    const result = await startTailorGeneration({
+      userId: 'user-a',
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      analysisId: 'match-1',
+      versionName: 'Tailored',
+      payload: {},
+      persist,
+      tailor,
+    }).promise
+    expect(result.status).toBe('failed')
+    expect(result.warnings[0]).toMatch(/could not be tailored/i)
+    expect(getInflightGeneration(tailorSessionKey('user-a', 'resume-1', 'job-1'))).toBeNull()
+  })
+
+  it('marks failed when the tailor request never returns before the timeout', async () => {
+    const persist = vi.fn(async () => undefined)
+    const tailor = vi.fn(() => new Promise<Record<string, unknown>>(() => undefined))
+    const result = await startTailorGeneration({
+      userId: 'user-a',
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      analysisId: 'match-1',
+      versionName: 'Tailored',
+      payload: {},
+      persist,
+      tailor,
+      timeoutMs: 20,
+    }).promise
+    expect(result.status).toBe('failed')
+    const saved = persist.mock.calls.map((call) => call.at(0) as ResumeVersion | undefined)
+    expect(saved.some((item) => item?.status === 'failed')).toBe(true)
+  })
+
+  it('marks failed when completed persist throws after a successful tailor', async () => {
+    const persist = vi.fn(async (item: ResumeVersion) => {
+      if (item.status === 'completed') throw new Error('database down')
+    })
+    const tailor = vi.fn(async () => ({
+      status: 'complete',
+      tailored: sampleContent(),
+      original: sampleContent(),
+      plan: { skillsToEmphasize: ['Java'], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] },
+    }))
+    const result = await startTailorGeneration({
+      userId: 'user-a',
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      analysisId: 'match-1',
+      versionName: 'Tailored',
+      payload: {},
+      persist,
+      tailor,
+    }).promise
+    expect(result.status).toBe('failed')
+  })
+
+  it('does not auto-start a stale generating version without an inflight request', () => {
+    const stale = version({
+      status: 'generating',
+      updatedAt: '2026-08-24T00:00:00.000Z',
+      createdAt: '2026-08-24T00:00:00.000Z',
+    })
+    const now = Date.parse('2026-08-24T00:05:00.000Z')
+    expect(isStaleGenerating(stale, now)).toBe(true)
+    expect(shouldStartGeneration(stale, false, now)).toBe(false)
+    expect(findActiveVersion([stale, version({ id: 'ver-done', status: 'completed', updatedAt: '2026-08-24T00:01:00.000Z' })], 'resume-1', 'job-1', now)?.status).toBe('completed')
+  })
+
+  it('resumes a fresh generating version after refresh when nothing is in flight', () => {
+    const fresh = version({ status: 'generating', updatedAt: new Date().toISOString() })
+    expect(shouldStartGeneration(fresh, false)).toBe(true)
+  })
+
+  it('treats an invalid LLM payload as failed rather than generating', async () => {
+    const persist = vi.fn(async () => undefined)
+    const tailor = vi.fn(async () => ({
+      status: 'invalid',
+      tailored: null,
+      message: 'Some generated content could not be verified against your master resume. Please review and regenerate.',
+    }))
+    const result = await startTailorGeneration({
+      userId: 'user-a',
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      analysisId: 'match-1',
+      versionName: 'Tailored',
+      payload: {},
+      persist,
+      tailor,
+    }).promise
+    expect(result.status).toBe('failed')
+    expect(result.resumeContent.summary).toBe('')
+  })
+
+  it('starts tailoring even if the generating persist never resolves', async () => {
+    const persist = vi.fn((item: ResumeVersion) => {
+      if (item.status === 'generating') return new Promise<void>(() => undefined)
+      return Promise.resolve()
+    })
+    const tailor = vi.fn(async () => ({
+      status: 'complete',
+      tailored: sampleContent(),
+      original: sampleContent(),
+      plan: { skillsToEmphasize: ['Java'], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] },
+    }))
+    const result = await startTailorGeneration({
+      userId: 'user-a',
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      analysisId: 'match-1',
+      versionName: 'Tailored',
+      payload: {},
+      persist,
+      tailor,
+    }).promise
+    expect(tailor).toHaveBeenCalledTimes(1)
+    expect(result.status).toBe('completed')
+  })
 })
 
 describe('tailored resume scoring inputs', () => {
@@ -249,5 +400,17 @@ describe('resume version isolation', () => {
     expect(sql).toMatch(/status/)
     expect(sql).toMatch(/created_by/)
     expect(sql).toMatch(/is_selected/)
+  })
+})
+
+describe('resume version persist fallback', () => {
+  it('can persist without status columns when the 004 migration is missing', async () => {
+    const { resumeVersionCoreRow } = await import('./resume-versions')
+    const row = resumeVersionCoreRow(version())
+    expect(row).not.toHaveProperty('status')
+    expect(row).not.toHaveProperty('created_by')
+    expect(row).not.toHaveProperty('is_selected')
+    expect(row.resume_content).toBeTruthy()
+    expect(row.source_resume_id).toBe('resume-1')
   })
 })

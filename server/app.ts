@@ -28,7 +28,7 @@ export function createApp(options: AppOptions): Express {
   const persist = options.persist ?? persistAnalysis
 
   app.use(cors())
-  app.use(express.json({ limit: '1mb' }))
+  app.use(express.json({ limit: '2mb' }))
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -55,14 +55,33 @@ export function createApp(options: AppOptions): Express {
     },
   )
 
-  app.post('/api/resumes/tailor', express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
+  app.post('/api/resumes/tailor', async (req: Request, res: Response) => {
+    const started = Date.now()
     try {
       const request = parseTailorRequest(req.body)
+      console.info('[tailor] request', {
+        resumeId: request.resumeId ?? null,
+        jobId: request.jobId ?? null,
+        matchId: request.matchId ?? null,
+        resumeChars: request.resumeText.length,
+        jobChars: request.jobDescription.length,
+        llmConfigured: Boolean(options.config.llmApiKey),
+      })
       const result = await tailorResume(llm, request)
+      console.info('[tailor] response', {
+        status: result.status,
+        durationMs: Date.now() - started,
+        hasTailored: Boolean(result.tailored),
+      })
       res.status(result.status === 'complete' ? 200 : 422).json(result)
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500
       const message = error instanceof Error ? error.message : 'Resume tailoring failed.'
+      console.info('[tailor] error', {
+        status,
+        durationMs: Date.now() - started,
+        code: error instanceof HttpError ? error.status : 'error',
+      })
       res.status(status).json({
         status: 'failed',
         plan: { skillsToEmphasize: [], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] },

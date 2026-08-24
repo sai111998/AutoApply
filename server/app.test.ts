@@ -267,6 +267,24 @@ Java, Spring Boot, PostgreSQL
     expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
   })
 
+  it('returns failed instead of hanging when the LLM times out', async () => {
+    const { HttpError } = await import('./types')
+    const app = createApp({
+      config,
+      llm: llmStub({
+        extractJson: vi.fn().mockRejectedValue(new HttpError(504, 'The analysis model timed out. Please try again.')),
+      }),
+    })
+    const response = await request(app).post('/api/resumes/tailor').send({
+      resumeText,
+      jobDescription: 'Senior Java Software Engineer. Required: Java, Spring Boot.',
+    })
+    expect(response.status).toBe(504)
+    expect(response.body.status).toBe('failed')
+    expect(response.body.tailored).toBeNull()
+    expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
+  })
+
   it('returns a PDF for a verified tailored resume', async () => {
     const app = createApp({ config, llm: llmStub() })
     const response = await request(app).post('/api/resumes/pdf').send({

@@ -6,6 +6,10 @@ import type { ResumeVersion, TailoredResumeContent, TailoringPlan } from '@/type
 export type TailorRequestFn = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>
 export type PersistVersionFn = (version: ResumeVersion) => Promise<void>
 
+export const GENERATION_TIMEOUT_MS = 70_000
+export const STALE_GENERATING_MS = 90_000
+export const USER_TAILOR_ERROR = 'Your resume could not be tailored right now. Please try again.'
+
 export interface TailorGenerationInput {
   userId: string
   sourceResumeId: string
@@ -18,6 +22,8 @@ export interface TailorGenerationInput {
   existingVersionId?: string
   existingGenerationId?: string
   force?: boolean
+  timeoutMs?: number
+  now?: number
 }
 
 export interface InflightGeneration {
@@ -42,6 +48,18 @@ export function clearInflightGenerations() {
   inflight.clear()
 }
 
+export function logTailorEvent(event: string, details: Record<string, string | number | boolean | null | undefined>) {
+  console.info('[tailor]', event, details)
+}
+
+export function userFacingTailorError(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (/timeout|abort|network|fetch|failed to fetch|could not be tailored/i.test(message)) return USER_TAILOR_ERROR
+  if (/key|secret|service.role|bearer|stack/i.test(message)) return USER_TAILOR_ERROR
+  if (message.trim()) return USER_TAILOR_ERROR
+  return USER_TAILOR_ERROR
+}
+
 export function normalizeResumeVersion(version: ResumeVersion): ResumeVersion {
   return {
     ...version,
@@ -56,31 +74,73 @@ export function normalizeResumeVersion(version: ResumeVersion): ResumeVersion {
   }
 }
 
+export function isStaleGenerating(version: ResumeVersion | null, now = Date.now()): boolean {
+  if (!version || version.status !== 'generating') return false
+  if (getInflightGeneration(tailorSessionKey(version.userId, version.sourceResumeId, version.jobId ?? ''))) {
+    return false
+  }
+  const updated = Date.parse(version.updatedAt || version.createdAt)
+  if (!Number.isFinite(updated)) return true
+  return now - updated > STALE_GENERATING_MS
+}
+
 export function findActiveVersion(
   versions: ResumeVersion[],
   sourceResumeId: string,
   jobId: string,
+  now = Date.now(),
 ): ResumeVersion | null {
   const matches = versions.filter(
     (item) => item.sourceResumeId === sourceResumeId && item.jobId === jobId,
   )
-  const generating = matches.find((item) => item.status === 'generating')
+  const generating = matches.find((item) => item.status === 'generating' && !isStaleGenerating(item, now))
   if (generating) return generating
   const usable = matches
     .filter((item) => item.status === 'completed' || item.status === 'kept')
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-  return usable[0] ?? matches.find((item) => item.status === 'failed') ?? null
+  if (usable[0]) return usable[0]
+  const staleGenerating = matches.find((item) => item.status === 'generating')
+  return matches.find((item) => item.status === 'failed') ?? staleGenerating ?? null
 }
 
-export function shouldStartGeneration(version: ResumeVersion | null, force: boolean): boolean {
+export function shouldStartGeneration(version: ResumeVersion | null, force: boolean, now = Date.now()): boolean {
   if (force) return true
   if (!version) return true
-  if (version.status === 'generating') return !getInflightGeneration(tailorSessionKey(version.userId, version.sourceResumeId, version.jobId ?? ''))
+  if (version.status === 'generating') {
+    if (getInflightGeneration(tailorSessionKey(version.userId, version.sourceResumeId, version.jobId ?? ''))) {
+      return false
+    }
+    if (isStaleGenerating(version, now)) return false
+    return true
+  }
   return false
 }
 
 function emptyPlan(): TailoringPlan {
   return { skillsToEmphasize: [], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] }
+}
+
+export async function withTimeout<T>(promise: Promise<T>, ms: number, message = USER_TAILOR_ERROR): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+function failedVersion(stub: ResumeVersion, error: unknown): ResumeVersion {
+  return {
+    ...stub,
+    status: 'failed',
+    warnings: [userFacingTailorError(error)],
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 export function startTailorGeneration(input: TailorGenerationInput): InflightGeneration {
@@ -90,8 +150,9 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
 
   const generationId = input.existingGenerationId || createId()
   const versionId = input.existingVersionId || createId()
-  const startedAt = Date.now()
-  const now = new Date().toISOString()
+  const startedAt = input.now ?? Date.now()
+  const now = new Date(startedAt).toISOString()
+  const timeoutMs = input.timeoutMs ?? GENERATION_TIMEOUT_MS
 
   const stub: ResumeVersion = {
     id: versionId,
@@ -115,10 +176,24 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
   }
 
   const promise = (async () => {
-    await input.persist(stub)
+    logTailorEvent('start', {
+      generationId,
+      versionId,
+      resumeId: input.sourceResumeId,
+      jobId: input.jobId,
+      matchId: input.analysisId,
+    })
     try {
+      void input.persist(stub).catch((error) => {
+        logTailorEvent('persist-generating-failed', {
+          generationId,
+          versionId,
+          reason: error instanceof Error ? 'persist_error' : 'unknown',
+        })
+      })
+
       const tailor = input.tailor ?? tailorResumeRequest
-      const result = await tailor(input.payload)
+      const result = await withTimeout(tailor(input.payload), timeoutMs)
       const status = result.status === 'complete' ? 'completed' : 'failed'
       const tailored = (result.tailored as TailoredResumeContent | null) ?? null
       const original = (result.original as TailoredResumeContent | null) ?? null
@@ -131,26 +206,26 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
         tailoringSummary: plan,
         changes: tailored?.changes ?? [],
         warnings: [
-          ...(Array.isArray(result.validation) ? [] : []),
           ...(tailored?.warnings ?? []),
-          ...(status === 'failed' && message ? [message] : []),
-        ],
+          ...(status === 'failed' ? [message && !/key|secret|service.role|stack/i.test(message) ? message : USER_TAILOR_ERROR] : []),
+        ].filter(Boolean) as string[],
         status,
         updatedAt: new Date().toISOString(),
       }
       if (status === 'failed' && !completed.warnings.length) {
-        completed.warnings = ['Some generated content could not be verified against your master resume. Please review and regenerate.']
+        completed.warnings = [USER_TAILOR_ERROR]
       }
       await input.persist(completed)
+      logTailorEvent('done', { generationId, versionId, status: completed.status })
       return completed
     } catch (error) {
-      const failed: ResumeVersion = {
-        ...stub,
-        status: 'failed',
-        warnings: [error instanceof Error ? error.message : 'Resume tailoring failed.'],
-        updatedAt: new Date().toISOString(),
+      const failed = failedVersion(stub, error)
+      logTailorEvent('failed', { generationId, versionId, status: 'failed' })
+      try {
+        await input.persist(failed)
+      } catch {
+        logTailorEvent('persist-failed-error', { generationId, versionId })
       }
-      await input.persist(failed)
       return failed
     }
   })()
@@ -170,4 +245,13 @@ export function markVersionSelected(versions: ResumeVersion[], versionId: string
     if (jobId && item.jobId === jobId && item.isSelected) return { ...item, isSelected: false }
     return item
   })
+}
+
+export function markGeneratingFailed(version: ResumeVersion): ResumeVersion {
+  return {
+    ...version,
+    status: 'failed',
+    warnings: version.warnings.length ? version.warnings : [USER_TAILOR_ERROR],
+    updatedAt: new Date().toISOString(),
+  }
 }

@@ -575,11 +575,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const saveResumeVersion = useCallback(
     async (version: ResumeVersion) => {
+      const latest = snapshotRef.current.resumeVersions?.find((item) => item.id === version.id)
+      if (
+        latest &&
+        version.status === 'generating' &&
+        (latest.status === 'completed' || latest.status === 'kept' || latest.status === 'failed')
+      ) {
+        return
+      }
       replace((current) => ({
         ...current,
         resumeVersions: upsertById(current.resumeVersions ?? [], version),
       }))
       if (isDemo || !supabase) return
+      if (version.status === 'generating') return
       await persistResumeVersion(supabase, version)
     },
     [isDemo, replace],
