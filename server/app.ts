@@ -10,6 +10,10 @@ import {
   type PersistFn,
 } from './services/analysis'
 import { extractResumeText } from './services/resume-text'
+import { parseTailorRequest } from './services/tailor-request'
+import { tailorResume, validateSubmittedResume } from './tailor/engine'
+import { parseTailoredResume } from './tailor/parse'
+import { renderResumePdf } from './tailor/pdf'
 import { HttpError } from './types'
 
 export interface AppOptions {
@@ -50,6 +54,78 @@ export function createApp(options: AppOptions): Express {
       }
     },
   )
+
+  app.post('/api/resumes/tailor', express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
+    try {
+      const request = parseTailorRequest(req.body)
+      const result = await tailorResume(llm, request)
+      res.status(result.status === 'complete' ? 200 : 422).json(result)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Resume tailoring failed.'
+      res.status(status).json({
+        status: 'failed',
+        plan: { skillsToEmphasize: [], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] },
+        original: {
+          summary: '',
+          skills: [],
+          experience: [],
+          projects: [],
+          education: [],
+          certifications: [],
+          changes: [],
+          omissions: [],
+          warnings: [],
+          contact: { name: '', email: '', location: '' },
+        },
+        tailored: null,
+        validation: { ok: false, errors: [] },
+        error: /key|secret|service.role|stack/i.test(message) ? 'Resume tailoring failed.' : message,
+      })
+    }
+  })
+
+  app.post('/api/resumes/validate-tailor', express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
+    try {
+      const request = parseTailorRequest(req.body)
+      const contact = {
+        name: request.candidateName?.trim() || '',
+        email: request.candidateEmail?.trim() || '',
+        location: request.candidateLocation?.trim() || '',
+      }
+      const tailored = parseTailoredResume((req.body as { tailored?: unknown }).tailored, contact)
+      const result = validateSubmittedResume(request, tailored)
+      res.status(result.validation.ok ? 200 : 422).json({
+        status: result.validation.ok ? 'complete' : 'invalid',
+        ...result,
+        message: result.validation.ok ? undefined : 'Some generated content could not be verified against your master resume. Please review and regenerate.',
+      })
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 400
+      const message = error instanceof Error ? error.message : 'Could not validate the tailored resume.'
+      res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Could not validate the tailored resume.' : message })
+    }
+  })
+
+  app.post('/api/resumes/pdf', express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
+    try {
+      const body = req.body as { tailored?: unknown; contact?: { name?: string; email?: string; location?: string } }
+      const contact = {
+        name: body.contact?.name?.trim() || '',
+        email: body.contact?.email?.trim() || '',
+        location: body.contact?.location?.trim() || '',
+      }
+      const tailored = parseTailoredResume(body.tailored ?? body, contact)
+      const pdf = await renderResumePdf(tailored)
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="${(tailored.contact.name || 'resume').replace(/[^\w.-]+/g, '_')}.pdf"`)
+      res.send(pdf)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 400
+      const message = error instanceof Error ? error.message : 'Could not generate the PDF.'
+      res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Could not generate the PDF.' : message })
+    }
+  })
 
   app.post('/api/jobs/analyze', async (req: Request, res: Response) => {
     try {

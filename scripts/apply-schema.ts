@@ -134,16 +134,23 @@ async function main() {
       'Cannot apply SQL from this environment. Set SUPABASE_ACCESS_TOKEN and VITE_SUPABASE_URL (or SUPABASE_PROJECT_REF).',
     )
     console.error(
-      'Until then, paste supabase/migrations/001_initial_schema.sql into the Supabase SQL Editor and run it.',
+      'Until then, paste supabase/migrations/001_initial_schema.sql, 002_resume_evidence.sql, and 003_resume_versions.sql into the Supabase SQL Editor and run them.',
     )
     process.exit(2)
   }
 
-  const sqlPath = path.resolve(process.cwd(), 'supabase/migrations/001_initial_schema.sql')
-  const sql = readFileSync(sqlPath, 'utf8')
-  console.log(`Applying ${sqlPath} to project ${projectRef}...`)
-  await applySql(accessToken, projectRef, sql)
-  console.log('Migration applied.')
+  const migrations = [
+    'supabase/migrations/001_initial_schema.sql',
+    'supabase/migrations/002_resume_evidence.sql',
+    'supabase/migrations/003_resume_versions.sql',
+  ]
+  for (const relative of migrations) {
+    const sqlPath = path.resolve(process.cwd(), relative)
+    const sql = readFileSync(sqlPath, 'utf8')
+    console.log(`Applying ${sqlPath} to project ${projectRef}...`)
+    await applySql(accessToken, projectRef, sql)
+    console.log(`Applied ${relative}.`)
+  }
 
   const verify = await runQuery(
     accessToken,
@@ -153,7 +160,7 @@ async function main() {
       from information_schema.tables
       where table_schema = 'public'
         and table_name in (
-          'profiles', 'skills', 'resumes', 'jobs', 'job_matches', 'applications', 'user_preferences'
+          'profiles', 'skills', 'resumes', 'jobs', 'job_matches', 'applications', 'user_preferences', 'resume_versions'
         )
       order by table_name;
     `,
@@ -189,7 +196,8 @@ async function main() {
         'on_auth_user_created',
         'profiles_set_updated_at',
         'applications_set_updated_at',
-        'user_preferences_set_updated_at'
+        'user_preferences_set_updated_at',
+        'resume_versions_set_updated_at'
       )
       order by event_object_table, trigger_name;
     `,

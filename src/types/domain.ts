@@ -137,6 +137,68 @@ export interface UserPreferences {
   updatedAt: string
 }
 
+export type TailorChangeKind = 'emphasis' | 'rewritten' | 'reordered' | 'omitted'
+
+export interface TailorChange {
+  kind: TailorChangeKind
+  label: string
+  before?: string
+  after?: string
+}
+
+export interface TailoredExperience {
+  company: string
+  title: string
+  dates: string
+  bullets: string[]
+}
+
+export interface TailoredProject {
+  name: string
+  bullets: string[]
+}
+
+export interface TailoredEducation {
+  degree: string
+  field: string
+  details: string
+}
+
+export interface TailoredResumeContent {
+  summary: string
+  skills: string[]
+  experience: TailoredExperience[]
+  projects: TailoredProject[]
+  education: TailoredEducation[]
+  certifications: string[]
+  changes: TailorChange[]
+  omissions: string[]
+  warnings: string[]
+  contact: { name: string; email: string; location: string }
+}
+
+export interface TailoringPlan {
+  skillsToEmphasize: string[]
+  relatedSkills: string[]
+  missingSkills: string[]
+  experienceToEmphasize: string[]
+}
+
+export interface ResumeVersion {
+  id: string
+  userId: string
+  sourceResumeId: string
+  jobId: string | null
+  analysisId: string | null
+  versionName: string
+  resumeContent: TailoredResumeContent
+  tailoringSummary: TailoringPlan
+  changes: TailorChange[]
+  warnings: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface WorkspaceSnapshot {
   profile: Profile
   skills: Skill[]
@@ -145,6 +207,7 @@ export interface WorkspaceSnapshot {
   matches: JobMatch[]
   applications: Application[]
   preferences: UserPreferences
+  resumeVersions: ResumeVersion[]
 }
 
 export const WORK_AUTHORIZATION_LABELS: Record<WorkAuthorization, string> = {

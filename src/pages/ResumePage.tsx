@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react'
-import { FileText, Star } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Download, FileText, Star, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, TextInput } from '@/components/ui/Field'
@@ -7,11 +8,13 @@ import { Pill } from '@/components/ui/Badge'
 import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
+import { downloadResumePdfRequest } from '@/lib/ai/client'
 import { formatDate, formatFileSize } from '@/lib/format'
 
 export function ResumePage() {
   const { isDemo } = useAuth()
-  const { resumes, uploadResume, setMasterResume } = useWorkspace()
+  const { resumes, jobs, uploadResume, setMasterResume, resumeVersions = [], renameResumeVersion, deleteResumeVersion } =
+    useWorkspace()
   const { notify } = useToast()
   const [file, setFile] = useState<File | null>(null)
   const [versionLabel, setVersionLabel] = useState('')
@@ -125,6 +128,94 @@ export function ResumePage() {
           </ul>
         </Card>
       </div>
+
+      <Card className="mt-6 overflow-hidden">
+        <div className="border-b border-line px-6 py-4">
+          <h2 className="text-lg font-semibold text-charcoal">Resume versions</h2>
+          <p className="text-sm text-muted">
+            Master files stay put. Tailored copies hang off the source resume and can be viewed, renamed, downloaded, or deleted independently.
+          </p>
+        </div>
+        <ul className="divide-y divide-fog">
+          {resumes.filter((item) => item.isMaster).map((master) => (
+            <li key={`master-${master.id}`} className="px-6 py-4">
+              <p className="font-semibold text-charcoal">Master Resume</p>
+              <p className="text-sm text-muted">{master.versionLabel} · {master.fileName}</p>
+            </li>
+          ))}
+          {resumeVersions.map((version) => {
+            const source = resumes.find((item) => item.id === version.sourceResumeId)
+            const job = jobs.find((item) => item.id === version.jobId)
+            return (
+              <li key={version.id} className="flex flex-col gap-3 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="pl-4">
+                  <p className="font-semibold text-charcoal">└ {version.versionName}</p>
+                  <p className="text-sm text-muted">
+                    From {source?.versionLabel ?? 'master'} · {job ? `${job.title} at ${job.company}` : 'Saved copy'} ·{' '}
+                    {formatDate(version.createdAt)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    to={`/resume/versions/${version.id}`}
+                    className="inline-flex items-center justify-center rounded-xl border border-line bg-white px-3 py-2 text-sm font-semibold text-charcoal hover:border-olive-border"
+                  >
+                    View
+                  </Link>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      const next = window.prompt('Version name', version.versionName)
+                      if (next?.trim()) void renameResumeVersion(version.id, next.trim())
+                    }}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      void downloadResumePdfRequest(version.resumeContent, version.resumeContent.contact)
+                        .then((blob) => {
+                          const url = URL.createObjectURL(blob)
+                          const link = document.createElement('a')
+                          link.href = url
+                          link.download = `${version.versionName.replace(/[^\w.-]+/g, '_')}.pdf`
+                          link.click()
+                          URL.revokeObjectURL(url)
+                        })
+                        .catch((error: unknown) => {
+                          notify(error instanceof Error ? error.message : 'Could not generate the PDF.', 'error')
+                        })
+                    }}
+                  >
+                    <Download size={15} />
+                    Download
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      if (window.confirm('Delete this tailored version? The master resume stays.')) {
+                        void deleteResumeVersion(version.id)
+                      }
+                    }}
+                  >
+                    <Trash2 size={15} />
+                    Delete
+                  </Button>
+                </div>
+              </li>
+            )
+          })}
+          {resumeVersions.length === 0 && (
+            <li className="px-6 py-10 text-sm text-muted">
+              No tailored versions yet. Open a match report and choose Tailor Resume.
+            </li>
+          )}
+        </ul>
+      </Card>
     </div>
   )
 }

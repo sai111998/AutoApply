@@ -15,6 +15,8 @@ import { MatchResultsPage } from '@/pages/MatchResultsPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { ResumePage } from '@/pages/ResumePage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { TailorResumePage } from '@/pages/TailorResumePage'
+import { ResumeVersionPage } from '@/pages/ResumeVersionPage'
 import { SignupPage } from '@/pages/SignupPage'
 
 function Preparing() {
@@ -87,8 +89,10 @@ export default function App() {
                   <Route path="/dashboard" element={<DashboardPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/resume" element={<ResumePage />} />
+                  <Route path="/resume/versions/:versionId" element={<ResumeVersionPage />} />
                   <Route path="/analyze" element={<JobAnalysisPage />} />
                   <Route path="/matches/:matchId" element={<MatchResultsPage />} />
+                  <Route path="/matches/:matchId/tailor" element={<TailorResumePage />} />
                   <Route path="/applications" element={<ApplicationsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Route>

@@ -110,12 +110,41 @@ export function MatchResultsPage() {
         title={job.title}
         description={`${job.company} · ${job.location || 'Location not specified'}`}
         actions={
-          <Button variant="secondary" onClick={() => navigate('/analyze?tab=history')}>
-            <ArrowLeft size={16} />
-            History
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                if (!resume) {
+                  notify('Upload a resume before tailoring.', 'error')
+                  return
+                }
+                if (!job.description.trim() || match.analysisStatus !== 'complete') {
+                  notify('Analyze a job before tailoring your resume.', 'error')
+                  return
+                }
+                navigate(`/matches/${match.id}/tailor`)
+              }}
+              disabled={!resume || !job.description.trim() || match.analysisStatus !== 'complete'}
+            >
+              Tailor Resume
+            </Button>
+            <Button variant="secondary" onClick={() => navigate('/analyze?tab=history')}>
+              <ArrowLeft size={16} />
+              History
+            </Button>
+          </div>
         }
       />
+
+      {!resume && (
+        <div className="mb-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">
+          Upload a resume before tailoring.
+        </div>
+      )}
+      {resume && (!job.description.trim() || match.analysisStatus !== 'complete') && (
+        <div className="mb-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">
+          Analyze a job before tailoring your resume.
+        </div>
+      )}
 
       {match.analysisSource === 'sample' && (
         <div className="mb-6 rounded-2xl border border-olive-border bg-olive-soft px-4 py-3 text-sm text-olive-dark">

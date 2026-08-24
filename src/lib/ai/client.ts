@@ -123,3 +123,42 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
     }
   }
 }
+
+export async function tailorResumeRequest(payload: Record<string, unknown>) {
+  const response = await fetch(apiUrl('/api/resumes/tailor'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  if (!body) throw new Error('Resume tailoring returned an unexpected payload.')
+  if (!response.ok && response.status !== 422) {
+    const message = typeof body.error === 'string' ? body.error : 'Resume tailoring failed.'
+    throw new Error(message)
+  }
+  return body
+}
+
+export async function validateTailoredResumeRequest(payload: Record<string, unknown>) {
+  const response = await fetch(apiUrl('/api/resumes/validate-tailor'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  if (!body) throw new Error('Could not validate the tailored resume.')
+  return { ok: response.ok, body }
+}
+
+export async function downloadResumePdfRequest(tailored: unknown, contact: { name?: string; email?: string; location?: string }) {
+  const response = await fetch(apiUrl('/api/resumes/pdf'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tailored, contact }),
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error || 'Could not generate the PDF.')
+  }
+  return response.blob()
+}

@@ -208,6 +208,87 @@ describe('POST /api/resumes/extract', () => {
   })
 })
 
+describe('POST /api/resumes/tailor', () => {
+  const resumeText = `Jordan Hale
+Austin, TX
+jordan.hale@example.com
+
+Summary
+Software Engineer with experience in Java development.
+
+Experience
+Backend Engineer, Northwind — 2021 to present
+- Developed Java and Spring Boot applications for payments APIs.
+
+Skills
+Java, Spring Boot, PostgreSQL
+`
+
+  it('rejects missing resume or job text', async () => {
+    const app = createApp({ config, llm: llmStub() })
+    const missingResume = await request(app).post('/api/resumes/tailor').send({
+      resumeText: ' ',
+      jobDescription: 'Java role',
+    })
+    expect(missingResume.status).toBe(400)
+
+    const missingJob = await request(app).post('/api/resumes/tailor').send({
+      resumeText,
+      jobDescription: ' ',
+    })
+    expect(missingJob.status).toBe(400)
+  })
+
+  it('returns an invalid payload when the model invents a skill', async () => {
+    const app = createApp({
+      config,
+      llm: llmStub({
+        extractJson: vi.fn().mockResolvedValue({
+          summary: 'Java engineer',
+          skills: ['Java', 'Kubernetes'],
+          experience: [],
+          projects: [],
+          education: [],
+          certifications: [],
+          changes: [],
+          omissions: [],
+          warnings: [],
+        }),
+      }),
+    })
+    const response = await request(app).post('/api/resumes/tailor').send({
+      resumeText,
+      jobDescription: 'Senior Java Software Engineer. Kubernetes required.',
+    })
+    expect(response.status).toBe(422)
+    expect(response.body.status).toBe('invalid')
+    expect(response.body.tailored).toBeNull()
+    expect(response.body.message).toMatch(/could not be verified/)
+    expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
+  })
+
+  it('returns a PDF for a verified tailored resume', async () => {
+    const app = createApp({ config, llm: llmStub() })
+    const response = await request(app).post('/api/resumes/pdf').send({
+      tailored: {
+        summary: 'Software Engineer with experience in Java development.',
+        skills: ['Java', 'Spring Boot'],
+        experience: [{ company: 'Northwind', title: 'Backend Engineer', dates: '2021 to present', bullets: ['Developed Java applications.'] }],
+        projects: [],
+        education: [],
+        certifications: [],
+        changes: [],
+        omissions: [],
+        warnings: [],
+      },
+      contact: { name: 'Jordan Hale', email: 'jordan.hale@example.com', location: 'Austin, TX' },
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers['content-type']).toMatch(/pdf/)
+    expect(response.body.length).toBeGreaterThan(500)
+  })
+})
+
 describe('GET /api/health', () => {
   it('reports whether the LLM key is present without returning it', async () => {
     const app = createApp({ config })

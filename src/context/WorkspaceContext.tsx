@@ -16,6 +16,7 @@ import {
   persistAnalysisRecords,
   upsertById,
 } from '@/lib/analysis-persist'
+import { deleteResumeVersionRecord, fetchResumeVersions, persistResumeVersion } from '@/lib/resume-versions'
 import { createId, nextActionForStatus, titleFromJobDescription } from '@/lib/format'
 import {
   emptyWorkspace,
@@ -38,6 +39,7 @@ import type {
   Profile,
   Resume,
   Skill,
+  ResumeVersion,
   UserPreferences,
   WorkspaceSnapshot,
 } from '@/types/domain'
@@ -65,6 +67,9 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   deleteAnalysis: (matchId: string) => Promise<void>
   updateApplication: (id: string, patch: Partial<Pick<Application, 'status' | 'notes' | 'dateApplied'>>) => Promise<void>
   savePreferences: (preferences: UserPreferences) => Promise<void>
+  saveResumeVersion: (version: ResumeVersion) => Promise<void>
+  renameResumeVersion: (id: string, versionName: string) => Promise<void>
+  deleteResumeVersion: (id: string) => Promise<void>
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
@@ -73,18 +78,33 @@ function persistDemo(snapshot: WorkspaceSnapshot) {
   sessionStorage.setItem(DEMO_WORKSPACE_KEY, JSON.stringify(snapshot))
 }
 
+function mergeById<T extends { id: string }>(current: T[] | undefined, extras: T[]): T[] {
+  const existing = current ?? []
+  const ids = new Set(existing.map((item) => item.id))
+  return [...existing, ...extras.filter((item) => !ids.has(item.id))]
+}
+
 function readDemo(): WorkspaceSnapshot {
+  const fresh = createSampleWorkspace()
   const raw = sessionStorage.getItem(DEMO_WORKSPACE_KEY)
   if (raw) {
     try {
-      return JSON.parse(raw) as WorkspaceSnapshot
+      const parsed = JSON.parse(raw) as WorkspaceSnapshot
+      const merged: WorkspaceSnapshot = {
+        ...parsed,
+        resumeVersions: parsed.resumeVersions ?? [],
+        resumes: mergeById(parsed.resumes, fresh.resumes),
+        jobs: mergeById(parsed.jobs, fresh.jobs),
+        matches: mergeById(parsed.matches, fresh.matches),
+      }
+      persistDemo(merged)
+      return merged
     } catch {
       sessionStorage.removeItem(DEMO_WORKSPACE_KEY)
     }
   }
-  const snapshot = createSampleWorkspace()
-  persistDemo(snapshot)
-  return snapshot
+  persistDemo(fresh)
+  return fresh
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -175,6 +195,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         const history = await fetchAnalysisHistory(supabase, userId)
         if (history.error) setHistoryError(history.error)
+        const versions = await fetchResumeVersions(supabase, userId)
 
         let base = emptyWorkspace(userId, user.email, user.fullName ?? '')
         if (profileRes.data) base = { ...base, profile: mapProfile(profileRes.data, user.email) }
@@ -194,6 +215,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           jobs: history.jobs,
           matches: history.matches,
           applications: history.applications,
+          resumeVersions: versions.versions,
         }
 
         if (!cancelled) setSnapshot(next)
@@ -540,6 +562,49 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [isDemo, replace],
   )
 
+  const saveResumeVersion = useCallback(
+    async (version: ResumeVersion) => {
+      replace((current) => ({
+        ...current,
+        resumeVersions: upsertById(current.resumeVersions ?? [], version),
+      }))
+      if (isDemo || !supabase) return
+      await persistResumeVersion(supabase, version)
+    },
+    [isDemo, replace],
+  )
+
+  const renameResumeVersion = useCallback(
+    async (id: string, versionName: string) => {
+      const now = new Date().toISOString()
+      replace((current) => ({
+        ...current,
+        resumeVersions: (current.resumeVersions ?? []).map((item) =>
+          item.id === id ? { ...item, versionName, updatedAt: now } : item,
+        ),
+      }))
+      if (isDemo || !supabase) return
+      const { error: updateError } = await supabase
+        .from('resume_versions')
+        .update({ version_name: versionName, updated_at: now })
+        .eq('id', id)
+      if (updateError) throw updateError
+    },
+    [isDemo, replace],
+  )
+
+  const deleteResumeVersion = useCallback(
+    async (id: string) => {
+      replace((current) => ({
+        ...current,
+        resumeVersions: (current.resumeVersions ?? []).filter((item) => item.id !== id),
+      }))
+      if (isDemo || !supabase || !user) return
+      await deleteResumeVersionRecord(supabase, user.id, id)
+    },
+    [isDemo, replace, user],
+  )
+
   const masterResume = snapshot.resumes.find((resume) => resume.isMaster) ?? null
 
   const value = useMemo<WorkspaceContextValue>(
@@ -559,10 +624,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteAnalysis,
       updateApplication,
       savePreferences,
+      saveResumeVersion,
+      renameResumeVersion,
+      deleteResumeVersion,
     }),
     [
       analyzeJob,
       deleteAnalysis,
+      deleteResumeVersion,
       error,
       historyError,
       historyLoading,
@@ -570,7 +639,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loading,
       masterResume,
       refreshAnalyses,
+      renameResumeVersion,
       savePreferences,
+      saveResumeVersion,
       saveProfile,
       setMasterResume,
       snapshot,

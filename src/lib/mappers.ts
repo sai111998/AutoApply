@@ -4,7 +4,10 @@ import type {
   JobMatch,
   Profile,
   Resume,
+  ResumeVersion,
   Skill,
+  TailoredResumeContent,
+  TailoringPlan,
   UserPreferences,
   WorkspaceSnapshot,
 } from '@/types/domain'
@@ -335,6 +338,55 @@ export function preferencesToRow(preferences: UserPreferences) {
   }
 }
 
+type ResumeVersionRow = {
+  id: string
+  user_id: string
+  source_resume_id: string
+  job_id: string | null
+  analysis_id: string | null
+  version_name: string
+  resume_content: TailoredResumeContent
+  tailoring_summary: TailoringPlan
+  changes: ResumeVersion['changes']
+  warnings: string[] | null
+  created_at: string
+  updated_at: string
+}
+
+export function mapResumeVersion(row: ResumeVersionRow): ResumeVersion {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    sourceResumeId: row.source_resume_id,
+    jobId: row.job_id,
+    analysisId: row.analysis_id,
+    versionName: row.version_name,
+    resumeContent: row.resume_content,
+    tailoringSummary: row.tailoring_summary,
+    changes: row.changes ?? [],
+    warnings: row.warnings ?? [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function resumeVersionToRow(version: ResumeVersion) {
+  return {
+    id: version.id,
+    user_id: version.userId,
+    source_resume_id: version.sourceResumeId,
+    job_id: version.jobId,
+    analysis_id: version.analysisId,
+    version_name: version.versionName,
+    resume_content: version.resumeContent,
+    tailoring_summary: version.tailoringSummary,
+    changes: version.changes,
+    warnings: version.warnings,
+    created_at: version.createdAt,
+    updated_at: version.updatedAt,
+  }
+}
+
 export function emptyWorkspace(userId: string, email: string, fullName = ''): WorkspaceSnapshot {
   const now = new Date().toISOString()
   return {
@@ -357,6 +409,7 @@ export function emptyWorkspace(userId: string, email: string, fullName = ''): Wo
     jobs: [],
     matches: [],
     applications: [],
+    resumeVersions: [],
     preferences: {
       userId,
       aiModelPreference: 'Use the server default',
