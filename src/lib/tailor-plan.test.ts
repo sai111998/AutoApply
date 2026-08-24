@@ -13,4 +13,29 @@ describe('planFromMatch', () => {
     expect(plan.missingSkills).toEqual(expect.arrayContaining(['Kubernetes']))
     expect(plan.skillsToEmphasize.join(' ')).not.toMatch(/Kubernetes/i)
   })
+
+  it('does not crash when the stored match report is missing optional buckets', () => {
+    const workspace = createSampleWorkspace()
+    const match = workspace.matches.find((item) => item.overallScore === 91 && item.skillsMissing.some((skill) => /kubernetes/i.test(skill.name)))
+    const resume = workspace.resumes.find((item) => item.id === match?.resumeId)
+    expect(match && resume).toBeTruthy()
+    const plan = planFromMatch(
+      {
+        ...match!,
+        report: {
+          matchScore: 91,
+          recommendation: 'APPLY',
+          confidence: 'HIGH',
+          requiredSkills: {
+            matched: [{ name: 'Java', classification: 'strong', source: 'required', evidence: '' }],
+            partial: [],
+            missing: [],
+          },
+        } as never,
+      },
+      resume!.parsedText,
+    )
+    expect(plan.skillsToEmphasize).toEqual(expect.arrayContaining(['Java']))
+    expect(plan.missingSkills).toEqual(expect.arrayContaining(['Kubernetes']))
+  })
 })

@@ -54,9 +54,13 @@ export function logTailorEvent(event: string, details: Record<string, string | n
 
 export function userFacingTailorError(error: unknown): string {
   const message = error instanceof Error ? error.message : ''
-  if (/timeout|abort|network|fetch|failed to fetch|could not be tailored/i.test(message)) return USER_TAILOR_ERROR
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    return 'The tailoring service could not be reached. Please try again.'
+  }
+  if (/timeout|abort|could not be tailored/i.test(message)) return USER_TAILOR_ERROR
   if (/key|secret|service.role|bearer|stack/i.test(message)) return USER_TAILOR_ERROR
-  if (message.trim()) return USER_TAILOR_ERROR
+  if (/could not be verified/i.test(message)) return message
+  if (message.trim() && message.length < 180 && !/undefined|null/.test(message)) return message
   return USER_TAILOR_ERROR
 }
 
@@ -207,7 +211,11 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
         changes: tailored?.changes ?? [],
         warnings: [
           ...(tailored?.warnings ?? []),
-          ...(status === 'failed' ? [message && !/key|secret|service.role|stack/i.test(message) ? message : USER_TAILOR_ERROR] : []),
+          ...(status === 'failed'
+            ? [message && !/key|secret|service.role|stack/i.test(message) ? message : USER_TAILOR_ERROR]
+            : message && !/key|secret|service.role|stack/i.test(message)
+              ? [message]
+              : []),
         ].filter(Boolean) as string[],
         status,
         updatedAt: new Date().toISOString(),
@@ -215,7 +223,28 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
       if (status === 'failed' && !completed.warnings.length) {
         completed.warnings = [USER_TAILOR_ERROR]
       }
-      await input.persist(completed)
+      try {
+        await input.persist(completed)
+      } catch (error) {
+        logTailorEvent('persist-completed-failed', {
+          generationId,
+          versionId,
+          status: completed.status,
+        })
+        if (completed.status === 'completed') {
+          const savedLocally: ResumeVersion = {
+            ...completed,
+            warnings: [...completed.warnings, 'This version is available here but could not be saved to your account yet.'],
+          }
+          try {
+            await input.persist(savedLocally)
+          } catch {
+            logTailorEvent('persist-completed-retry-failed', { generationId, versionId })
+          }
+          return savedLocally
+        }
+        throw error
+      }
       logTailorEvent('done', { generationId, versionId, status: completed.status })
       return completed
     } catch (error) {

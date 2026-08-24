@@ -267,7 +267,7 @@ Java, Spring Boot, PostgreSQL
     expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
   })
 
-  it('returns failed instead of hanging when the LLM times out', async () => {
+  it('returns a conservative draft when the LLM times out instead of failing the request', async () => {
     const { HttpError } = await import('./types')
     const app = createApp({
       config,
@@ -279,10 +279,37 @@ Java, Spring Boot, PostgreSQL
       resumeText,
       jobDescription: 'Senior Java Software Engineer. Required: Java, Spring Boot.',
     })
-    expect(response.status).toBe(504)
-    expect(response.body.status).toBe('failed')
-    expect(response.body.tailored).toBeNull()
+    expect(response.status).toBe(200)
+    expect(response.body.status).toBe('complete')
+    expect(response.body.tailored).toBeTruthy()
     expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
+  })
+
+  it('accepts a partial matchReport without crashing', async () => {
+    const { HttpError } = await import('./types')
+    const app = createApp({
+      config,
+      llm: llmStub({
+        extractJson: vi.fn().mockRejectedValue(new HttpError(503, 'LLM_API_KEY is not configured on the server.')),
+      }),
+    })
+    const response = await request(app).post('/api/resumes/tailor').send({
+      resumeText,
+      jobDescription: 'Senior Java Software Engineer. Required: Java, Spring Boot, PostgreSQL, Kubernetes.',
+      matchReport: {
+        matchScore: 91,
+        recommendation: 'APPLY',
+        requiredSkills: { matched: [{ name: 'Java' }], partial: [], missing: [{ name: 'Kubernetes' }] },
+      },
+      matchSignals: {
+        matched: ['Java', 'Spring Boot'],
+        missing: ['Kubernetes'],
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.status).toBe('complete')
+    expect(response.body.tailored).toBeTruthy()
+    expect(response.body.plan.missingSkills).toEqual(expect.arrayContaining(['Kubernetes']))
   })
 
   it('returns a PDF for a verified tailored resume', async () => {

@@ -157,6 +157,44 @@ describe('resume tailoring', () => {
     expect(result.tailored?.summary).toMatch(/Java and Spring Boot/)
   })
 
+  it('builds a plan from a partial matchReport without preferred or certification buckets', () => {
+    const plan = buildTailoringPlan(
+      {
+        matchScore: 91,
+        recommendation: 'APPLY',
+        requiredSkills: { matched: [{ name: 'Java' }], partial: [], missing: [{ name: 'Kubernetes' }] },
+      } as never,
+      javaResume,
+      { jobDescription: 'Senior Java Software Engineer. Kubernetes required.' },
+    )
+    expect(plan.skillsToEmphasize).toEqual(expect.arrayContaining(['Java']))
+    expect(plan.missingSkills).toEqual(expect.arrayContaining(['Kubernetes']))
+  })
+
+  it('falls back to a conservative draft when the LLM times out', async () => {
+    const { HttpError } = await import('../types')
+    const result = await tailorResume(
+      {
+        extractJson: vi.fn().mockRejectedValue(new HttpError(504, 'The analysis model timed out. Please try again.')),
+        extractResume: vi.fn(),
+        extractJob: vi.fn(),
+      },
+      {
+        resumeText: JAVA_RESUME_TEXT,
+        jobDescription: 'Senior Java Software Engineer. Java, Spring Boot, PostgreSQL.',
+        resumeProfile: javaResume,
+        matchReport: {
+          matchScore: 91,
+          recommendation: 'APPLY',
+          requiredSkills: { matched: [{ name: 'Java' }], partial: [], missing: [] },
+        } as never,
+      },
+    )
+    expect(result.status).toBe('complete')
+    expect(result.tailored?.skills).toEqual(expect.arrayContaining(['Java', 'Spring Boot']))
+    expect(result.message).toMatch(/unavailable/i)
+  })
+
   it('keeps partial matches from being invented for a moderate role', () => {
     const job: JobProfile = {
       ...strongJob,

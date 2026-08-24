@@ -15,19 +15,19 @@ export function planFromMatch(match: JobMatch, resumeText: string): TailoringPla
     return result
   }
 
-  const reportMatched = match.report
-    ? [...match.report.requiredSkills.matched, ...match.report.preferredSkills.matched].map((item) => item.name)
-    : []
-  const reportPartial = match.report
-    ? [...match.report.requiredSkills.partial, ...match.report.preferredSkills.partial].map((item) => item.name)
-    : []
-  const reportMissing = match.report
-    ? [
-        ...match.report.requiredSkills.missing,
-        ...match.report.preferredSkills.missing,
-        ...match.report.certifications.missing,
-      ].map((item) => item.name)
-    : []
+  const reportMatched = [
+    ...(match.report?.requiredSkills?.matched ?? []),
+    ...(match.report?.preferredSkills?.matched ?? []),
+  ].map((item) => item.name)
+  const reportPartial = [
+    ...(match.report?.requiredSkills?.partial ?? []),
+    ...(match.report?.preferredSkills?.partial ?? []),
+  ].map((item) => item.name)
+  const reportMissing = [
+    ...(match.report?.requiredSkills?.missing ?? []),
+    ...(match.report?.preferredSkills?.missing ?? []),
+    ...(match.report?.certifications?.missing ?? []),
+  ].map((item) => item.name)
 
   const skillsToEmphasize = unique(
     [...reportMatched, ...match.skillsMatched.map((item) => item.name)].filter(supported),
@@ -48,7 +48,7 @@ export function planFromMatch(match: JobMatch, resumeText: string): TailoringPla
     relatedSkills,
     missingSkills,
     experienceToEmphasize: unique([
-      ...(match.report?.responsibilities.strongMatches ?? []).map((item) => item.name),
+      ...(match.report?.responsibilities?.strongMatches ?? []).map((item) => item.name),
       ...match.strengths,
     ]),
   }

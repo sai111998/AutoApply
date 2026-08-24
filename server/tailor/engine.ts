@@ -3,7 +3,6 @@ import { emptyJobProfile, emptyResumeProfile, groundJobProfile, groundResumeProf
 import type { JobProfile, MatchReport, ResumeProfile } from '../match/types'
 import type { LlmClient } from '../services/llm'
 import { HttpError } from '../types'
-import { publicErrorMessage } from '../match/errors'
 import { buildConservativeResume, buildOriginalResume } from './conservative'
 import { parseTailoredResume } from './parse'
 import { buildTailoringPlan } from './plan'
@@ -31,9 +30,9 @@ function asJobProfile(value: unknown, jobText: string): JobProfile | null {
 }
 
 function asMatchReport(value: unknown): MatchReport | null {
-  if (!value || typeof value !== 'object') return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Partial<MatchReport>
-  if (typeof record.matchScore !== 'number' || !record.requiredSkills) return null
+  if (typeof record.matchScore !== 'number') return null
   return record as MatchReport
 }
 
@@ -81,7 +80,7 @@ export async function tailorResume(
       }),
     )
   } catch (error) {
-    if (error instanceof HttpError && error.status === 503) {
+    const fallback = () => {
       const validation = validateTailoredResume(conservative, source, plan.missingSkills)
       return {
         status: validation.ok ? 'complete' : 'invalid',
@@ -90,12 +89,15 @@ export async function tailorResume(
         tailored: validation.ok ? conservative : null,
         validation,
         message: validation.ok
-          ? 'Generated a conservative tailored draft because the AI model is not configured.'
+          ? 'Generated a conservative tailored draft because the AI model was unavailable.'
           : VALIDATION_USER_MESSAGE,
-      }
+      } satisfies TailorResponseBody
+    }
+    if (error instanceof HttpError && (error.status === 503 || error.status === 504 || error.status === 502)) {
+      return fallback()
     }
     if (error instanceof HttpError) throw error
-    throw new HttpError(502, publicErrorMessage(error, 'Resume tailoring failed.'))
+    return fallback()
   }
 
   let tailored: TailoredResume

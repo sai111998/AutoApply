@@ -31,17 +31,17 @@ export function buildTailoringPlan(
     ...(extras?.source?.skills ?? []),
   ]
   const matched = [
-    ...(report?.requiredSkills.matched ?? []),
-    ...(report?.preferredSkills.matched ?? []),
+    ...(report?.requiredSkills?.matched ?? []),
+    ...(report?.preferredSkills?.matched ?? []),
   ].map((item) => item.name)
   const partial = [
-    ...(report?.requiredSkills.partial ?? []),
-    ...(report?.preferredSkills.partial ?? []),
+    ...(report?.requiredSkills?.partial ?? []),
+    ...(report?.preferredSkills?.partial ?? []),
   ].map((item) => item.name)
   const missing = [
-    ...(report?.requiredSkills.missing ?? []),
-    ...(report?.preferredSkills.missing ?? []),
-    ...(report?.certifications.missing ?? []),
+    ...(report?.requiredSkills?.missing ?? []),
+    ...(report?.preferredSkills?.missing ?? []),
+    ...(report?.certifications?.missing ?? []),
   ].map((item) => item.name)
 
   const overlapFromText = (extras?.source?.skills ?? []).filter((skill) =>
@@ -73,7 +73,7 @@ export function buildTailoringPlan(
     relatedSkills,
     missingSkills,
     experienceToEmphasize: uniqueNames([
-      ...(report?.responsibilities.strongMatches ?? []).map((item) => item.name),
+      ...(report?.responsibilities?.strongMatches ?? []).map((item) => item.name),
       ...(report?.strengths ?? []),
       ...(extras?.signals?.experienceThemes ?? []),
       ...(extras?.signals?.strengths ?? []),

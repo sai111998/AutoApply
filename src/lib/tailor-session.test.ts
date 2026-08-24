@@ -214,7 +214,7 @@ describe('tailor session persistence', () => {
       tailor,
     }).promise
     expect(result.status).toBe('failed')
-    expect(result.warnings[0]).toMatch(/could not be tailored/i)
+    expect(result.warnings[0]).toMatch(/502|could not be tailored/i)
     expect(getInflightGeneration(tailorSessionKey('user-a', 'resume-1', 'job-1'))).toBeNull()
   })
 
@@ -237,7 +237,7 @@ describe('tailor session persistence', () => {
     expect(saved.some((item) => item?.status === 'failed')).toBe(true)
   })
 
-  it('marks failed when completed persist throws after a successful tailor', async () => {
+  it('keeps a completed resume when saving the version fails', async () => {
     const persist = vi.fn(async (item: ResumeVersion) => {
       if (item.status === 'completed') throw new Error('database down')
     })
@@ -257,7 +257,9 @@ describe('tailor session persistence', () => {
       persist,
       tailor,
     }).promise
-    expect(result.status).toBe('failed')
+    expect(result.status).toBe('completed')
+    expect(result.warnings.some((item) => /could not be saved/i.test(item))).toBe(true)
+    expect(result.resumeContent.skills).toContain('Java')
   })
 
   it('does not auto-start a stale generating version without an inflight request', () => {
