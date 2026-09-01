@@ -59,14 +59,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       const sessionUser = session?.user
-      setUser(
-        sessionUser
-          ? {
-              id: sessionUser.id,
-              email: sessionUser.email ?? '',
-              fullName: sessionUser.user_metadata?.full_name as string | undefined,
-            }
-          : null,
+      const next = sessionUser
+        ? {
+            id: sessionUser.id,
+            email: sessionUser.email ?? '',
+            fullName: sessionUser.user_metadata?.full_name as string | undefined,
+          }
+        : null
+      setUser((current) =>
+        current?.id === next?.id && current?.email === next?.email && current?.fullName === next?.fullName
+          ? current
+          : next,
       )
     })
 

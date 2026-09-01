@@ -2,11 +2,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
+  claimAutoStart,
   clearInflightGenerations,
   findActiveVersion,
   getInflightGeneration,
+  hasClaimedAutoStart,
   isStaleGenerating,
   markVersionSelected,
+  mergeResumeVersion,
+  shouldAutoStartGeneration,
   shouldStartGeneration,
   startTailorGeneration,
   tailorSessionKey,
@@ -277,6 +281,38 @@ describe('tailor session persistence', () => {
   it('resumes a fresh generating version after refresh when nothing is in flight', () => {
     const fresh = version({ status: 'generating', updatedAt: new Date().toISOString() })
     expect(shouldStartGeneration(fresh, false)).toBe(true)
+    expect(shouldAutoStartGeneration([fresh], 'resume-1', 'job-1', 'user-a')).toBe(true)
+  })
+
+  it('does not auto-start again after a remount when a completed version exists', () => {
+    const existing = version({ status: 'completed' })
+    expect(shouldAutoStartGeneration([existing], 'resume-1', 'job-1', 'user-a')).toBe(false)
+  })
+
+  it('does not auto-start a failed version', () => {
+    expect(shouldAutoStartGeneration([version({ status: 'failed' })], 'resume-1', 'job-1', 'user-a')).toBe(false)
+  })
+
+  it('does not auto-start twice for the same user, job, and source resume', () => {
+    const key = tailorSessionKey('user-a', 'resume-1', 'job-1')
+    expect(shouldAutoStartGeneration([], 'resume-1', 'job-1', 'user-a')).toBe(true)
+    expect(claimAutoStart(key)).toBe(true)
+    expect(hasClaimedAutoStart(key)).toBe(true)
+    expect(shouldAutoStartGeneration([], 'resume-1', 'job-1', 'user-a')).toBe(false)
+    expect(claimAutoStart(key)).toBe(false)
+  })
+
+  it('does not let a generating stub overwrite a completed version', () => {
+    const completed = version({ status: 'completed' })
+    const generating = version({ status: 'generating', resumeContent: emptyTailoredContent() })
+    expect(mergeResumeVersion([completed], generating)).toEqual([completed])
+  })
+
+  it('prefers a completed version over an in-progress stub for the same job', () => {
+    const generating = version({ id: 'ver-gen', status: 'generating', updatedAt: new Date().toISOString() })
+    const completed = version({ id: 'ver-done', status: 'completed', updatedAt: '2026-08-24T01:01:00.000Z' })
+    expect(findActiveVersion([generating, completed], 'resume-1', 'job-1')?.id).toBe('ver-done')
+    expect(shouldAutoStartGeneration([generating, completed], 'resume-1', 'job-1', 'user-a')).toBe(false)
   })
 
   it('treats an invalid LLM payload as failed rather than generating', async () => {

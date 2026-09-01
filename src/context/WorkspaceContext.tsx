@@ -17,10 +17,10 @@ import {
   persistMatchRecord,
   upsertById,
 } from '@/lib/analysis-persist'
-import { deleteResumeVersionRecord, fetchResumeVersions, persistResumeVersion } from '@/lib/resume-versions'
+import { deleteResumeVersionRecord, deselectOtherResumeVersions, fetchResumeVersions, persistResumeVersion } from '@/lib/resume-versions'
 import { tailoredResumeToText } from '@/lib/tailored-text'
 import { jobProfileFromMatch, resumeProfileFromTailored } from '@/lib/evidence-profiles'
-import { markVersionSelected, normalizeResumeVersion } from '@/lib/tailor-session'
+import { markVersionSelected, mergeResumeVersion, normalizeResumeVersion } from '@/lib/tailor-session'
 import { createId, nextActionForStatus, titleFromJobDescription } from '@/lib/format'
 import {
   emptyWorkspace,
@@ -33,6 +33,7 @@ import {
   resumeToRow,
   skillToRow,
 } from '@/lib/mappers'
+import { userFacingPersistError } from '@/lib/persist-errors'
 import { supabase } from '@/lib/supabase'
 import { createSampleWorkspace } from '@/data/sample'
 import type {
@@ -174,7 +175,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      setLoading(true)
+      const userId = user.id
+      const alreadyHydrated = snapshotRef.current.profile.id === userId
+      if (!alreadyHydrated) setLoading(true)
       setError(null)
       setHistoryError(null)
 
@@ -191,7 +194,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const userId = user.id
         const [profileRes, skillsRes, resumesRes, preferencesRes] = await Promise.all([
           supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
           supabase.from('skills').select('*').eq('user_id', userId).order('name'),
@@ -207,6 +209,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const history = await fetchAnalysisHistory(supabase, userId)
         if (history.error) setHistoryError(history.error)
         const versions = await fetchResumeVersions(supabase, userId)
+        if (versions.error) {
+          setHistoryError(`resume versions: ${versions.error}`)
+        }
 
         let base = emptyWorkspace(userId, user.email, user.fullName ?? '')
         if (profileRes.data) base = { ...base, profile: mapProfile(profileRes.data, user.email) }
@@ -243,7 +248,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [authLoading, isDemo, user])
+  }, [authLoading, isDemo, user?.id])
 
   const saveProfile = useCallback(
     async (profile: Profile, skills: Skill[]) => {
@@ -575,17 +580,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const saveResumeVersion = useCallback(
     async (version: ResumeVersion) => {
-      const latest = snapshotRef.current.resumeVersions?.find((item) => item.id === version.id)
-      if (
-        latest &&
-        version.status === 'generating' &&
-        (latest.status === 'completed' || latest.status === 'kept' || latest.status === 'failed')
-      ) {
-        return
-      }
       replace((current) => ({
         ...current,
-        resumeVersions: upsertById(current.resumeVersions ?? [], version),
+        resumeVersions: mergeResumeVersion(current.resumeVersions ?? [], version),
       }))
       if (isDemo || !supabase) return
       if (version.status === 'generating') return
@@ -635,10 +632,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!selected) throw new Error('That tailored version was not found.')
       replace((state) => ({ ...state, resumeVersions: nextVersions }))
       if (!isDemo && supabase) {
-        const siblings = nextVersions.filter((item) => item.jobId === version.jobId)
-        for (const item of siblings) {
-          await persistResumeVersion(supabase, item)
-        }
+        await persistResumeVersion(supabase, selected)
+        await deselectOtherResumeVersions(supabase, selected)
       }
       return selected
     },
@@ -737,13 +732,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }))
 
       if (!isDemo && supabase) {
-        await persistMatchRecord(supabase, match)
-        await persistResumeVersion(supabase, updatedVersion)
-        if (select) {
-          const siblings = snapshotRef.current.resumeVersions.filter((item) => item.jobId === version.jobId)
-          for (const item of siblings) {
-            await persistResumeVersion(supabase, item)
-          }
+        try {
+          await persistResumeVersion(supabase, updatedVersion)
+          await persistMatchRecord(supabase, match)
+          if (select) await deselectOtherResumeVersions(supabase, updatedVersion)
+        } catch (error) {
+          throw new Error(userFacingPersistError(error, 'Could not keep the resume.'))
         }
       }
 

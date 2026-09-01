@@ -35,6 +35,7 @@ export interface InflightGeneration {
 }
 
 const inflight = new Map<string, InflightGeneration>()
+const autoStarted = new Set<string>()
 
 export function tailorSessionKey(userId: string, sourceResumeId: string, jobId: string): string {
   return `${userId}:${sourceResumeId}:${jobId}`
@@ -46,6 +47,21 @@ export function getInflightGeneration(key: string): InflightGeneration | null {
 
 export function clearInflightGenerations() {
   inflight.clear()
+  autoStarted.clear()
+}
+
+export function hasClaimedAutoStart(key: string): boolean {
+  return autoStarted.has(key)
+}
+
+export function claimAutoStart(key: string): boolean {
+  if (autoStarted.has(key)) return false
+  autoStarted.add(key)
+  return true
+}
+
+export function releaseAutoStart(key: string) {
+  autoStarted.delete(key)
 }
 
 export function logTailorEvent(event: string, details: Record<string, string | number | boolean | null | undefined>) {
@@ -97,12 +113,12 @@ export function findActiveVersion(
   const matches = versions.filter(
     (item) => item.sourceResumeId === sourceResumeId && item.jobId === jobId,
   )
-  const generating = matches.find((item) => item.status === 'generating' && !isStaleGenerating(item, now))
-  if (generating) return generating
   const usable = matches
     .filter((item) => item.status === 'completed' || item.status === 'kept')
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   if (usable[0]) return usable[0]
+  const generating = matches.find((item) => item.status === 'generating' && !isStaleGenerating(item, now))
+  if (generating) return generating
   const staleGenerating = matches.find((item) => item.status === 'generating')
   return matches.find((item) => item.status === 'failed') ?? staleGenerating ?? null
 }
@@ -110,6 +126,7 @@ export function findActiveVersion(
 export function shouldStartGeneration(version: ResumeVersion | null, force: boolean, now = Date.now()): boolean {
   if (force) return true
   if (!version) return true
+  if (version.status === 'completed' || version.status === 'kept' || version.status === 'failed') return false
   if (version.status === 'generating') {
     if (getInflightGeneration(tailorSessionKey(version.userId, version.sourceResumeId, version.jobId ?? ''))) {
       return false
@@ -118,6 +135,39 @@ export function shouldStartGeneration(version: ResumeVersion | null, force: bool
     return true
   }
   return false
+}
+
+export function shouldAutoStartGeneration(
+  versions: ResumeVersion[],
+  sourceResumeId: string,
+  jobId: string,
+  userId: string,
+  force = false,
+  now = Date.now(),
+): boolean {
+  if (force) return true
+  const key = tailorSessionKey(userId, sourceResumeId, jobId)
+  if (getInflightGeneration(key)) return false
+  const existing = findActiveVersion(versions, sourceResumeId, jobId, now)
+  if (!existing) return !hasClaimedAutoStart(key)
+  if (existing.status === 'completed' || existing.status === 'kept' || existing.status === 'failed') return false
+  return shouldStartGeneration(existing, false, now)
+}
+
+export function mergeResumeVersion(versions: ResumeVersion[], incoming: ResumeVersion): ResumeVersion[] {
+  const latest = versions.find((item) => item.id === incoming.id)
+  if (
+    latest &&
+    incoming.status === 'generating' &&
+    (latest.status === 'completed' || latest.status === 'kept' || latest.status === 'failed')
+  ) {
+    return versions
+  }
+  const index = versions.findIndex((item) => item.id === incoming.id)
+  if (index === -1) return [incoming, ...versions]
+  const next = [...versions]
+  next[index] = incoming
+  return next
 }
 
 function emptyPlan(): TailoringPlan {

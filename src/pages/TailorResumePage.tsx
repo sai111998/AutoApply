@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Download, Pencil, RefreshCw, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -15,15 +15,18 @@ import { downloadResumePdfRequest } from '@/lib/ai/client'
 import { formatDate } from '@/lib/format'
 import { planFromMatch } from '@/lib/tailor-plan'
 import {
+  claimAutoStart,
   findActiveVersion,
   getInflightGeneration,
   isStaleGenerating,
   markGeneratingFailed,
-  shouldStartGeneration,
+  releaseAutoStart,
+  shouldAutoStartGeneration,
   startTailorGeneration,
   tailorSessionKey,
   USER_TAILOR_ERROR,
 } from '@/lib/tailor-session'
+import { userFacingPersistError } from '@/lib/persist-errors'
 import { scoreChange, sanitizeTailoredContent } from '@/lib/tailored-text'
 import type { JobMatch, ResumeVersion, TailoredResumeContent } from '@/types/domain'
 
@@ -47,6 +50,7 @@ export function TailorResumePage() {
     saveResumeVersion,
     selectResumeVersion,
     analyzeTailoredVersion,
+    historyError,
   } = useWorkspace()
 
   const match = matches.find((item) => item.id === matchId)
@@ -62,12 +66,15 @@ export function TailorResumePage() {
   const [busy, setBusy] = useState<'keep' | 'save' | 'analyze' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [updatedMatch, setUpdatedMatch] = useState<JobMatch | null>(null)
-  const bootstrapped = useRef<string | null>(null)
 
   const canTailor = Boolean(resume?.parsedText.trim() && job?.description.trim() && match?.analysisStatus === 'complete')
   const sessionKey = user && resume && job ? tailorSessionKey(user.id, resume.id, job.id) : ''
   const inflight = sessionKey ? getInflightGeneration(sessionKey) : null
-  const version = resume && job ? findActiveVersion(resumeVersions, resume.id, job.id) : null
+  const storedVersion = resume && job ? findActiveVersion(resumeVersions, resume.id, job.id) : null
+  const version =
+    inflight != null
+      ? resumeVersions.find((item) => item.id === inflight.versionId) ?? storedVersion
+      : storedVersion
   const comparisonMatch =
     updatedMatch ??
     (version?.comparisonAnalysisId
@@ -115,7 +122,9 @@ export function TailorResumePage() {
     if (!user || !resume || !job || !match || !canTailor) return
     if (!force && inflight) return
     const existing = findActiveVersion(resumeVersions, resume.id, job.id)
-    if (!shouldStartGeneration(existing, force) && !force) return
+    if (!force && !shouldAutoStartGeneration(resumeVersions, resume.id, job.id, user.id)) return
+    if (force) releaseAutoStart(sessionKey)
+    else claimAutoStart(sessionKey)
     startTailorGeneration({
       userId: user.id,
       sourceResumeId: resume.id,
@@ -136,20 +145,18 @@ export function TailorResumePage() {
 
   useEffect(() => {
     if (!user || !resume || !job || !match || !canTailor) return
-    const key = `${match.id}:${resume.id}`
-    if (bootstrapped.current === key) return
-    bootstrapped.current = key
+    if (historyError?.startsWith('resume versions:')) return
     const existing = findActiveVersion(resumeVersions, resume.id, job.id)
     if (existing?.status === 'generating' && isStaleGenerating(existing) && !getInflightGeneration(sessionKey)) {
       void saveResumeVersion(markGeneratingFailed(existing))
       return
     }
-    if (shouldStartGeneration(existing, false) || (existing?.status === 'generating' && !getInflightGeneration(sessionKey))) {
+    if (shouldAutoStartGeneration(resumeVersions, resume.id, job.id, user.id)) {
       startGeneration(false)
     }
     // startGeneration reads latest workspace via persist callback
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canTailor, job?.id, match?.id, resume?.id, user?.id])
+  }, [canTailor, job?.id, match?.id, resume?.id, user?.id, historyError])
 
   useEffect(() => {
     if (!inflight) return
@@ -202,12 +209,18 @@ export function TailorResumePage() {
     setMessage(null)
     try {
       await selectResumeVersion(version.id)
+      notify('Resume saved.')
+    } catch (error) {
+      setMessage(userFacingPersistError(error, 'Could not keep the resume.'))
+      setBusy(null)
+      return
+    }
+    try {
       setBusy('analyze')
       const next = await analyzeTailoredVersion(version.id, match.id, { select: true })
       setUpdatedMatch(next)
-      notify('Tailored resume kept. Master resume is unchanged.')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not keep this resume.')
+      setMessage(userFacingPersistError(error, 'The match score could not be updated.'))
     } finally {
       setBusy(null)
     }
@@ -268,7 +281,7 @@ export function TailorResumePage() {
         title="AI Resume Tailoring"
         description="A job-specific version of your stored resume. The master file is never replaced unless you keep a version."
         actions={
-          <Button variant="secondary" onClick={() => navigate(`/matches/${match.id}`)}>
+          <Button type="button" variant="secondary" onClick={() => navigate(`/matches/${match.id}`)}>
             <ArrowLeft size={16} />
             Match results
           </Button>
@@ -340,7 +353,7 @@ export function TailorResumePage() {
 
       {busy === 'analyze' && (
         <div className="mt-6 rounded-2xl border border-olive-border bg-olive-soft px-4 py-3 text-sm text-olive-dark">
-          Your resume has been updated. Re-analyzing your match...
+          Your resume has been updated. Recalculating your match...
         </div>
       )}
 
@@ -352,7 +365,7 @@ export function TailorResumePage() {
         <Card className="mt-6 p-6">
           <h2 className="text-lg font-semibold text-charcoal">Resume tailoring failed.</h2>
           <p className="mt-2 text-sm text-muted">{version?.warnings[0] || USER_TAILOR_ERROR}</p>
-          <Button className="mt-4" onClick={() => startGeneration(true)}>
+          <Button type="button" className="mt-4" onClick={() => startGeneration(true)}>
             <RefreshCw size={16} />
             Try Again
           </Button>
@@ -372,7 +385,7 @@ export function TailorResumePage() {
               suffix=" points"
             />
           </div>
-          <Button className="mt-5" onClick={() => navigate(`/matches/${comparisonMatch.id}`)}>
+          <Button type="button" className="mt-5" onClick={() => navigate(`/matches/${comparisonMatch.id}`)}>
             View updated match results
           </Button>
           {match.analysisSource === 'sample' && (
@@ -404,7 +417,7 @@ export function TailorResumePage() {
             <div className="mt-4 space-y-4">
               <ResumeEditor resume={draft} onChange={setDraft} />
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void onSaveEdits()} disabled={busy !== null}>
+                <Button type="button" onClick={() => void onSaveEdits()} disabled={busy !== null}>
                   Save Changes
                 </Button>
                 <Button
@@ -434,11 +447,12 @@ export function TailorResumePage() {
                     Selected for this job
                   </span>
                 ) : (
-                  <Button onClick={() => void onKeep()} disabled={busy !== null}>
+                  <Button type="button" onClick={() => void onKeep()} disabled={busy !== null}>
                     Keep This Resume
                   </Button>
                 )}
                 <Button
+                  type="button"
                   variant="secondary"
                   onClick={() => {
                     setDraft(structuredClone(activeContent))
@@ -448,11 +462,11 @@ export function TailorResumePage() {
                   <Pencil size={16} />
                   Edit Resume
                 </Button>
-                <Button variant="secondary" onClick={() => startGeneration(true)} disabled={Boolean(inflight)}>
+                <Button type="button" variant="secondary" onClick={() => startGeneration(true)} disabled={Boolean(inflight)}>
                   <RefreshCw size={16} />
                   Regenerate
                 </Button>
-                <Button variant="secondary" onClick={() => void onDownload()}>
+                <Button type="button" variant="secondary" onClick={() => void onDownload()}>
                   <Download size={16} />
                   Download PDF
                 </Button>

@@ -89,6 +89,25 @@ describe('tailored resume match recalculation', () => {
     expect(profile.requiredSkills.map((item) => item.name)).toEqual(['Java', 'Kubernetes'])
   })
 
+  it('does not throw when the stored match report is missing preferred or certification buckets', () => {
+    const match = {
+      report: {
+        matchScore: 91,
+        requiredSkills: {
+          matched: [{ name: 'Java', classification: 'strong', source: 'required', evidence: 'Java' }],
+          partial: [],
+          missing: [],
+        },
+      },
+      skillsMatched: [{ name: 'Spring Boot' }],
+      skillsPartial: [],
+      skillsMissing: [{ name: 'Kubernetes' }],
+    } as unknown as JobMatch
+    expect(() => jobProfileFromMatch(match, { location: 'Austin, TX' })).not.toThrow()
+    const profile = jobProfileFromMatch(match, { location: 'Austin, TX' })
+    expect(profile.requiredSkills.map((item) => item.name)).toEqual(['Java'])
+  })
+
   it('infers years of experience from role dates so the engine does not invent them', () => {
     const profile = resumeProfileFromTailored(sample())
     expect(profile.yearsOfExperience).toBeGreaterThanOrEqual(4)

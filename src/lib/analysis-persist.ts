@@ -7,6 +7,7 @@ import {
   mapMatch,
   matchToRow,
 } from '@/lib/mappers'
+import { isForeignKeyError, isMissingColumnError, userFacingPersistError } from '@/lib/persist-errors'
 import type { Application, Job, JobMatch } from '@/types/domain'
 
 export function isUuid(value: string | undefined | null): value is string {
@@ -25,10 +26,26 @@ export function upsertById<T extends { id: string }>(items: T[], incoming: T): T
 }
 
 export async function persistMatchRecord(client: SupabaseClient, match: JobMatch) {
-  const matchResult = await client
-    .from('job_matches')
-    .upsert(matchToRow(match), { onConflict: 'id', defaultToNull: false })
-  if (matchResult.error) throw matchResult.error
+  const full = matchToRow(match)
+  let result = await client.from('job_matches').upsert(full, { onConflict: 'id', defaultToNull: false })
+
+  if (result.error && isMissingColumnError(result.error)) {
+    console.info('[tailor] persist-match-fallback-core-columns', { matchId: match.id })
+    const { parent_match_id: _parent, resume_version_id: _version, ...core } = full
+    result = await client.from('job_matches').upsert(core, { onConflict: 'id', defaultToNull: false })
+  }
+
+  if (result.error && isForeignKeyError(result.error)) {
+    console.info('[tailor] persist-match-fallback-nullable-fks', { matchId: match.id })
+    result = await client.from('job_matches').upsert(
+      { ...full, parent_match_id: null, resume_version_id: null },
+      { onConflict: 'id', defaultToNull: false },
+    )
+  }
+
+  if (result.error) {
+    throw new Error(userFacingPersistError(result.error, 'Could not save the updated match analysis.'))
+  }
 }
 
 export async function persistAnalysisRecords(

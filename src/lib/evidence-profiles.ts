@@ -50,23 +50,23 @@ export function resumeProfileFromTailored(content: TailoredResumeContent) {
 export function jobProfileFromMatch(match: JobMatch, job: Pick<Job, 'location'>) {
   const required = match.report
     ? [
-        ...match.report.requiredSkills.matched,
-        ...match.report.requiredSkills.partial,
-        ...match.report.requiredSkills.missing,
+        ...(match.report.requiredSkills?.matched ?? []),
+        ...(match.report.requiredSkills?.partial ?? []),
+        ...(match.report.requiredSkills?.missing ?? []),
       ]
     : [...match.skillsMatched, ...match.skillsMissing]
   const preferred = match.report
     ? [
-        ...match.report.preferredSkills.matched,
-        ...match.report.preferredSkills.partial,
-        ...match.report.preferredSkills.missing,
+        ...(match.report.preferredSkills?.matched ?? []),
+        ...(match.report.preferredSkills?.partial ?? []),
+        ...(match.report.preferredSkills?.missing ?? []),
       ]
     : match.skillsPartial
   const responsibilities = match.report
     ? [
-        ...match.report.responsibilities.strongMatches.map((item) => ({ text: item.name, required: true })),
-        ...match.report.responsibilities.partialMatches.map((item) => ({ text: item.name, required: false })),
-        ...match.report.responsibilities.gaps.map((item) => ({ text: item.name, required: true })),
+        ...(match.report.responsibilities?.strongMatches ?? []).map((item) => ({ text: item.name, required: true })),
+        ...(match.report.responsibilities?.partialMatches ?? []).map((item) => ({ text: item.name, required: false })),
+        ...(match.report.responsibilities?.gaps ?? []).map((item) => ({ text: item.name, required: true })),
       ]
     : []
 
@@ -85,11 +85,11 @@ export function jobProfileFromMatch(match: JobMatch, job: Pick<Job, 'location'>)
       required: false,
       degree: '',
       field: '',
-      details: match.report?.education.details || match.educationMatch?.summary || '',
+      details: match.report?.education?.details || match.educationMatch?.summary || '',
     },
     certifications: {
       required: [],
-      preferred: (match.report?.certifications.matched ?? []).map((item) => item.name),
+      preferred: (match.report?.certifications?.matched ?? []).map((item) => item.name),
     },
     location: job.location,
     workArrangement: '',

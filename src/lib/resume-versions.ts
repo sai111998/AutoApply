@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mapResumeVersion, resumeVersionToRow } from '@/lib/mappers'
+import { isForeignKeyError, isMissingColumnError, userFacingPersistError } from '@/lib/persist-errors'
 import type { ResumeVersion } from '@/types/domain'
 
 type ResumeVersionRow = ReturnType<typeof resumeVersionToRow>
@@ -25,20 +26,6 @@ export function resumeVersionCoreRow(version: ResumeVersion): Omit<
   }
 }
 
-function isMissingColumnError(error: { message?: string; code?: string } | null): boolean {
-  const message = error?.message ?? ''
-  return (
-    error?.code === 'PGRST204' ||
-    /could not find the '[\w]+' column/i.test(message) ||
-    /schema cache/i.test(message)
-  )
-}
-
-function isForeignKeyError(error: { message?: string; code?: string } | null): boolean {
-  const message = error?.message ?? ''
-  return error?.code === '23503' || /foreign key|violates foreign key/i.test(message)
-}
-
 export async function fetchResumeVersions(client: SupabaseClient, userId: string) {
   const result = await client
     .from('resume_versions')
@@ -61,21 +48,34 @@ export async function persistResumeVersion(client: SupabaseClient, version: Resu
   }
 
   if (result.error && isForeignKeyError(result.error)) {
-    console.info('[tailor] persist-fallback-nullable-fks', { versionId: version.id })
+    console.info('[tailor] persist-fallback-nullable-analysis', { versionId: version.id })
     const core = resumeVersionCoreRow(version)
     result = await client.from('resume_versions').upsert(
-      { ...core, analysis_id: null, job_id: core.job_id },
+      { ...core, analysis_id: null },
       { onConflict: 'id', defaultToNull: false },
     )
-    if (result.error && isForeignKeyError(result.error)) {
-      result = await client.from('resume_versions').upsert(
-        { ...core, analysis_id: null, job_id: null },
-        { onConflict: 'id', defaultToNull: false },
-      )
-    }
   }
 
-  if (result.error) throw result.error
+  if (result.error) {
+    throw new Error(userFacingPersistError(result.error, 'Could not keep the resume.'))
+  }
+}
+
+export async function deselectOtherResumeVersions(client: SupabaseClient, version: ResumeVersion) {
+  if (!version.jobId) return
+  const result = await client
+    .from('resume_versions')
+    .update({ is_selected: false })
+    .eq('user_id', version.userId)
+    .eq('job_id', version.jobId)
+    .neq('id', version.id)
+  if (result.error && isMissingColumnError(result.error)) {
+    console.info('[tailor] persist-deselect-missing-column', { versionId: version.id })
+    return
+  }
+  if (result.error) {
+    throw new Error(userFacingPersistError(result.error, 'Could not keep the resume.'))
+  }
 }
 
 export async function deleteResumeVersionRecord(client: SupabaseClient, userId: string, versionId: string) {
