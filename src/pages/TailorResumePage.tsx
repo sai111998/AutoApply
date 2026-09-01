@@ -20,6 +20,7 @@ import {
   nextTailoredVersionName,
   pdfContentForSelection,
   scoreChangeMessage,
+  scoreImprovementExplanation,
 } from '@/lib/application-selection'
 import { formatDate } from '@/lib/format'
 import { planFromMatch } from '@/lib/tailor-plan'
@@ -448,6 +449,22 @@ export function TailorResumePage() {
             />
           </div>
           <p className="mt-4 text-sm text-charcoal">{scoreChangeMessage(comparison.delta)}</p>
+          <p className="mt-2 text-sm text-muted">
+            {scoreImprovementExplanation({
+              delta: comparison.delta,
+              previousMatched: [
+                ...match.skillsMatched.map((item) => item.name),
+                ...(match.report?.requiredSkills?.matched ?? []).map((item) => item.name),
+                ...(match.report?.preferredSkills?.matched ?? []).map((item) => item.name),
+              ],
+              updatedMatched: [
+                ...(previewComparisonMatch?.skillsMatched ?? []).map((item) => item.name),
+                ...(previewComparisonMatch?.report?.requiredSkills?.matched ?? []).map((item) => item.name),
+                ...(previewComparisonMatch?.report?.preferredSkills?.matched ?? []).map((item) => item.name),
+              ],
+              emphasized: previewOption?.version?.tailoringSummary?.skillsToEmphasize ?? [],
+            })}
+          </p>
           {selectedComparisonMatch && (
             <Button type="button" className="mt-5" variant="secondary" onClick={() => navigate(`/matches/${selectedComparisonMatch.id}`)}>
               View selected match results

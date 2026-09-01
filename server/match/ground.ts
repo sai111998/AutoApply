@@ -1,4 +1,4 @@
-import { extractEvidenceSnippet, textContainsTerm } from './normalize'
+import { extractEvidenceSnippet, normalizeSkill, textContainsTerm } from './normalize'
 import type { EvidenceItem, JobProfile, JobSkill, ResumeProfile } from './types'
 
 function keepNamed(item: EvidenceItem, source: string): EvidenceItem | null {
@@ -191,17 +191,20 @@ export function allResumeSkills(profile: ResumeProfile): EvidenceItem[] {
 }
 
 export function mergeJobSkills(profile: JobProfile): { required: JobSkill[]; preferred: JobSkill[] } {
-  const required = [
-    ...profile.requiredSkills,
+  const preferredKeys = new Set(profile.preferredSkills.map((item) => normalizeSkill(item.name)))
+  const extras = [
     ...profile.languages,
     ...profile.frameworks,
     ...profile.cloud,
     ...profile.databases,
     ...profile.tools,
     ...profile.security,
-  ]
+  ].filter((item) => !preferredKeys.has(normalizeSkill(item.name)))
+  const required = [...profile.requiredSkills, ...extras]
+  const requiredBlob = required.map((item) => item.name).join(' ')
+  const preferredBlob = profile.preferredSkills.map((item) => item.name).join(' ')
   return {
-    required: keepJobSkills(required, required.map((item) => item.name).join(' ')),
-    preferred: profile.preferredSkills,
+    required: keepJobSkills(required, requiredBlob),
+    preferred: keepJobSkills(profile.preferredSkills, preferredBlob),
   }
 }

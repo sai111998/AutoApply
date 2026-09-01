@@ -1,3 +1,6 @@
+import { extractResumeLocal, mergeResumeProfiles } from '../../server/match/extract-local'
+import { emptyResumeProfile } from '../../server/match/ground'
+import { tailoredResumeToText } from '@/lib/tailored-text'
 import type { Job, JobMatch, TailoredResumeContent } from '@/types/domain'
 
 export function yearsFromExperience(experience: { dates: string }[]): number | null {
@@ -16,14 +19,9 @@ export function yearsFromExperience(experience: { dates: string }[]): number | n
 export function resumeProfileFromTailored(content: TailoredResumeContent) {
   const skills = content.skills.filter((name) => name.trim())
   const years = yearsFromExperience(content.experience)
-  return {
+  const structured = {
+    ...emptyResumeProfile(),
     skills: skills.map((name) => ({ name, evidence: name, years })),
-    languages: [],
-    frameworks: [],
-    cloud: [],
-    databases: [],
-    devops: [],
-    security: [],
     jobTitles: content.experience.map((role) => role.title).filter(Boolean),
     employers: content.experience.map((role) => role.company).filter(Boolean),
     yearsOfExperience: years,
@@ -40,11 +38,9 @@ export function resumeProfileFromTailored(content: TailoredResumeContent) {
         .filter(Boolean)
         .map((bullet) => ({ name: bullet, evidence: bullet })),
     ),
-    achievements: [],
     location: content.contact.location,
-    workArrangement: '',
-    workAuthorization: '',
   }
+  return mergeResumeProfiles(structured, extractResumeLocal(tailoredResumeToText(content)))
 }
 
 export function jobProfileFromMatch(match: JobMatch, job: Pick<Job, 'location'>) {

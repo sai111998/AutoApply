@@ -1,6 +1,7 @@
 import { hashResumeText, loadResumeProfile, saveResumeProfile } from '../match/cache'
 import { scoreMatch, toLegacyArrays } from '../match/engine'
 import { publicErrorMessage } from '../match/errors'
+import { enrichJobWithLocal, enrichResumeWithLocal } from '../match/extract-local'
 import { groundJobProfile, groundResumeProfile } from '../match/ground'
 import { parseJobProfile, parseResumeProfile } from '../match/parse-extract'
 import type { MatchReport } from '../match/types'
@@ -111,6 +112,9 @@ export async function analyzeJobDescription(
       throw new HttpError(502, error instanceof Error ? error.message : 'Invalid job extraction payload')
     }
   }
+
+  resumeProfile = enrichResumeWithLocal(resumeProfile, request.resumeText)
+  jobProfile = enrichJobWithLocal(jobProfile, request.jobDescription)
 
   const report = scoreMatch(resumeProfile, jobProfile, request.resumeText)
   const result = toAnalysisResult(report)

@@ -1,4 +1,5 @@
-import { extractEvidenceSnippet, relatedSkill, sameSkill, tokenOverlap } from './normalize'
+import { candidateImplements, extractEvidenceSnippet, relatedSkill, sameSkill, tokenOverlap } from './normalize'
+import { findLexiconTerms } from './lexicon'
 import { allResumeSkills, mergeJobSkills } from './ground'
 import type {
   Confidence,
@@ -31,6 +32,21 @@ function assessSkill(
     }
   }
 
+  const implemented = resumeSkills.find((item) => candidateImplements(skill.name, item.name))
+  if (implemented) {
+    return {
+      name: skill.name,
+      classification: 'strong',
+      source,
+      evidence: implemented.evidence || extractEvidenceSnippet(resumeText, implemented.name),
+    }
+  }
+
+  const snippet = extractEvidenceSnippet(resumeText, skill.name)
+  if (snippet) {
+    return { name: skill.name, classification: 'strong', source, evidence: snippet }
+  }
+
   const related = resumeSkills.find((item) => relatedSkill(skill.name, item.name) || relatedSkill(item.name, skill.name))
   if (related) {
     return {
@@ -39,11 +55,6 @@ function assessSkill(
       source,
       evidence: related.evidence || extractEvidenceSnippet(resumeText, related.name),
     }
-  }
-
-  const snippet = extractEvidenceSnippet(resumeText, skill.name)
-  if (snippet) {
-    return { name: skill.name, classification: 'strong', source, evidence: snippet }
   }
 
   return { name: skill.name, classification: 'missing', source, evidence: '' }
@@ -206,8 +217,37 @@ function analyzeLocation(resume: ResumeProfile, job: JobProfile): { status: FitS
   return { status: 'gap', details: `Resume states ${resumeLoc}. Posting asks for ${jobLoc}.` }
 }
 
+function resumeWorkEvidence(resume: ResumeProfile, resumeText: string): EvidenceItem[] {
+  const fromLines = resumeText
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-•*]\s*/, '').trim())
+    .filter((line) => line.length > 20)
+    .map((line) => ({ name: line, evidence: line }))
+  return [...resume.responsibilities, ...resume.achievements, ...resume.projects, ...fromLines]
+}
+
+function skillOverlapScore(left: string, right: string): number {
+  const leftTerms = findLexiconTerms(left)
+  const rightTerms = findLexiconTerms(right)
+  if (!leftTerms.length) return 0
+  let hits = 0
+  for (const term of leftTerms) {
+    if (
+      rightTerms.some(
+        (item) =>
+          sameSkill(item.name, term.name) ||
+          candidateImplements(term.name, item.name) ||
+          relatedSkill(term.name, item.name),
+      )
+    ) {
+      hits += 1
+    }
+  }
+  return hits / leftTerms.length
+}
+
 function analyzeResponsibilities(resume: ResumeProfile, job: JobProfile, resumeText: string) {
-  const resumeWork = [...resume.responsibilities, ...resume.achievements, ...resume.projects]
+  const resumeWork = resumeWorkEvidence(resume, resumeText)
   const strongMatches: SkillAssessment[] = []
   const partialMatches: SkillAssessment[] = []
   const gaps: SkillAssessment[] = []
@@ -216,7 +256,8 @@ function analyzeResponsibilities(resume: ResumeProfile, job: JobProfile, resumeT
     let best = 0
     let evidence = ''
     for (const work of resumeWork) {
-      const score = tokenOverlap(item.text, `${work.name} ${work.evidence}`)
+      const blob = `${work.name} ${work.evidence}`
+      const score = Math.max(tokenOverlap(item.text, blob), skillOverlapScore(item.text, blob) * 0.9)
       if (score > best) {
         best = score
         evidence = work.evidence || work.name

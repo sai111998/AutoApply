@@ -9,7 +9,7 @@ import { conservativeTailor, tailorResume } from './engine'
 import { buildTailoringPlan } from './plan'
 import { isPdfBuffer, renderResumePdf } from './pdf'
 import { collectSourceFacts } from './source'
-import { VALIDATION_USER_MESSAGE, validateTailoredResume } from './validate'
+import { validateTailoredResume } from './validate'
 import { createResumeVersion, deleteResumeVersion, versionsForUser } from './versions'
 import type { ResumeVersionRecord } from './versions'
 import type { TailoredResume } from './types'
@@ -273,29 +273,32 @@ describe('resume tailoring', () => {
     expect(conservative.tailored?.projects.map((item) => item.name)).toContain('Billing API')
   })
 
-  it('rejects an invalid AI response', async () => {
+  it('falls back to a conservative draft when the AI response is invalid', async () => {
     const result = await tailorResume(llmReturning({ hello: 'world' }), {
       resumeText: JAVA_RESUME_TEXT,
-      jobDescription: 'Senior Java Software Engineer',
+      jobDescription: 'Senior Java Software Engineer. Java, Spring Boot, PostgreSQL.',
       resumeProfile: javaResume,
     })
-    expect(result.status).toBe('invalid')
-    expect(result.tailored).toBeNull()
-    expect(result.message).toBe(VALIDATION_USER_MESSAGE)
+    expect(result.status).toBe('complete')
+    expect(result.tailored).toBeTruthy()
+    expect(result.tailored?.skills).toEqual(expect.arrayContaining(['Java', 'Spring Boot']))
+    expect(result.tailored?.skills).not.toContain('Kubernetes')
+    expect(result.message).toMatch(/conservative|invalid/i)
   })
 
-  it('rejects an unsupported skill hallucination', async () => {
+  it('does not keep an unsupported skill hallucination and falls back to a verified draft', async () => {
     const result = await tailorResume(llmReturning({ ...validTailored(), skills: ['Java', 'Kubernetes'] }), {
       resumeText: JAVA_RESUME_TEXT,
       jobDescription: 'Senior Java Software Engineer with Kubernetes',
       resumeProfile: javaResume,
       matchReport: scoreMatch(javaResume, strongJob, JAVA_RESUME_TEXT),
     })
-    expect(result.status).toBe('invalid')
-    expect(result.validation.errors.join(' ')).toMatch(/Kubernetes/)
+    expect(result.status).toBe('complete')
+    expect(result.tailored?.skills).not.toContain('Kubernetes')
+    expect(result.plan.missingSkills.join(' ')).toMatch(/Kubernetes/i)
   })
 
-  it('rejects an unsupported certification hallucination', async () => {
+  it('does not keep an unsupported certification hallucination', async () => {
     const result = await tailorResume(
       llmReturning({ ...validTailored(), certifications: ['CKA', 'AWS Certified Developer'] }),
       {
@@ -304,8 +307,9 @@ describe('resume tailoring', () => {
         resumeProfile: javaResume,
       },
     )
-    expect(result.status).toBe('invalid')
-    expect(result.validation.errors.join(' ')).toMatch(/CKA|certification/i)
+    expect(result.status).toBe('complete')
+    expect(result.tailored?.certifications).toContain('AWS Certified Developer')
+    expect(result.tailored?.certifications.join(' ')).not.toMatch(/CKA/i)
   })
 
   it('rejects a date modification attempt', () => {

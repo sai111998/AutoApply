@@ -165,4 +165,79 @@ describe('match engine scoring', () => {
     const grounded = groundResumeProfile(invented, 'Worked with Docker in the CI pipeline.')
     expect(grounded.skills.map((item) => item.name)).toEqual(['Docker'])
   })
+
+  it('treats REST APIs and RESTful services as a strong match', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      skills: [{ name: 'REST APIs', evidence: 'Designed and implemented REST APIs for internal and external applications.' }],
+    }
+    const job: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [{ name: 'RESTful services' }],
+    }
+    const report = scoreMatch(
+      resume,
+      job,
+      'Designed and implemented REST APIs for internal and external applications.',
+    )
+    expect(report.requiredSkills.matched.map((item) => item.name)).toEqual(expect.arrayContaining(['RESTful services']))
+    expect(report.requiredSkills.missing).toHaveLength(0)
+  })
+
+  it('treats AWS service evidence as a strong match for cloud-native AWS', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      cloud: [{ name: 'AWS', evidence: 'Deployed applications to AWS using EC2, S3 and RDS.' }],
+      skills: [{ name: 'AWS', evidence: 'Deployed applications to AWS using EC2, S3 and RDS.' }],
+    }
+    const job: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [{ name: 'AWS' }],
+    }
+    const report = scoreMatch(resume, job, 'Deployed applications to AWS using EC2, S3 and RDS.')
+    expect(report.requiredSkills.matched.some((item) => item.name === 'AWS')).toBe(true)
+  })
+
+  it('does not treat Docker as Kubernetes experience', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      devops: [{ name: 'Docker', evidence: 'Docker containerization.' }],
+      skills: [{ name: 'Docker', evidence: 'Docker containerization.' }],
+    }
+    const job: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [{ name: 'Kubernetes administration' }],
+    }
+    const report = scoreMatch(resume, job, 'Docker containerization.')
+    expect(report.requiredSkills.missing.some((item) => /kubernetes/i.test(item.name))).toBe(true)
+    expect(report.requiredSkills.matched.some((item) => /kubernetes/i.test(item.name))).toBe(false)
+  })
+
+  it('treats PostgreSQL as supporting a relational database requirement', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      databases: [{ name: 'PostgreSQL', evidence: 'Owned PostgreSQL schema changes for billing.' }],
+      skills: [{ name: 'PostgreSQL', evidence: 'Owned PostgreSQL schema changes for billing.' }],
+    }
+    const job: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [{ name: 'relational database' }],
+    }
+    const report = scoreMatch(resume, job, 'Owned PostgreSQL schema changes for billing.')
+    expect(report.requiredSkills.matched.some((item) => /relational database/i.test(item.name))).toBe(true)
+  })
+
+  it('does not treat Java as JavaScript', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      languages: [{ name: 'Java', evidence: 'Developed Java services.' }],
+      skills: [{ name: 'Java', evidence: 'Developed Java services.' }],
+    }
+    const job: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [{ name: 'JavaScript' }],
+    }
+    const report = scoreMatch(resume, job, 'Developed Java services.')
+    expect(report.requiredSkills.missing.some((item) => item.name === 'JavaScript')).toBe(true)
+  })
 })

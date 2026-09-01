@@ -239,7 +239,7 @@ Java, Spring Boot, PostgreSQL
     expect(missingJob.status).toBe(400)
   })
 
-  it('returns an invalid payload when the model invents a skill', async () => {
+  it('returns a verified conservative draft when the model invents a skill', async () => {
     const app = createApp({
       config,
       llm: llmStub({
@@ -260,10 +260,10 @@ Java, Spring Boot, PostgreSQL
       resumeText,
       jobDescription: 'Senior Java Software Engineer. Kubernetes required.',
     })
-    expect(response.status).toBe(422)
-    expect(response.body.status).toBe('invalid')
-    expect(response.body.tailored).toBeNull()
-    expect(response.body.message).toMatch(/could not be verified/)
+    expect(response.status).toBe(200)
+    expect(response.body.status).toBe('complete')
+    expect(response.body.tailored).toBeTruthy()
+    expect(JSON.stringify(response.body.tailored?.skills ?? [])).not.toMatch(/Kubernetes/i)
     expect(JSON.stringify(response.body)).not.toMatch(/test-key/)
   })
 

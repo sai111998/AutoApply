@@ -47,6 +47,7 @@ describe('resume tailoring page contracts', () => {
     expect(tailorPage).toMatch(/Resume versions/)
     expect(tailorPage).not.toMatch(/Changes made/)
     expect(tailorPage).toMatch(/scoreChangeMessage/)
+    expect(tailorPage).toMatch(/scoreImprovementExplanation/)
   })
 
   it('uses client-side routing for application tabs', () => {

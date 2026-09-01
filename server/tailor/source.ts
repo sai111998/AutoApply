@@ -1,4 +1,5 @@
 import { allResumeSkills } from '../match/ground'
+import { findLexiconTerms } from '../match/lexicon'
 import { textContainsTerm } from '../match/normalize'
 import type { ResumeProfile } from '../match/types'
 import type { SourceFacts, SourceRole, TailoredEducation } from './types'
@@ -105,6 +106,10 @@ export function collectSourceFacts(resumeText: string, profile: ResumeProfile | 
         }
       }
     }
+  }
+
+  for (const term of findLexiconTerms(resumeText)) {
+    if (term.name.trim()) skillSet.add(term.name)
   }
 
   const education = (profile?.education ?? []).length

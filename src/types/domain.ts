@@ -182,11 +182,23 @@ export interface TailoredResumeContent {
   contact: { name: string; email: string; location: string }
 }
 
+export interface JdCoverage {
+  requiredSupported: number
+  requiredTotal: number
+  preferredSupported: number
+  preferredTotal: number
+  overallSupported: number
+  overallTotal: number
+}
+
 export interface TailoringPlan {
   skillsToEmphasize: string[]
   relatedSkills: string[]
   missingSkills: string[]
   experienceToEmphasize: string[]
+  coverage?: JdCoverage
+  roleType?: string
+  targetRole?: string
 }
 
 export type ResumeVersionStatus =

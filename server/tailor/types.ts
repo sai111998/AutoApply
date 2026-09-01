@@ -44,11 +44,23 @@ export interface TailoredResume {
   contact: TailoredContact
 }
 
+export interface JdCoverage {
+  requiredSupported: number
+  requiredTotal: number
+  preferredSupported: number
+  preferredTotal: number
+  overallSupported: number
+  overallTotal: number
+}
+
 export interface TailoringPlan {
   skillsToEmphasize: string[]
   relatedSkills: string[]
   missingSkills: string[]
   experienceToEmphasize: string[]
+  coverage?: JdCoverage
+  roleType?: string
+  targetRole?: string
 }
 
 export interface SourceRole {
@@ -74,6 +86,10 @@ export interface SourceFacts {
 export interface ValidationResult {
   ok: boolean
   errors: string[]
+  qualityScore?: number
+  coverageScore?: number
+  factualValidation?: boolean
+  warnings?: string[]
 }
 
 export interface TailorMatchSignals {

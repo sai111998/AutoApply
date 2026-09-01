@@ -51,6 +51,58 @@ export function scoreChangeMessage(delta: number): string {
   return 'Match score is unchanged.'
 }
 
+function uniqueNames(values: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const trimmed = value.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(trimmed)
+  }
+  return result
+}
+
+function formatSkillList(names: string[]): string {
+  if (names.length === 0) return ''
+  if (names.length === 1) return names[0]
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`
+}
+
+export function scoreImprovementExplanation(input: {
+  delta: number
+  previousMatched?: string[]
+  updatedMatched?: string[]
+  emphasized?: string[]
+}): string {
+  const previous = uniqueNames(input.previousMatched ?? [])
+  const updated = uniqueNames(input.updatedMatched ?? [])
+  const emphasized = uniqueNames(input.emphasized ?? [])
+  const newlyVisible = updated.filter(
+    (name) => !previous.some((item) => item.toLowerCase() === name.toLowerCase()),
+  )
+  const evidence = uniqueNames([...newlyVisible, ...emphasized.filter((name) =>
+    updated.some((item) => item.toLowerCase() === name.toLowerCase()) || newlyVisible.length === 0,
+  )]).slice(0, 8)
+
+  if (input.delta > 0 && evidence.length) {
+    return `Improvement resulted from clearer representation of existing ${formatSkillList(evidence)} experience.`
+  }
+  if (input.delta > 0) {
+    return 'Improvement resulted from clearer representation of existing supported experience.'
+  }
+  if (input.delta < 0) {
+    return 'The match engine scored this version lower because some supported qualifications are less visible or no longer evidenced.'
+  }
+  if (evidence.length) {
+    return `The match engine produced the same score. Supported ${formatSkillList(evidence)} experience remains represented.`
+  }
+  return 'The match engine produced the same score from the supplied resume and job description.'
+}
+
 export function formatScoreDelta(delta: number): string {
   if (delta > 0) return `+${delta}`
   return String(delta)

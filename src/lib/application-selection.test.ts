@@ -14,6 +14,7 @@ import {
   pdfContentForSelection,
   resolveApplicationResumeDisplay,
   scoreChangeMessage,
+  scoreImprovementExplanation,
 } from './application-selection'
 import { shouldAutoStartGeneration } from './tailor-session'
 import { emptyTailoredContent } from './tailored-text'
@@ -446,6 +447,17 @@ describe('resume version selection and application sync', () => {
     expect(formatScoreDelta(4)).toBe('+4')
     expect(scoreChangeMessage(-4)).toBe('Match score decreased by 4 points.')
     expect(scoreChangeMessage(4)).toBe('Match score increased by 4 points.')
+    expect(
+      scoreImprovementExplanation({
+        delta: 6,
+        previousMatched: ['Java'],
+        updatedMatched: ['Java', 'Spring Boot', 'AWS'],
+        emphasized: ['Java', 'Spring Boot', 'AWS', 'REST APIs'],
+      }),
+    ).toMatch(/Improvement resulted from clearer representation of existing/)
+    expect(scoreImprovementExplanation({ delta: 0, previousMatched: ['Java'], updatedMatched: ['Java'], emphasized: ['Java'] })).toMatch(
+      /same score/,
+    )
     expect(scoreChange(92, 88)?.delta).toBe(-4)
   })
 
