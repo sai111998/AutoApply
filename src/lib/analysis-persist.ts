@@ -1,10 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
+  applicationCoreRow,
   applicationToRow,
   jobToRow,
   mapApplication,
   mapJob,
   mapMatch,
+  mapResumeVersion,
   matchToRow,
 } from '@/lib/mappers'
 import { isForeignKeyError, isMissingColumnError, userFacingPersistError } from '@/lib/persist-errors'
@@ -63,6 +65,13 @@ export async function persistAnalysisRecords(
   const applicationResult = await client
     .from('applications')
     .upsert(applicationToRow(records.application), { onConflict: 'id', defaultToNull: false })
+  if (applicationResult.error && isMissingColumnError(applicationResult.error)) {
+    const coreResult = await client
+      .from('applications')
+      .upsert(applicationCoreRow(records.application), { onConflict: 'id', defaultToNull: false })
+    if (coreResult.error) throw coreResult.error
+    return
+  }
   if (applicationResult.error) throw applicationResult.error
 }
 
@@ -91,6 +100,41 @@ export async function fetchAnalysisHistory(client: SupabaseClient, userId: strin
   }
 }
 
+export async function persistApplicationSelection(client: SupabaseClient, application: Application) {
+  const full = applicationToRow(application)
+  let result = await client.from('applications').upsert(full, { onConflict: 'id', defaultToNull: false })
+  if (result.error && isMissingColumnError(result.error)) {
+    result = await client
+      .from('applications')
+      .upsert(applicationCoreRow(application), { onConflict: 'id', defaultToNull: false })
+  }
+  if (result.error) {
+    throw new Error(userFacingPersistError(result.error, 'Could not update the application with the selected resume.'))
+  }
+}
+
+export async function fetchJobApplicationBundle(client: SupabaseClient, userId: string, jobId: string) {
+  const [applicationsRes, versionsRes, matchesRes] = await Promise.all([
+    client
+      .from('applications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('job_id', jobId)
+      .order('updated_at', { ascending: false })
+      .limit(1),
+    client.from('resume_versions').select('*').eq('user_id', userId).eq('job_id', jobId).order('created_at', { ascending: false }),
+    client.from('job_matches').select('*').eq('user_id', userId).eq('job_id', jobId).order('created_at', { ascending: false }),
+  ])
+
+  const error = applicationsRes.error ?? versionsRes.error ?? matchesRes.error
+  return {
+    application: applicationsRes.data?.[0] ? mapApplication(applicationsRes.data[0]) : null,
+    versions: (versionsRes.data ?? []).map(mapResumeVersion),
+    matches: (matchesRes.data ?? []).map(mapMatch),
+    error: error?.message ?? null,
+  }
+}
+
 export async function fetchMatchBundle(client: SupabaseClient, userId: string, matchId: string) {
   const matchRes = await client
     .from('job_matches')
@@ -102,17 +146,27 @@ export async function fetchMatchBundle(client: SupabaseClient, userId: string, m
   if (!matchRes.data) return { match: null, job: null, application: null }
 
   const match = mapMatch(matchRes.data)
-  const [jobRes, applicationRes] = await Promise.all([
+  const [jobRes, applicationByMatchRes, applicationByJobRes] = await Promise.all([
     client.from('jobs').select('*').eq('id', match.jobId).eq('user_id', userId).maybeSingle(),
     client.from('applications').select('*').eq('match_id', match.id).eq('user_id', userId).maybeSingle(),
+    client
+      .from('applications')
+      .select('*')
+      .eq('job_id', match.jobId)
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(1),
   ])
   if (jobRes.error) throw jobRes.error
-  if (applicationRes.error) throw applicationRes.error
+  if (applicationByMatchRes.error) throw applicationByMatchRes.error
+  if (applicationByJobRes.error) throw applicationByJobRes.error
+
+  const applicationRow = applicationByMatchRes.data ?? applicationByJobRes.data?.[0] ?? null
 
   return {
     match,
     job: jobRes.data ? mapJob(jobRes.data) : null,
-    application: applicationRes.data ? mapApplication(applicationRes.data) : null,
+    application: applicationRow ? mapApplication(applicationRow) : null,
   }
 }
 

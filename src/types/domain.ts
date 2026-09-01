@@ -119,6 +119,9 @@ export interface Application {
   jobId: string
   matchId: string | null
   resumeId: string | null
+  selectedResumeVersionId: string | null
+  currentMatchId: string | null
+  currentMatchScore: number | null
   status: ApplicationStatus
   dateAdded: string
   dateApplied: string | null
@@ -186,7 +189,14 @@ export interface TailoringPlan {
   experienceToEmphasize: string[]
 }
 
-export type ResumeVersionStatus = 'generating' | 'completed' | 'failed' | 'kept'
+export type ResumeVersionStatus =
+  | 'draft'
+  | 'generating'
+  | 'completed'
+  | 'failed'
+  | 'edited'
+  | 'kept'
+  | 'archived'
 export type ResumeVersionAuthor = 'ai' | 'user'
 
 export interface ResumeVersion {
@@ -237,7 +247,7 @@ export const WORK_ARRANGEMENT_LABELS: Record<WorkArrangement, string> = {
 }
 
 export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
-  ready: 'Ready',
+  ready: 'Ready to Apply',
   applied: 'Applied',
   interview: 'Interview',
   offer: 'Offer',

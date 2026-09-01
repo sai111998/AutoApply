@@ -93,6 +93,9 @@ type ApplicationRow = {
   job_id: string
   match_id: string | null
   resume_id: string | null
+  selected_resume_version_id?: string | null
+  current_match_id?: string | null
+  current_match_score?: number | null
   status: Application['status']
   date_added: string
   date_applied: string | null
@@ -291,6 +294,9 @@ export function mapApplication(row: ApplicationRow): Application {
     jobId: row.job_id,
     matchId: row.match_id,
     resumeId: row.resume_id,
+    selectedResumeVersionId: row.selected_resume_version_id ?? null,
+    currentMatchId: row.current_match_id ?? row.match_id,
+    currentMatchScore: row.current_match_score ?? null,
     status: row.status,
     dateAdded: row.date_added,
     dateApplied: row.date_applied,
@@ -307,12 +313,32 @@ export function applicationToRow(application: Application) {
     job_id: application.jobId,
     match_id: application.matchId,
     resume_id: application.resumeId,
+    selected_resume_version_id: application.selectedResumeVersionId,
+    current_match_id: application.currentMatchId,
+    current_match_score: application.currentMatchScore,
     status: application.status,
     date_added: application.dateAdded,
     date_applied: application.dateApplied,
     next_action: application.nextAction,
     notes: application.notes,
     updated_at: application.updatedAt,
+  }
+}
+
+export function applicationCoreRow(application: Application) {
+  const row = applicationToRow(application)
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    job_id: row.job_id,
+    match_id: row.match_id,
+    resume_id: row.resume_id,
+    status: row.status,
+    date_added: row.date_added,
+    date_applied: row.date_applied,
+    next_action: row.next_action,
+    notes: row.notes,
+    updated_at: row.updated_at,
   }
 }
 

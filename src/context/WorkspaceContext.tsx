@@ -13,14 +13,20 @@ import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import {
   deleteAnalysisRecords,
   fetchAnalysisHistory,
+  fetchJobApplicationBundle,
   persistAnalysisRecords,
+  persistApplicationSelection,
   persistMatchRecord,
   upsertById,
 } from '@/lib/analysis-persist'
-import { deleteResumeVersionRecord, deselectOtherResumeVersions, fetchResumeVersions, persistResumeVersion } from '@/lib/resume-versions'
+import { deleteResumeVersionRecord, deselectAllResumeVersionsForJob, deselectOtherResumeVersions, fetchResumeVersions, persistResumeVersion } from '@/lib/resume-versions'
 import { tailoredResumeToText } from '@/lib/tailored-text'
 import { jobProfileFromMatch, resumeProfileFromTailored } from '@/lib/evidence-profiles'
-import { markVersionSelected, mergeResumeVersion, normalizeResumeVersion } from '@/lib/tailor-session'
+import {
+  applyResumeSelection,
+  originalMatchForJob,
+} from '@/lib/application-selection'
+import { mergeResumeVersion, normalizeResumeVersion } from '@/lib/tailor-session'
 import { createId, nextActionForStatus, titleFromJobDescription } from '@/lib/format'
 import {
   emptyWorkspace,
@@ -76,6 +82,7 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   renameResumeVersion: (id: string, versionName: string) => Promise<void>
   deleteResumeVersion: (id: string) => Promise<void>
   selectResumeVersion: (id: string) => Promise<ResumeVersion>
+  selectResumeForJob: (input: { jobId: string; resumeVersionId: string | null }) => Promise<Application>
   analyzeTailoredVersion: (
     versionId: string,
     parentMatchId: string,
@@ -104,6 +111,12 @@ function readDemo(): WorkspaceSnapshot {
       const merged: WorkspaceSnapshot = {
         ...parsed,
         resumeVersions: (parsed.resumeVersions ?? []).map(normalizeResumeVersion),
+        applications: (parsed.applications ?? []).map((application) => ({
+          ...application,
+          selectedResumeVersionId: application.selectedResumeVersionId ?? null,
+          currentMatchId: application.currentMatchId ?? application.matchId,
+          currentMatchScore: application.currentMatchScore ?? null,
+        })),
         resumes: mergeById(parsed.resumes, fresh.resumes),
         jobs: mergeById(parsed.jobs, fresh.jobs),
         matches: mergeById(parsed.matches, fresh.matches),
@@ -430,6 +443,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           jobId: job.id,
           matchId: match.id,
           resumeId: selected.id,
+          selectedResumeVersionId: null,
+          currentMatchId: match.id,
+          currentMatchScore: match.overallScore,
           status: 'ready',
           dateAdded: now.slice(0, 10),
           dateApplied: null,
@@ -464,6 +480,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             errorMessage: response.message,
           }
         }
+
+        application.currentMatchId = match.id
+        application.currentMatchScore = match.overallScore
 
         replace((current) => ({
           ...current,
@@ -501,7 +520,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const current = snapshotRef.current
       const match = current.matches.find((item) => item.id === matchId)
       if (!match) return
-      const application = current.applications.find((item) => item.matchId === matchId) ?? null
+      const application =
+        current.applications.find((item) => item.matchId === matchId) ??
+        current.applications.find((item) => item.jobId === match.jobId) ??
+        null
 
       if (!isDemo && supabase && user) {
         await deleteAnalysisRecords(supabase, user.id, {
@@ -622,22 +644,97 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [isDemo, replace, user],
   )
 
+  const selectResumeForJob = useCallback(
+    async (input: { jobId: string; resumeVersionId: string | null }) => {
+      const current = snapshotRef.current
+      const original = originalMatchForJob(
+        current.matches,
+        input.jobId,
+        current.applications.find((item) => item.jobId === input.jobId) ?? null,
+      )
+      const now = new Date().toISOString()
+      const application =
+        current.applications.find((item) => item.jobId === input.jobId) ??
+        ({
+          id: createId(),
+          userId: user?.id ?? original?.userId ?? '',
+          jobId: input.jobId,
+          matchId: original?.id ?? null,
+          resumeId: original?.resumeId ?? null,
+          selectedResumeVersionId: null,
+          currentMatchId: original?.id ?? null,
+          currentMatchScore: original?.overallScore ?? null,
+          status: 'ready',
+          dateAdded: now.slice(0, 10),
+          dateApplied: null,
+          nextAction: nextActionForStatus('ready'),
+          notes: '',
+          updatedAt: now,
+        } satisfies Application)
+      if (input.resumeVersionId) {
+        const version = (current.resumeVersions ?? []).find((item) => item.id === input.resumeVersionId)
+        if (!version) throw new Error('That tailored version was not found.')
+      }
+      const applied = applyResumeSelection({
+        application,
+        versions: current.resumeVersions ?? [],
+        matches: current.matches,
+        jobId: input.jobId,
+        resumeVersionId: input.resumeVersionId,
+        originalMatch: original,
+      })
+
+      replace((state) => ({
+        ...state,
+        applications: upsertById(state.applications, applied.application),
+        resumeVersions: applied.versions,
+      }))
+
+      if (!isDemo && supabase && user) {
+        const selected = input.resumeVersionId
+          ? applied.versions.find((item) => item.id === input.resumeVersionId)
+          : null
+        if (selected) {
+          await persistResumeVersion(supabase, selected)
+          await deselectOtherResumeVersions(supabase, selected)
+        } else {
+          await deselectAllResumeVersionsForJob(supabase, user.id, input.jobId)
+        }
+        await persistApplicationSelection(supabase, applied.application)
+        const persisted = await fetchJobApplicationBundle(supabase, user.id, input.jobId)
+        if (!persisted.error) {
+          replace((state) => ({
+            ...state,
+            applications: persisted.application
+              ? upsertById(state.applications, persisted.application)
+              : state.applications,
+            matches: persisted.matches.reduce((items, match) => upsertById(items, match), state.matches),
+            resumeVersions: persisted.versions.length
+              ? [
+                  ...persisted.versions,
+                  ...(state.resumeVersions ?? []).filter((item) => item.jobId !== input.jobId),
+                ]
+              : state.resumeVersions,
+          }))
+        }
+      }
+
+      return snapshotRef.current.applications.find((item) => item.id === applied.application.id) ?? applied.application
+    },
+    [isDemo, replace, user],
+  )
+
   const selectResumeVersion = useCallback(
     async (id: string) => {
-      const current = snapshotRef.current
-      const version = (current.resumeVersions ?? []).find((item) => item.id === id)
+      const version = (snapshotRef.current.resumeVersions ?? []).find((item) => item.id === id)
       if (!version) throw new Error('That tailored version was not found.')
-      const nextVersions = markVersionSelected(current.resumeVersions ?? [], id, version.jobId)
-      const selected = nextVersions.find((item) => item.id === id)
+      if (!version.jobId) throw new Error('This version is not linked to a job.')
+      await selectResumeForJob({ jobId: version.jobId, resumeVersionId: version.id })
+      const selected = (snapshotRef.current.resumeVersions ?? []).find((item) => item.id === id)
       if (!selected) throw new Error('That tailored version was not found.')
-      replace((state) => ({ ...state, resumeVersions: nextVersions }))
-      if (!isDemo && supabase) {
-        await persistResumeVersion(supabase, selected)
-        await deselectOtherResumeVersions(supabase, selected)
-      }
       return selected
     },
-    [isDemo, replace],
+    [selectResumeForJob],
   )
 
   const analyzeTailoredVersion = useCallback(
@@ -714,30 +811,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const updatedVersion: ResumeVersion = {
         ...version,
         comparisonAnalysisId: match.id,
-        isSelected: select || version.isSelected,
-        status: select || version.isSelected ? 'kept' : version.status,
         updatedAt: now,
       }
 
       replace((state) => ({
         ...state,
         matches: upsertById(state.matches, match),
-        resumeVersions: select
-          ? markVersionSelected(
-              upsertById(state.resumeVersions ?? [], updatedVersion),
-              updatedVersion.id,
-              updatedVersion.jobId,
-            )
-          : upsertById(state.resumeVersions ?? [], updatedVersion),
+        resumeVersions: upsertById(state.resumeVersions ?? [], updatedVersion),
       }))
 
       if (!isDemo && supabase) {
         try {
           await persistResumeVersion(supabase, updatedVersion)
           await persistMatchRecord(supabase, match)
-          if (select) await deselectOtherResumeVersions(supabase, updatedVersion)
         } catch (error) {
-          throw new Error(userFacingPersistError(error, 'Could not keep the resume.'))
+          throw new Error(userFacingPersistError(error, 'Could not save the updated match analysis.'))
         }
       }
 
@@ -745,9 +833,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         throw new Error(match.errorMessage || 'The updated match analysis did not complete.')
       }
 
+      if (select && job.id) {
+        await selectResumeForJob({ jobId: job.id, resumeVersionId: updatedVersion.id })
+      }
+
       return match
     },
-    [isDemo, replace, user],
+    [isDemo, replace, selectResumeForJob, user],
   )
 
   const masterResume = snapshot.resumes.find((resume) => resume.isMaster) ?? null
@@ -773,6 +865,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       renameResumeVersion,
       deleteResumeVersion,
       selectResumeVersion,
+      selectResumeForJob,
       analyzeTailoredVersion,
     }),
     [
@@ -792,6 +885,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       saveResumeVersion,
       saveProfile,
       selectResumeVersion,
+      selectResumeForJob,
       setMasterResume,
       snapshot,
       updateApplication,

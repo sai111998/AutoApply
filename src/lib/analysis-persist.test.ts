@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { isUuid, upsertById } from './analysis-persist'
+import { isUuid, persistApplicationSelection, upsertById } from './analysis-persist'
 import { matchToRow } from './mappers'
-import type { JobMatch } from '@/types/domain'
+import type { Application, JobMatch } from '@/types/domain'
 
 describe('analysis persistence helpers', () => {
   it('accepts version-4 UUIDs and rejects other strings', () => {
@@ -49,5 +49,44 @@ describe('analysis persistence helpers', () => {
     expect(row.parent_match_id).toBe(match.parentMatchId)
     expect(row.resume_version_id).toBe(match.resumeVersionId)
     expect(row.id).not.toBe(match.parentMatchId)
+  })
+
+  it('upserts the application selected version and score, falling back if those columns are missing', async () => {
+    const rows: Record<string, unknown>[] = []
+    const client = {
+      from: () => ({
+        upsert: async (row: Record<string, unknown>) => {
+          rows.push(row)
+          if (rows.length === 1) {
+            return { error: { code: 'PGRST204', message: "Could not find the 'selected_resume_version_id' column of 'applications'" } }
+          }
+          return { error: null }
+        },
+      }),
+    }
+    await persistApplicationSelection(client as never, {
+      id: 'app-1',
+      userId: 'user-a',
+      jobId: 'job-1',
+      matchId: 'match-1',
+      resumeId: 'resume-1',
+      selectedResumeVersionId: 'ver-1',
+      currentMatchId: 'match-2',
+      currentMatchScore: 88,
+      status: 'ready',
+      dateAdded: '2026-08-24',
+      dateApplied: null,
+      nextAction: 'Ready to apply',
+      notes: '',
+      updatedAt: '2026-08-24T01:00:00.000Z',
+    } satisfies Application)
+    expect(rows[0]).toMatchObject({
+      selected_resume_version_id: 'ver-1',
+      current_match_id: 'match-2',
+      current_match_score: 88,
+      match_id: 'match-1',
+    })
+    expect(rows[1]).not.toHaveProperty('selected_resume_version_id')
+    expect(rows[1]?.match_id).toBe('match-1')
   })
 })

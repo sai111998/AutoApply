@@ -33,7 +33,10 @@ export function MatchResultsPage() {
   const job = match ? jobs.find((item) => item.id === match.jobId) ?? fetched?.job ?? undefined : undefined
   const resume = match?.resumeId ? resumes.find((item) => item.id === match.resumeId) : undefined
   const application =
-    (match ? applications.find((item) => item.matchId === match.id) : undefined) ?? fetched?.application ?? undefined
+    (match ? applications.find((item) => item.jobId === match.jobId) : undefined) ??
+    (match ? applications.find((item) => item.matchId === match.id || item.currentMatchId === match.id) : undefined) ??
+    fetched?.application ??
+    undefined
   const report = match?.report ?? null
 
   useEffect(() => {

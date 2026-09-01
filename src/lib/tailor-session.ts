@@ -1,7 +1,10 @@
+import { markVersionSelected } from '@/lib/application-selection'
 import { tailorResumeRequest } from '@/lib/ai/client'
 import { createId } from '@/lib/format'
 import { emptyTailoredContent, sanitizeTailoredContent } from '@/lib/tailored-text'
 import type { ResumeVersion, TailoredResumeContent, TailoringPlan } from '@/types/domain'
+
+export { markVersionSelected }
 
 export type TailorRequestFn = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>
 export type PersistVersionFn = (version: ResumeVersion) => Promise<void>
@@ -114,7 +117,7 @@ export function findActiveVersion(
     (item) => item.sourceResumeId === sourceResumeId && item.jobId === jobId,
   )
   const usable = matches
-    .filter((item) => item.status === 'completed' || item.status === 'kept')
+    .filter((item) => item.status === 'completed' || item.status === 'kept' || item.status === 'edited')
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   if (usable[0]) return usable[0]
   const generating = matches.find((item) => item.status === 'generating' && !isStaleGenerating(item, now))
@@ -126,7 +129,7 @@ export function findActiveVersion(
 export function shouldStartGeneration(version: ResumeVersion | null, force: boolean, now = Date.now()): boolean {
   if (force) return true
   if (!version) return true
-  if (version.status === 'completed' || version.status === 'kept' || version.status === 'failed') return false
+  if (version.status === 'completed' || version.status === 'kept' || version.status === 'edited' || version.status === 'failed') return false
   if (version.status === 'generating') {
     if (getInflightGeneration(tailorSessionKey(version.userId, version.sourceResumeId, version.jobId ?? ''))) {
       return false
@@ -150,7 +153,7 @@ export function shouldAutoStartGeneration(
   if (getInflightGeneration(key)) return false
   const existing = findActiveVersion(versions, sourceResumeId, jobId, now)
   if (!existing) return !hasClaimedAutoStart(key)
-  if (existing.status === 'completed' || existing.status === 'kept' || existing.status === 'failed') return false
+  if (existing.status === 'completed' || existing.status === 'kept' || existing.status === 'edited' || existing.status === 'failed') return false
   return shouldStartGeneration(existing, false, now)
 }
 
@@ -159,7 +162,7 @@ export function mergeResumeVersion(versions: ResumeVersion[], incoming: ResumeVe
   if (
     latest &&
     incoming.status === 'generating' &&
-    (latest.status === 'completed' || latest.status === 'kept' || latest.status === 'failed')
+    (latest.status === 'completed' || latest.status === 'kept' || latest.status === 'edited' || latest.status === 'failed')
   ) {
     return versions
   }
@@ -316,14 +319,6 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
     if (active?.generationId === generationId) inflight.delete(key)
   })
   return session
-}
-
-export function markVersionSelected(versions: ResumeVersion[], versionId: string, jobId: string | null): ResumeVersion[] {
-  return versions.map((item) => {
-    if (item.id === versionId) return { ...item, isSelected: true, status: item.status === 'failed' ? item.status : 'kept', updatedAt: new Date().toISOString() }
-    if (jobId && item.jobId === jobId && item.isSelected) return { ...item, isSelected: false }
-    return item
-  })
 }
 
 export function markGeneratingFailed(version: ResumeVersion): ResumeVersion {

@@ -109,23 +109,34 @@ export async function persistAnalysis(
     return { persisted: false, jobId, matchId: null }
   }
 
-  const applicationInsert = await supabase.from('applications').upsert(
-    {
-      id: applicationId,
-      user_id: request.userId,
-      job_id: jobId,
-      match_id: matchId,
-      resume_id: request.resumeId ?? null,
-      status: 'ready',
-      date_added: now.slice(0, 10),
-      date_applied: null,
-      next_action: 'Tailor resume and submit',
-      notes: '',
-      created_at: now,
-      updated_at: now,
-    },
-    { onConflict: 'id', defaultToNull: false },
-  )
+  const applicationRow = {
+    id: applicationId,
+    user_id: request.userId,
+    job_id: jobId,
+    match_id: matchId,
+    resume_id: request.resumeId ?? null,
+    selected_resume_version_id: null,
+    current_match_id: matchId,
+    current_match_score: result.matchScore ?? null,
+    status: 'ready',
+    date_added: now.slice(0, 10),
+    date_applied: null,
+    next_action: 'Ready to apply',
+    notes: '',
+    created_at: now,
+    updated_at: now,
+  }
+
+  let applicationInsert = await supabase.from('applications').upsert(applicationRow, { onConflict: 'id', defaultToNull: false })
+  if (applicationInsert.error && /could not find the .* column|PGRST204|schema cache/i.test(applicationInsert.error.message)) {
+    const {
+      selected_resume_version_id: _selected,
+      current_match_id: _current,
+      current_match_score: _score,
+      ...core
+    } = applicationRow
+    applicationInsert = await supabase.from('applications').upsert(core, { onConflict: 'id', defaultToNull: false })
+  }
 
   if (applicationInsert.error) {
     console.error('Failed to persist application', applicationInsert.error.message)

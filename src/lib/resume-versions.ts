@@ -78,6 +78,25 @@ export async function deselectOtherResumeVersions(client: SupabaseClient, versio
   }
 }
 
+export async function deselectAllResumeVersionsForJob(
+  client: SupabaseClient,
+  userId: string,
+  jobId: string,
+) {
+  const result = await client
+    .from('resume_versions')
+    .update({ is_selected: false })
+    .eq('user_id', userId)
+    .eq('job_id', jobId)
+  if (result.error && isMissingColumnError(result.error)) {
+    console.info('[tailor] persist-deselect-all-missing-column', { jobId })
+    return
+  }
+  if (result.error) {
+    throw new Error(userFacingPersistError(result.error, 'Could not keep the resume.'))
+  }
+}
+
 export async function deleteResumeVersionRecord(client: SupabaseClient, userId: string, versionId: string) {
   const result = await client.from('resume_versions').delete().eq('id', versionId).eq('user_id', userId)
   if (result.error) throw result.error

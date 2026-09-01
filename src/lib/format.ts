@@ -11,6 +11,15 @@ export function formatDate(value: string | null): string {
   }).format(date)
 }
 
+export function formatRelativeDate(value: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const today = new Date()
+  if (date.toDateString() === today.toDateString()) return 'Today'
+  return formatDate(value)
+}
+
 export function formatSalary(min: number, max: number): string {
   const fmt = (n: number) =>
     new Intl.NumberFormat('en-US', {
@@ -43,7 +52,7 @@ export function recommendationFromScore(score: number): Recommendation {
 export function nextActionForStatus(status: ApplicationStatus): string {
   switch (status) {
     case 'ready':
-      return 'Tailor resume and submit'
+      return 'Ready to apply'
     case 'applied':
       return 'Follow up in 5 days'
     case 'interview':

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Download, Pencil, RefreshCw, Sparkles } from 'lucide-react'
+import { ArrowLeft, Check, Download, Pencil, RefreshCw, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { EmptyState, ErrorState } from '@/components/ui/EmptyState'
@@ -12,6 +12,15 @@ import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { downloadResumePdfRequest } from '@/lib/ai/client'
+import {
+  MASTER_RESUME_OPTION_ID,
+  buildSelectableResumeOptions,
+  createEditedResumeVersion,
+  formatScoreDelta,
+  nextTailoredVersionName,
+  pdfContentForSelection,
+  scoreChangeMessage,
+} from '@/lib/application-selection'
 import { formatDate } from '@/lib/format'
 import { planFromMatch } from '@/lib/tailor-plan'
 import {
@@ -46,9 +55,10 @@ export function TailorResumePage() {
     matches,
     jobs,
     resumes,
+    applications,
     resumeVersions = [],
     saveResumeVersion,
-    selectResumeVersion,
+    selectResumeForJob,
     analyzeTailoredVersion,
     historyError,
   } = useWorkspace()
@@ -58,6 +68,7 @@ export function TailorResumePage() {
   const resume = match?.resumeId
     ? resumes.find((item) => item.id === match.resumeId)
     : resumes.find((item) => item.isMaster)
+  const application = job ? applications.find((item) => item.jobId === job.id) : undefined
 
   const [tick, setTick] = useState(0)
   const [editing, setEditing] = useState(false)
@@ -66,6 +77,8 @@ export function TailorResumePage() {
   const [busy, setBusy] = useState<'keep' | 'save' | 'analyze' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [updatedMatch, setUpdatedMatch] = useState<JobMatch | null>(null)
+  const [previewOptionId, setPreviewOptionId] = useState<string | null>(null)
+  const scoringIds = useRef(new Set<string>())
 
   const canTailor = Boolean(resume?.parsedText.trim() && job?.description.trim() && match?.analysisStatus === 'complete')
   const sessionKey = user && resume && job ? tailorSessionKey(user.id, resume.id, job.id) : ''
@@ -75,11 +88,6 @@ export function TailorResumePage() {
     inflight != null
       ? resumeVersions.find((item) => item.id === inflight.versionId) ?? storedVersion
       : storedVersion
-  const comparisonMatch =
-    updatedMatch ??
-    (version?.comparisonAnalysisId
-      ? matches.find((item) => item.id === version.comparisonAnalysisId) ?? null
-      : null)
 
   const previewPlan = useMemo(
     () =>
@@ -89,12 +97,9 @@ export function TailorResumePage() {
     [match, resume],
   )
   const plan = version?.tailoringSummary?.skillsToEmphasize?.length ? version.tailoringSummary : previewPlan
-  const tailored = draft ?? (version?.status === 'generating' ? null : version?.resumeContent ?? null)
-  const original = version?.originalContent ?? null
   const staleGenerating = isStaleGenerating(version)
   const generating = Boolean(inflight) || (version?.status === 'generating' && !staleGenerating)
   const failed = (version?.status === 'failed' || staleGenerating) && !inflight
-  const complete = Boolean(tailored && (version?.status === 'completed' || version?.status === 'kept') && !editing)
 
   const requestPayload = useMemo(
     () => ({
@@ -118,6 +123,41 @@ export function TailorResumePage() {
     [isDemo, job, match, resume, user],
   )
 
+  const options = useMemo(
+    () =>
+      resume && job
+        ? buildSelectableResumeOptions({
+            masterResume: resume,
+            versions: resumeVersions,
+            matches,
+            sourceResumeId: resume.id,
+            jobId: job.id,
+            application,
+            originalMatch: match ?? null,
+          })
+        : [],
+    [application, job, match, matches, resume, resumeVersions],
+  )
+
+  const selectedOption = options.find((item) => item.isSelected) ?? options[0] ?? null
+  const previewOption =
+    options.find((item) => item.id === previewOptionId) ??
+    options.find((item) => item.id === (inflight?.versionId ?? version?.id)) ??
+    selectedOption
+  const previewVersion = previewOption?.version ?? null
+  const tailored = draft ?? previewOption?.content ?? null
+  const original = previewVersion?.originalContent ?? options.find((item) => item.content)?.content ?? null
+  const complete = Boolean(options.some((item) => item.versionId) && !editing)
+  const previewComparisonMatch =
+    updatedMatch && updatedMatch.resumeVersionId === previewVersion?.id
+      ? updatedMatch
+      : previewOption?.matchId
+        ? matches.find((item) => item.id === previewOption.matchId) ?? null
+        : null
+  const selectedComparisonMatch = selectedOption?.matchId
+    ? matches.find((item) => item.id === selectedOption.matchId) ?? null
+    : null
+
   function startGeneration(force: boolean) {
     if (!user || !resume || !job || !match || !canTailor) return
     if (!force && inflight) return
@@ -125,12 +165,13 @@ export function TailorResumePage() {
     if (!force && !shouldAutoStartGeneration(resumeVersions, resume.id, job.id, user.id)) return
     if (force) releaseAutoStart(sessionKey)
     else claimAutoStart(sessionKey)
+    const jobVersions = resumeVersions.filter((item) => item.sourceResumeId === resume.id && item.jobId === job.id)
     startTailorGeneration({
       userId: user.id,
       sourceResumeId: resume.id,
       jobId: job.id,
       analysisId: match.id,
-      versionName: `Tailored — ${job.title} — ${job.company}`,
+      versionName: nextTailoredVersionName(jobVersions, job.title),
       payload: requestPayload,
       persist: saveResumeVersion,
       force,
@@ -140,6 +181,7 @@ export function TailorResumePage() {
     setEditing(false)
     setDraft(null)
     setMessage(null)
+    setPreviewOptionId(null)
     setTick((value) => value + 1)
   }
 
@@ -166,6 +208,7 @@ export function TailorResumePage() {
       if (!cancelled) {
         setTick((value) => value + 1)
         setDraft(null)
+        setPreviewOptionId(inflight.versionId)
       }
     })
     return () => {
@@ -173,6 +216,27 @@ export function TailorResumePage() {
       window.clearInterval(timer)
     }
   }, [inflight])
+
+  useEffect(() => {
+    if (!match || !job || busy === 'analyze') return
+    const pending = resumeVersions.filter(
+      (item) =>
+        item.jobId === job.id &&
+        (item.status === 'completed' || item.status === 'kept' || item.status === 'edited') &&
+        !item.comparisonAnalysisId &&
+        item.resumeContent?.summary &&
+        !scoringIds.current.has(item.id),
+    )
+    if (!pending.length) return
+    for (const item of pending) {
+      scoringIds.current.add(item.id)
+      void analyzeTailoredVersion(item.id, match.id, { select: false, version: item })
+        .then((next) => setUpdatedMatch(next))
+        .catch((error: unknown) => {
+          setMessage(userFacingPersistError(error, 'The match score could not be updated.'))
+        })
+    }
+  }, [analyzeTailoredVersion, busy, job, match, resumeVersions])
 
   if (!match || !job) {
     return (
@@ -200,53 +264,50 @@ export function TailorResumePage() {
   }
 
   const activeContent = draft ?? tailored
-  const comparison = scoreChange(match.overallScore, comparisonMatch?.overallScore ?? null)
+  const previewScore = previewOption?.matchScore ?? previewComparisonMatch?.overallScore ?? null
+  const comparison = scoreChange(match.overallScore, previewScore)
+  const comparisonLabel = previewOption?.isSelected ? 'Selected resume match' : `${previewOption?.name ?? 'Resume'} match`
   const stepIndex = inflight ? Math.min(PROGRESS_STEPS.length - 1, Math.floor((Date.now() - inflight.startedAt) / 900)) : generating ? 1 : 0
+  const selectedLabel = selectedOption?.name ?? 'Master Resume'
 
-  async function onKeep() {
-    if (!version || !match || version.status === 'generating') return
+  async function onUseVersion(optionId: string) {
+    if (!job) return
+    const option = options.find((item) => item.id === optionId)
+    if (!option) return
     setBusy('keep')
     setMessage(null)
+    setPreviewOptionId(option.id)
     try {
-      await selectResumeVersion(version.id)
+      if (option.version && option.matchScore == null && match) {
+        setBusy('analyze')
+        const next = await analyzeTailoredVersion(option.version.id, match.id, { select: false, version: option.version })
+        setUpdatedMatch(next)
+      }
+      await selectResumeForJob({
+        jobId: job.id,
+        resumeVersionId: option.versionId,
+      })
       notify('Resume saved.')
     } catch (error) {
       setMessage(userFacingPersistError(error, 'Could not keep the resume.'))
-      setBusy(null)
-      return
-    }
-    try {
-      setBusy('analyze')
-      const next = await analyzeTailoredVersion(version.id, match.id, { select: true })
-      setUpdatedMatch(next)
-    } catch (error) {
-      setMessage(userFacingPersistError(error, 'The match score could not be updated.'))
     } finally {
       setBusy(null)
     }
   }
 
   async function onSaveEdits() {
-    if (!version || !draft || !resume || !match) return
+    if (!previewVersion || !draft || !resume || !match || !job) return
     setBusy('save')
     setMessage(null)
     try {
-      const saved: ResumeVersion = {
-        ...version,
-        resumeContent: sanitizeTailoredContent(draft),
-        createdBy: 'user',
-        status: version.isSelected ? 'kept' : 'completed',
-        warnings: [...version.warnings.filter((item) => item !== 'user-edited'), 'user-edited'],
-        updatedAt: new Date().toISOString(),
-      }
+      const siblings = resumeVersions.filter((item) => item.sourceResumeId === resume.id && item.jobId === job.id)
+      const saved: ResumeVersion = createEditedResumeVersion(previewVersion, draft, job.title, siblings)
       await saveResumeVersion(saved)
       setEditing(false)
       setDraft(null)
+      setPreviewOptionId(saved.id)
       setBusy('analyze')
-      const next = await analyzeTailoredVersion(saved.id, match.id, {
-        select: saved.isSelected,
-        version: saved,
-      })
+      const next = await analyzeTailoredVersion(saved.id, match.id, { select: false, version: saved })
       setUpdatedMatch(next)
       notify('Edited tailored resume saved. Master resume is unchanged.')
     } catch (error) {
@@ -257,7 +318,7 @@ export function TailorResumePage() {
   }
 
   async function onDownload() {
-    const content = activeContent ? sanitizeTailoredContent(activeContent) : null
+    const content = pdfContentForSelection(options, activeContent ? sanitizeTailoredContent(activeContent) : null)
     if (!content) return
     try {
       const blob = await downloadResumePdfRequest(content, content.contact)
@@ -296,19 +357,19 @@ export function TailorResumePage() {
           <p className="text-sm text-muted">{job.location || 'Location not specified'}</p>
         </Card>
         <Card className="p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Source resume</p>
-          <h2 className="mt-2 text-lg font-semibold text-charcoal">{resume.versionLabel}</h2>
-          <p className="text-sm text-muted">{resume.fileName}</p>
-          <p className="text-sm text-muted">Updated {formatDate(resume.createdAt)}</p>
-          {resume.isMaster && <p className="mt-2 text-xs font-semibold text-olive">Master — will not be overwritten</p>}
-        </Card>
-        <Card className="p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Original match</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <ScoreBadge score={match.overallScore} />
             <RecommendationBadge value={match.recommendation} />
           </div>
-          {version?.createdBy === 'user' && <p className="mt-3 text-xs font-semibold text-olive">User-edited version</p>}
+          <p className="mt-3 text-sm text-muted">{match.overallScore ?? '—'} / 100</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Current / selected resume</p>
+          <h2 className="mt-2 text-lg font-semibold text-charcoal">{selectedLabel}</h2>
+          <p className="text-sm text-muted">{resume.fileName}</p>
+          <p className="text-sm text-muted">Updated {formatDate(resume.createdAt)}</p>
+          {resume.isMaster && <p className="mt-2 text-xs font-semibold text-olive">Master — will not be overwritten</p>}
         </Card>
       </div>
 
@@ -361,7 +422,7 @@ export function TailorResumePage() {
         <div className="mt-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">{message}</div>
       )}
 
-      {failed && (
+      {failed && !options.some((item) => item.versionId) && (
         <Card className="mt-6 p-6">
           <h2 className="text-lg font-semibold text-charcoal">Resume tailoring failed.</h2>
           <p className="mt-2 text-sm text-muted">{version?.warnings[0] || USER_TAILOR_ERROR}</p>
@@ -372,22 +433,26 @@ export function TailorResumePage() {
         </Card>
       )}
 
-      {comparisonMatch && comparison && (
+      {comparison && options.some((item) => item.versionId) && (
         <Card className="mt-6 p-6">
-          <h2 className="text-lg font-semibold text-charcoal">Updated match score</h2>
+          <h2 className="text-lg font-semibold text-charcoal">Match comparison</h2>
+          <p className="mt-1 text-sm text-muted">Scores come from the match engine. A tailored resume is not assumed to be better.</p>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             <ScoreStat label="Original match" value={comparison.previous} />
-            <ScoreStat label="Updated match" value={comparison.updated} highlight />
+            <ScoreStat label={comparisonLabel} value={comparison.updated} highlight />
             <ScoreStat
               label="Change"
               value={comparison.delta}
-              prefix={comparison.delta > 0 ? '+' : ''}
-              suffix=" points"
+              display={formatScoreDelta(comparison.delta)}
+              suffix=""
             />
           </div>
-          <Button type="button" className="mt-5" onClick={() => navigate(`/matches/${comparisonMatch.id}`)}>
-            View updated match results
-          </Button>
+          <p className="mt-4 text-sm text-charcoal">{scoreChangeMessage(comparison.delta)}</p>
+          {selectedComparisonMatch && (
+            <Button type="button" className="mt-5" variant="secondary" onClick={() => navigate(`/matches/${selectedComparisonMatch.id}`)}>
+              View selected match results
+            </Button>
+          )}
           {match.analysisSource === 'sample' && (
             <p className="mt-3 text-xs text-muted">
               The original score is from the saved match report. The updated score is from the live match engine on this tailored resume.
@@ -396,10 +461,94 @@ export function TailorResumePage() {
         </Card>
       )}
 
+      {(complete || options.length > 1) && (
+        <Card className="mt-6 overflow-hidden">
+          <div className="border-b border-line px-6 py-4">
+            <h2 className="text-lg font-semibold text-charcoal">Resume versions</h2>
+            <p className="text-sm text-muted">Every version stays available until you delete it. Choose which one this application should use.</p>
+          </div>
+          <ul className="divide-y divide-fog">
+            {options.map((option) => (
+              <li
+                key={option.id}
+                className={`flex flex-col gap-3 px-6 py-4 lg:flex-row lg:items-center lg:justify-between ${
+                  option.isSelected ? 'bg-olive-soft/70' : previewOption?.id === option.id ? 'bg-canvas' : 'bg-white'
+                }`}
+              >
+                <button type="button" className="text-left" onClick={() => setPreviewOptionId(option.id)}>
+                  <p className="flex items-center gap-2 font-semibold text-charcoal">
+                    {option.isSelected && <Check size={16} className="text-olive" />}
+                    {option.name}
+                  </p>
+                  <p className="mt-1 text-sm text-muted">Match {option.matchScore != null ? `${option.matchScore}%` : 'Pending'}</p>
+                  <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted">{option.origin}</p>
+                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {option.isSelected ? (
+                    <span className="inline-flex items-center rounded-xl bg-olive px-3 py-2 text-sm font-semibold text-white">
+                      Selected
+                    </span>
+                  ) : (
+                    <Button type="button" onClick={() => void onUseVersion(option.id)} disabled={busy !== null}>
+                      Use This Resume
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {(complete || editing) && activeContent && (
         <>
+          {!editing && (
+            <div className="sticky top-3 z-10 mt-6 rounded-2xl border border-line bg-white/95 p-4 shadow-[0_8px_18px_rgb(85,99,56,0.08)] backdrop-blur">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Primary actions</p>
+                  <p className="mt-1 text-sm text-charcoal">
+                    Previewing {previewOption?.name ?? 'resume'}. Use This Resume updates the application.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {previewOption?.isSelected ? (
+                    <span className="inline-flex items-center rounded-xl bg-olive px-3 py-2 text-sm font-semibold text-white">
+                      Keep This Resume
+                    </span>
+                  ) : (
+                    <Button type="button" onClick={() => void onUseVersion(previewOption?.id ?? MASTER_RESUME_OPTION_ID)} disabled={busy !== null}>
+                      Keep This Resume
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!previewVersion}
+                    onClick={() => {
+                      if (!activeContent) return
+                      setDraft(structuredClone(activeContent))
+                      setEditing(true)
+                    }}
+                  >
+                    <Pencil size={16} />
+                    Edit Resume
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => startGeneration(true)} disabled={Boolean(inflight)}>
+                    <RefreshCw size={16} />
+                    Regenerate
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => void onDownload()}>
+                    <Download size={16} />
+                    Download PDF
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-charcoal">Tailored resume</h2>
+            <h2 className="text-lg font-semibold text-charcoal">Tailored resume preview</h2>
             {!editing && (
               <Tabs
                 value={compare}
@@ -432,46 +581,18 @@ export function TailorResumePage() {
               </div>
             </div>
           ) : (
-            <>
-              <div className={`mt-4 grid gap-4 ${compare === 'split' && original ? 'lg:grid-cols-2' : ''}`}>
-                {(compare === 'split' || compare === 'original') && original && (
-                  <ResumeDocument title="Original resume" resume={original} muted />
-                )}
-                {(compare === 'split' || compare === 'tailored') && (
-                  <ResumeDocument title="Tailored resume" resume={activeContent} highlight />
-                )}
-              </div>
-              <div className="mt-6 flex flex-wrap items-center gap-2">
-                {version?.isSelected ? (
-                  <span className="inline-flex items-center rounded-xl bg-olive-soft px-3 py-2 text-sm font-semibold text-olive-dark">
-                    Selected for this job
-                  </span>
-                ) : (
-                  <Button type="button" onClick={() => void onKeep()} disabled={busy !== null}>
-                    Keep This Resume
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setDraft(structuredClone(activeContent))
-                    setEditing(true)
-                  }}
-                >
-                  <Pencil size={16} />
-                  Edit Resume
-                </Button>
-                <Button type="button" variant="secondary" onClick={() => startGeneration(true)} disabled={Boolean(inflight)}>
-                  <RefreshCw size={16} />
-                  Regenerate
-                </Button>
-                <Button type="button" variant="secondary" onClick={() => void onDownload()}>
-                  <Download size={16} />
-                  Download PDF
-                </Button>
-              </div>
-            </>
+            <div className={`mt-4 grid gap-4 ${compare === 'split' && original ? 'lg:grid-cols-2' : ''}`}>
+              {(compare === 'split' || compare === 'original') && original && (
+                <ResumeDocument title="Original resume" resume={original} muted />
+              )}
+              {(compare === 'split' || compare === 'tailored') && (
+                <ResumeDocument
+                  title={previewOption?.id === MASTER_RESUME_OPTION_ID ? 'Master resume' : 'Tailored resume'}
+                  resume={activeContent}
+                  highlight={previewOption?.id !== MASTER_RESUME_OPTION_ID}
+                />
+              )}
+            </div>
           )}
         </>
       )}
@@ -485,20 +606,20 @@ function ScoreStat({
   highlight,
   prefix = '',
   suffix = ' / 100',
+  display,
 }: {
   label: string
   value: number
   highlight?: boolean
   prefix?: string
   suffix?: string
+  display?: string
 }) {
   return (
     <div className={`rounded-2xl px-4 py-3 ${highlight ? 'bg-olive-soft' : 'bg-canvas'}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">{label}</p>
       <p className="mt-1 font-display text-3xl text-charcoal">
-        {prefix}
-        {value}
-        {suffix}
+        {display ?? `${prefix}${value}${suffix}`}
       </p>
     </div>
   )

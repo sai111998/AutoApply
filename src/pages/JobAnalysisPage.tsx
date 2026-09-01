@@ -18,7 +18,7 @@ import {
 } from '@/lib/analysis-draft'
 import { getAnalysisHealth } from '@/lib/ai/client'
 import { formatDate } from '@/lib/format'
-import type { Job, JobMatch, Resume } from '@/types/domain'
+import type { Job, JobMatch, Resume, ResumeVersion } from '@/types/domain'
 
 const ANALYSIS_STEPS = ['Reading the posting', 'Comparing resume evidence', 'Scoring fit']
 
@@ -39,6 +39,7 @@ export function JobAnalysisPage() {
     refreshAnalyses,
     deleteAnalysis,
     hydrateResumeText,
+    resumeVersions,
   } = useWorkspace()
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -220,13 +221,16 @@ export function JobAnalysisPage() {
         match,
         job: jobs.find((job) => job.id === match.jobId),
         resume: resumes.find((resume) => resume.id === match.resumeId),
+        version: match.resumeVersionId
+          ? resumeVersions.find((item) => item.id === match.resumeVersionId)
+          : undefined,
       }))
       .filter((row) => row.job)
       .filter((row) => {
         if (!needle) return true
-        return `${row.job?.title} ${row.job?.company} ${row.match.recommendation ?? ''}`.toLowerCase().includes(needle)
+        return `${row.job?.title} ${row.job?.company} ${row.match.recommendation ?? ''} ${row.version?.versionName ?? ''}`.toLowerCase().includes(needle)
       })
-  }, [jobs, matches, query, resumes])
+  }, [jobs, matches, query, resumeVersions, resumes])
 
   const jobEmpty = !description.trim()
   const showDraftStatus = Boolean(
@@ -439,7 +443,7 @@ export function JobAnalysisPage() {
                 </button>
               </div>
               <div className="mt-4 space-y-2">
-                {history.slice(0, 4).map(({ match, job }) => (
+                {history.slice(0, 4).map(({ match, job, version }) => (
                   <Link
                     key={match.id}
                     to={`/matches/${match.id}`}
@@ -448,7 +452,10 @@ export function JobAnalysisPage() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-charcoal">{job?.title}</p>
-                        <p className="text-xs text-muted">{job?.company}</p>
+                        <p className="text-xs text-muted">
+                          {job?.company}
+                          {version ? ` · ${version.versionName}` : ''}
+                        </p>
                       </div>
                       <ScoreBadge score={match.overallScore} />
                     </div>
@@ -477,7 +484,7 @@ function HistoryPanel({
 }: {
   loading: boolean
   error: string | null
-  rows: { match: JobMatch; job?: Job; resume?: Resume }[]
+  rows: { match: JobMatch; job?: Job; resume?: Resume; version?: ResumeVersion }[]
   query: string
   onQuery: (value: string) => void
   deletingId: string | null
@@ -523,7 +530,7 @@ function HistoryPanel({
       )}
 
       <div className="grid gap-3">
-        {rows.map(({ match, job, resume }) => (
+        {rows.map(({ match, job, resume, version }) => (
           <Card key={match.id} interactive className="p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -532,7 +539,10 @@ function HistoryPanel({
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
                   <span>{formatDate(match.analyzedAt ?? match.createdAt)}</span>
                   <span>·</span>
-                  <span>{resume?.versionLabel ?? 'No stored resume'}</span>
+                  <span>
+                    {version?.versionName ??
+                      (match.parentMatchId ? 'Tailored version' : resume?.versionLabel ?? 'No stored resume')}
+                  </span>
                   {match.analysisSource === 'sample' && <Pill tone="review">Sample</Pill>}
                 </div>
               </div>
