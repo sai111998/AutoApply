@@ -1,19 +1,24 @@
 import { FormEvent, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Download, FileText, Star, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { FileText, Star } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Field, TextInput } from '@/components/ui/Field'
-import { Pill } from '@/components/ui/Badge'
+import { Pill, ScoreBadge } from '@/components/ui/Badge'
+import { ResumeVersionActions } from '@/components/resume/ResumeVersionActions'
 import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { downloadResumePdfRequest } from '@/lib/ai/client'
+import { compactVersionName, versionTypeLabel } from '@/lib/resume-names'
+import { matchForVersion } from '@/lib/application-selection'
 import { formatDate, formatFileSize } from '@/lib/format'
 
 export function ResumePage() {
+  const navigate = useNavigate()
   const { isDemo } = useAuth()
-  const { resumes, jobs, uploadResume, setMasterResume, resumeVersions = [], renameResumeVersion, deleteResumeVersion } =
+  const { resumes, jobs, matches, uploadResume, setMasterResume, resumeVersions = [], renameResumeVersion, deleteResumeVersion } =
     useWorkspace()
   const { notify } = useToast()
   const [file, setFile] = useState<File | null>(null)
@@ -21,6 +26,9 @@ export function ResumePage() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [renameId, setRenameId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -43,6 +51,8 @@ export function ResumePage() {
       setUploading(false)
     }
   }
+
+  const pendingDelete = resumeVersions.find((item) => item.id === pendingDeleteId)
 
   return (
     <div>
@@ -91,7 +101,7 @@ export function ResumePage() {
 
         <Card className="overflow-hidden">
           <div className="border-b border-line px-6 py-4">
-            <h2 className="text-lg font-semibold text-charcoal">Resume versions</h2>
+            <h2 className="text-lg font-semibold text-charcoal">Stored files</h2>
             <p className="text-sm text-slate-ink">{resumes.length} stored</p>
           </div>
           <ul className="divide-y divide-fog">
@@ -102,7 +112,7 @@ export function ResumePage() {
                     <FileText size={18} />
                   </div>
                   <div>
-                    <p className="font-semibold text-ink">{resume.versionLabel}</p>
+                    <p className="font-semibold text-ink">{resume.isMaster ? 'Master' : resume.versionLabel}</p>
                     <p className="text-sm text-slate-ink">
                       {resume.fileName} · {formatFileSize(resume.fileSize)} · {formatDate(resume.createdAt)}
                     </p>
@@ -129,100 +139,118 @@ export function ResumePage() {
         </Card>
       </div>
 
-      <Card className="mt-6 overflow-hidden">
-        <div className="border-b border-line px-6 py-4">
-          <h2 className="text-lg font-semibold text-charcoal">Resume versions</h2>
-          <p className="text-sm text-muted">
-            Master files stay put. Tailored copies hang off the source resume and can be viewed, renamed, downloaded, or deleted independently.
-          </p>
-        </div>
-        <ul className="divide-y divide-fog">
-          {resumes.filter((item) => item.isMaster).map((master) => (
-            <li key={`master-${master.id}`} className="px-6 py-4">
-              <p className="font-semibold text-charcoal">Master Resume</p>
-              <p className="text-sm text-muted">{master.versionLabel} · {master.fileName}</p>
-            </li>
-          ))}
-          {resumeVersions
-            .filter((item) => item.status !== 'generating')
-            .map((version) => {
-            const source = resumes.find((item) => item.id === version.sourceResumeId)
-            const job = jobs.find((item) => item.id === version.jobId)
-            return (
-              <li key={version.id} className="flex flex-col gap-3 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="pl-4">
-                  <p className="font-semibold text-charcoal">└ {version.versionName}</p>
-                  <p className="text-sm text-muted">
-                    From {source?.versionLabel ?? 'master'} · {job ? `${job.title} at ${job.company}` : 'Saved copy'} ·{' '}
-                    {formatDate(version.createdAt)}
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        {resumes
+          .filter((item) => item.isMaster)
+          .map((master) => (
+            <Card key={`master-${master.id}`} className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-charcoal">Master</p>
+                  <p className="mt-1 text-sm text-muted">
+                    {master.versionLabel} · {master.fileName}
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {version.isSelected && <Pill tone="strong">Selected for this job</Pill>}
-                    {version.createdBy === 'user' && <Pill tone="info">User edited</Pill>}
-                    {version.status === 'failed' && <Pill tone="skip">Failed</Pill>}
+                </div>
+                <Pill tone="strong">Master</Pill>
+              </div>
+            </Card>
+          ))}
+        {resumeVersions
+          .filter((item) => item.status !== 'generating')
+          .map((version) => {
+            const job = jobs.find((item) => item.id === version.jobId)
+            const comparison = matchForVersion(matches, version)
+            const displayName = compactVersionName(version.versionName, job?.title)
+            return (
+              <Card key={version.id} className="p-5" data-testid="resume-version-card">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-charcoal" title={displayName}>
+                      {displayName}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-muted">
+                      {job ? `${job.title} • ${job.company}` : 'Saved copy'}
+                    </p>
                   </div>
+                  <ScoreBadge score={comparison?.overallScore ?? null} />
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Link
-                    to={`/resume/versions/${version.id}`}
-                    className="inline-flex items-center justify-center rounded-xl border border-line bg-white px-3 py-2 text-sm font-semibold text-charcoal hover:border-olive-border"
-                  >
-                    View
-                  </Link>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      const next = window.prompt('Version name', version.versionName)
-                      if (next?.trim()) void renameResumeVersion(version.id, next.trim())
-                    }}
-                  >
-                    Rename
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      void downloadResumePdfRequest(version.resumeContent, version.resumeContent.contact)
-                        .then((blob) => {
-                          const url = URL.createObjectURL(blob)
-                          const link = document.createElement('a')
-                          link.href = url
-                          link.download = `${version.versionName.replace(/[^\w.-]+/g, '_')}.pdf`
-                          link.click()
-                          URL.revokeObjectURL(url)
-                        })
-                        .catch((error: unknown) => {
-                          notify(error instanceof Error ? error.message : 'Could not generate the PDF.', 'error')
-                        })
-                    }}
-                  >
-                    <Download size={15} />
-                    Download
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      if (window.confirm('Delete this tailored version? The master resume stays.')) {
-                        void deleteResumeVersion(version.id)
-                      }
-                    }}
-                  >
-                    <Trash2 size={15} />
-                    Delete
-                  </Button>
-                </div>
-              </li>
+                <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                  {versionTypeLabel(version)}
+                  {version.isSelected ? ' · Selected' : ''}
+                </p>
+                <ResumeVersionActions
+                  onView={() => navigate(`/resume/versions/${version.id}`)}
+                  onRename={() => {
+                    setRenameId(version.id)
+                    setRenameValue(displayName)
+                  }}
+                  onDownload={() => {
+                    void downloadResumePdfRequest(version.resumeContent, version.resumeContent.contact)
+                      .then((blob) => {
+                        const url = URL.createObjectURL(blob)
+                        const link = document.createElement('a')
+                        link.href = url
+                        link.download = `${displayName.replace(/[^\w.-]+/g, '_')}.pdf`
+                        link.click()
+                        URL.revokeObjectURL(url)
+                      })
+                      .catch((downloadError: unknown) => {
+                        notify(downloadError instanceof Error ? downloadError.message : 'Could not generate the PDF.', 'error')
+                      })
+                  }}
+                  onDelete={() => setPendingDeleteId(version.id)}
+                />
+              </Card>
             )
           })}
-          {resumeVersions.length === 0 && (
-            <li className="px-6 py-10 text-sm text-muted">
-              No tailored versions yet. Open a match report and choose Tailor Resume.
-            </li>
-          )}
-        </ul>
-      </Card>
+      </div>
+      {resumeVersions.filter((item) => item.status !== 'generating').length === 0 && (
+        <Card className="mt-4 p-6">
+          <p className="text-sm text-muted">No tailored versions yet. Open a match report and choose Tailor Resume.</p>
+        </Card>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="Delete this tailored version?"
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          if (!pendingDeleteId) return
+          void deleteResumeVersion(pendingDeleteId).then(() => {
+            notify('Resume version deleted.')
+            setPendingDeleteId(null)
+          })
+        }}
+      >
+        The master resume stays. This only removes the tailored copy.
+      </ConfirmDialog>
+
+      {renameId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(32,36,28,0.35)] p-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="rename-title" className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-card">
+            <h2 id="rename-title" className="text-lg font-semibold text-charcoal">
+              Rename version
+            </h2>
+            <Field label="Version name">
+              <TextInput value={renameValue} onChange={(event) => setRenameValue(event.target.value)} />
+            </Field>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setRenameId(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  if (!renameValue.trim()) return
+                  void renameResumeVersion(renameId, renameValue.trim()).then(() => setRenameId(null))
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

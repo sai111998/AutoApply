@@ -12,6 +12,7 @@ import { analyzeJobRequest, extractResumeTextRequest } from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import {
   deleteAnalysisRecords,
+  deleteApplicationRecords,
   fetchAnalysisHistory,
   fetchJobApplicationBundle,
   persistAnalysisRecords,
@@ -79,6 +80,7 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   refreshAnalyses: () => Promise<void>
   deleteAnalysis: (matchId: string) => Promise<void>
   updateApplication: (id: string, patch: Partial<Pick<Application, 'status' | 'notes' | 'dateApplied'>>) => Promise<void>
+  deleteApplications: (ids: string[]) => Promise<number>
   savePreferences: (preferences: UserPreferences) => Promise<void>
   saveResumeVersion: (version: ResumeVersion) => Promise<void>
   renameResumeVersion: (id: string, versionName: string) => Promise<void>
@@ -598,6 +600,38 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [isDemo, replace],
   )
 
+  const deleteApplications = useCallback(
+    async (ids: string[]) => {
+      const unique = [...new Set(ids.filter(Boolean))]
+      if (!unique.length) return 0
+      if (!user) throw new Error('Not signed in')
+
+      if (isDemo || !supabase) {
+        replace((current) => ({
+          ...current,
+          applications: current.applications.filter((item) => !unique.includes(item.id)),
+        }))
+        return unique.length
+      }
+
+      try {
+        const result = await deleteApplicationRecords(supabase, user.id, unique)
+        await refreshAnalyses()
+        if (!result.deletedIds.length) {
+          throw new Error('The selected applications could not be deleted.')
+        }
+        if (result.remainingIds.length) {
+          throw new Error('Some applications could not be deleted. The list was refreshed.')
+        }
+        return result.deletedIds.length
+      } catch (error) {
+        await refreshAnalyses()
+        throw error
+      }
+    },
+    [isDemo, refreshAnalyses, replace, user],
+  )
+
   const savePreferences = useCallback(
     async (preferences: UserPreferences) => {
       const next = { ...preferences, updatedAt: new Date().toISOString() }
@@ -872,6 +906,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       refreshAnalyses,
       deleteAnalysis,
       updateApplication,
+      deleteApplications,
       savePreferences,
       saveResumeVersion,
       renameResumeVersion,
@@ -884,6 +919,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       analyzeJob,
       analyzeTailoredVersion,
       deleteAnalysis,
+      deleteApplications,
       deleteResumeVersion,
       error,
       historyError,

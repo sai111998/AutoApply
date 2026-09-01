@@ -135,6 +135,7 @@ export function TailorResumePage() {
             jobId: job.id,
             application,
             originalMatch: match ?? null,
+            jobTitle: job.title,
           })
         : [],
     [application, job, match, matches, resume, resumeVersions],
@@ -269,7 +270,7 @@ export function TailorResumePage() {
   const comparison = scoreChange(match.overallScore, previewScore)
   const comparisonLabel = previewOption?.isSelected ? 'Selected resume match' : `${previewOption?.name ?? 'Resume'} match`
   const stepIndex = inflight ? Math.min(PROGRESS_STEPS.length - 1, Math.floor((Date.now() - inflight.startedAt) / 900)) : generating ? 1 : 0
-  const selectedLabel = selectedOption?.name ?? 'Master Resume'
+  const selectedLabel = selectedOption?.name ?? 'Master'
 
   async function onUseVersion(optionId: string) {
     if (!job) return

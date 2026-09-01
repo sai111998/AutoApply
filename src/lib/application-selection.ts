@@ -1,4 +1,5 @@
 import { createId } from '@/lib/format'
+import { compactVersionName, nextEditedVersionName } from '@/lib/resume-names'
 import { sanitizeTailoredContent } from '@/lib/tailored-text'
 import type {
   Application,
@@ -125,19 +126,7 @@ export function listJobResumeVersions(
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
 }
 
-export function nextTailoredVersionName(versions: ResumeVersion[], jobTitle: string): string {
-  const title = jobTitle.trim() || 'Role'
-  const tailoredCount = versions.filter((item) => item.createdBy === 'ai' && isUsableResumeVersion(item)).length
-  if (tailoredCount === 0) return `Tailored — ${title}`
-  return `Tailored v${tailoredCount + 1} — ${title}`
-}
-
-export function nextEditedVersionName(versions: ResumeVersion[], jobTitle: string): string {
-  const title = jobTitle.trim() || 'Role'
-  const editedCount = versions.filter((item) => item.createdBy === 'user' && isUsableResumeVersion(item)).length
-  if (editedCount === 0) return `Edited Tailored — ${title}`
-  return `Edited Tailored v${editedCount + 1} — ${title}`
-}
+export { nextEditedVersionName, nextTailoredVersionName, compactVersionName } from '@/lib/resume-names'
 
 export function createEditedResumeVersion(
   source: ResumeVersion,
@@ -232,6 +221,7 @@ export function buildSelectableResumeOptions(input: {
   jobId: string
   application?: Application | null
   originalMatch: JobMatch | null
+  jobTitle?: string
 }): SelectableResumeOption[] {
   const jobVersions = listJobResumeVersions(input.versions, input.sourceResumeId, input.jobId)
   const selectedFromApplication = input.application?.selectedResumeVersionId ?? null
@@ -246,7 +236,7 @@ export function buildSelectableResumeOptions(input: {
   const master: SelectableResumeOption = {
     id: MASTER_RESUME_OPTION_ID,
     versionId: null,
-    name: input.masterResume?.isMaster ? 'Master Resume' : (input.masterResume?.versionLabel ?? 'Master Resume'),
+    name: 'Master',
     origin: 'Original',
     matchScore: input.originalMatch?.overallScore ?? null,
     matchId: input.originalMatch?.id ?? input.application?.matchId ?? null,
@@ -261,7 +251,7 @@ export function buildSelectableResumeOptions(input: {
     return {
       id: version.id,
       versionId: version.id,
-      name: version.versionName,
+      name: compactVersionName(version.versionName, input.jobTitle),
       origin: (version.createdBy === 'user' ? 'User edited' : 'AI generated') as ResumeOriginLabel,
       matchScore: comparison?.overallScore ?? null,
       matchId: comparison?.id ?? version.comparisonAnalysisId,
@@ -326,10 +316,8 @@ export function resolveApplicationResumeDisplay(input: {
 
   const usingMaster = !selectedVersion
   const currentResumeLabel = selectedVersion
-    ? selectedVersion.versionName
-    : input.resumes.find((item) => item.id === input.application.resumeId)?.isMaster
-      ? 'Master Resume'
-      : input.resumes.find((item) => item.id === input.application.resumeId)?.versionLabel ?? 'Master Resume'
+    ? compactVersionName(selectedVersion.versionName)
+    : 'Master'
 
   return {
     currentResumeLabel,

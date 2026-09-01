@@ -281,7 +281,7 @@ describe('resume version selection and application sync', () => {
       matches: [original, tailoredMatch],
       resumes: [resume()],
     })
-    expect(display.currentResumeLabel).toBe('Tailored — Senior Java Engineer')
+    expect(display.currentResumeLabel).toBe('Tailored — Java Engineer')
     expect(display.currentMatchScore).toBe(88)
     expect(display.previousMatchScore).toBe(92)
     expect(display.usingMaster).toBe(false)
@@ -313,7 +313,7 @@ describe('resume version selection and application sync', () => {
       ],
       resumes: [resume()],
     })
-    expect(display.currentResumeLabel).toBe('Tailored — Senior Java Engineer')
+    expect(display.currentResumeLabel).toBe('Tailored — Java Engineer')
     expect(display.currentMatchScore).toBe(36)
     expect(display.previousMatchScore).toBe(30)
     expect(display.currentMatchId).toBe('match-tailored')
@@ -331,7 +331,7 @@ describe('resume version selection and application sync', () => {
       resumes: [resume()],
     })
     expect(display.currentMatchScore).toBe(88)
-    expect(display.currentResumeLabel).toBe('Tailored — Senior Java Engineer')
+    expect(display.currentResumeLabel).toBe('Tailored — Java Engineer')
   })
 
   it('10. previous analyses remain in history', () => {
@@ -368,7 +368,7 @@ describe('resume version selection and application sync', () => {
 
   it('14. regenerate names a new version and does not auto-start when one already exists', () => {
     const existing = [version()]
-    expect(nextTailoredVersionName(existing, 'Senior Java Engineer')).toBe('Tailored v2 — Senior Java Engineer')
+    expect(nextTailoredVersionName(existing, 'Senior Java Engineer')).toBe('Tailored v2 — Java Engineer')
     expect(shouldAutoStartGeneration(existing, 'resume-1', 'job-1', 'user-a')).toBe(false)
   })
 
@@ -380,6 +380,7 @@ describe('resume version selection and application sync', () => {
     expect(edited.createdBy).toBe('user')
     expect(edited.status).toBe('edited')
     expect(edited.isSelected).toBe(false)
+    expect(edited.versionName).toBe('Edited — Java Engineer')
     expect(source.resumeContent.summary).toBe('Tailored Java engineer')
     expect(edited.resumeContent.summary).toBe('Edited summary with Spring Boot')
     expect(masterResumeUnchanged(masterBefore, resume())).toBe(true)

@@ -57,10 +57,11 @@ describe('resume tailoring page contracts', () => {
   })
 
   it('shows the selected resume version and current score on Applications', () => {
-    expect(applicationsPage).toMatch(/Current resume/)
-    expect(applicationsPage).toMatch(/Current match/)
-    expect(applicationsPage).toMatch(/Previous match/)
     expect(applicationsPage).toMatch(/resolveApplicationResumeDisplay/)
+    expect(applicationsPage).toMatch(/>Job</)
+    expect(applicationsPage).toMatch(/>Company</)
+    expect(applicationsPage).toMatch(/currentResumeLabel/)
+    expect(applicationsPage).toMatch(/currentMatchScore/)
   })
 
   it('adds selected resume and current match columns without duplicating resume tables', () => {

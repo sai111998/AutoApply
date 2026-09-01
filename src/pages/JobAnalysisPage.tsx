@@ -18,6 +18,7 @@ import {
 } from '@/lib/analysis-draft'
 import { getAnalysisHealth } from '@/lib/ai/client'
 import { formatDate } from '@/lib/format'
+import { compactVersionName } from '@/lib/resume-names'
 import type { Job, JobMatch, Resume, ResumeVersion } from '@/types/domain'
 
 const ANALYSIS_STEPS = ['Reading the posting', 'Comparing resume evidence', 'Scoring fit']
@@ -454,7 +455,7 @@ export function JobAnalysisPage() {
                         <p className="text-sm font-semibold text-charcoal">{job?.title}</p>
                         <p className="text-xs text-muted">
                           {job?.company}
-                          {version ? ` · ${version.versionName}` : ''}
+                          {version ? ` · ${compactVersionName(version.versionName, job?.title)}` : ''}
                         </p>
                       </div>
                       <ScoreBadge score={match.overallScore} />
@@ -540,8 +541,13 @@ function HistoryPanel({
                   <span>{formatDate(match.analyzedAt ?? match.createdAt)}</span>
                   <span>·</span>
                   <span>
-                    {version?.versionName ??
-                      (match.parentMatchId ? 'Tailored version' : resume?.versionLabel ?? 'No stored resume')}
+                    {version
+                      ? compactVersionName(version.versionName, job?.title)
+                      : match.parentMatchId
+                        ? 'Tailored version'
+                        : resume?.isMaster
+                          ? 'Master'
+                          : resume?.versionLabel ?? 'No stored resume'}
                   </span>
                   {match.analysisSource === 'sample' && <Pill tone="review">Sample</Pill>}
                 </div>

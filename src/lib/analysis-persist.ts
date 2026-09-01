@@ -9,7 +9,7 @@ import {
   mapResumeVersion,
   matchToRow,
 } from '@/lib/mappers'
-import { isForeignKeyError, isMissingColumnError, userFacingPersistError } from '@/lib/persist-errors'
+import { isForeignKeyError, isMissingColumnError, isRlsError, userFacingPersistError } from '@/lib/persist-errors'
 import type { Application, Job, JobMatch } from '@/types/domain'
 
 export function isUuid(value: string | undefined | null): value is string {
@@ -110,6 +110,50 @@ export async function persistApplicationSelection(client: SupabaseClient, applic
   }
   if (result.error) {
     throw new Error(userFacingPersistError(result.error, 'Could not update the application with the selected resume.'))
+  }
+}
+
+function deleteApplicationError(error: unknown, fallback = 'Could not delete the selected applications.'): string {
+  if (isRlsError(error)) {
+    return 'You can only delete applications from your own account.'
+  }
+  return userFacingPersistError(error, fallback)
+}
+
+export async function deleteApplicationRecords(
+  client: SupabaseClient,
+  userId: string,
+  applicationIds: string[],
+): Promise<{ deletedIds: string[]; remainingIds: string[] }> {
+  const ids = [...new Set(applicationIds.filter(Boolean))]
+  if (!ids.length) return { deletedIds: [], remainingIds: [] }
+
+  const owned = await client.from('applications').select('id').in('id', ids).eq('user_id', userId)
+  if (owned.error) {
+    throw new Error(deleteApplicationError(owned.error))
+  }
+
+  const ownedIds = (owned.data ?? []).map((row) => String((row as { id: string }).id))
+  const unownedIds = ids.filter((id) => !ownedIds.includes(id))
+  if (!ownedIds.length) {
+    return { deletedIds: [], remainingIds: ids }
+  }
+
+  const result = await client.from('applications').delete().in('id', ownedIds).eq('user_id', userId)
+  if (result.error) {
+    throw new Error(deleteApplicationError(result.error))
+  }
+
+  const remaining = await client.from('applications').select('id').in('id', ownedIds).eq('user_id', userId)
+  if (remaining.error) {
+    throw new Error(deleteApplicationError(remaining.error, 'Could not confirm application deletion.'))
+  }
+
+  const remainingOwnedIds = (remaining.data ?? []).map((row) => String((row as { id: string }).id))
+  const remainingSet = new Set(remainingOwnedIds)
+  return {
+    deletedIds: ownedIds.filter((id) => !remainingSet.has(id)),
+    remainingIds: [...remainingOwnedIds, ...unownedIds],
   }
 }
 
