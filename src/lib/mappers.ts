@@ -295,7 +295,7 @@ export function mapApplication(row: ApplicationRow): Application {
     matchId: row.match_id,
     resumeId: row.resume_id,
     selectedResumeVersionId: row.selected_resume_version_id ?? null,
-    currentMatchId: row.current_match_id ?? row.match_id,
+    currentMatchId: row.current_match_id ?? null,
     currentMatchScore: row.current_match_score ?? null,
     status: row.status,
     dateAdded: row.date_added,

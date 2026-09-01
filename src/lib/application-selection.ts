@@ -115,11 +115,15 @@ export function createEditedResumeVersion(
 
 export function matchForVersion(matches: JobMatch[], version: ResumeVersion | null): JobMatch | null {
   if (!version) return null
-  return (
-    matches.find((item) => item.id === version.comparisonAnalysisId) ??
-    matches.find((item) => item.resumeVersionId === version.id && item.analysisStatus === 'complete') ??
-    null
-  )
+  const complete = (item: JobMatch) => item.analysisStatus === 'complete' && item.overallScore != null
+  const byComparison = version.comparisonAnalysisId
+    ? matches.find((item) => item.id === version.comparisonAnalysisId && complete(item))
+    : null
+  if (byComparison) return byComparison
+  const linked = matches
+    .filter((item) => item.resumeVersionId === version.id && complete(item))
+    .sort((left, right) => (right.analyzedAt ?? right.createdAt).localeCompare(left.analyzedAt ?? left.createdAt))
+  return linked[0] ?? matches.find((item) => item.id === version.comparisonAnalysisId) ?? null
 }
 
 export function originalMatchForJob(
@@ -237,8 +241,12 @@ export function applyResumeSelection(input: {
   const nextApplication: Application = {
     ...input.application,
     selectedResumeVersionId: version?.id ?? null,
-    currentMatchId: currentMatch?.id ?? (version ? input.application.currentMatchId : input.originalMatch?.id ?? input.application.matchId),
-    currentMatchScore: currentMatch?.overallScore ?? (version ? input.application.currentMatchScore : input.originalMatch?.overallScore ?? null),
+    currentMatchId:
+      currentMatch?.id ??
+      version?.comparisonAnalysisId ??
+      (version ? null : input.originalMatch?.id ?? input.application.matchId),
+    currentMatchScore:
+      currentMatch?.overallScore ?? (version ? null : input.originalMatch?.overallScore ?? null),
     nextAction: nextActionAfterResumeSelection(input.application.status),
     updatedAt: now,
   }
@@ -257,12 +265,12 @@ export function resolveApplicationResumeDisplay(input: {
       ? input.versions.find((item) => item.id === input.application.selectedResumeVersionId)
       : null) ?? selectedVersionForJob(input.versions, input.application.jobId)
 
-  const currentMatch =
-    (input.application.currentMatchId
-      ? input.matches.find((item) => item.id === input.application.currentMatchId)
-      : null) ??
-    matchForVersion(input.matches, selectedVersion) ??
-    original
+  const versionMatch = matchForVersion(input.matches, selectedVersion)
+  const storedCurrent =
+    input.application.currentMatchId && input.application.currentMatchId !== input.application.matchId
+      ? input.matches.find((item) => item.id === input.application.currentMatchId) ?? null
+      : null
+  const currentMatch = selectedVersion ? versionMatch ?? storedCurrent : original ?? storedCurrent
 
   const usingMaster = !selectedVersion
   const currentResumeLabel = selectedVersion
@@ -273,13 +281,57 @@ export function resolveApplicationResumeDisplay(input: {
 
   return {
     currentResumeLabel,
-    currentMatchScore: input.application.currentMatchScore ?? currentMatch?.overallScore ?? null,
+    currentMatchScore: selectedVersion
+      ? (versionMatch?.overallScore ?? currentMatch?.overallScore ?? input.application.currentMatchScore ?? original?.overallScore ?? null)
+      : (original?.overallScore ?? input.application.currentMatchScore ?? null),
     previousMatchScore: original?.overallScore ?? null,
     originalMatchScore: original?.overallScore ?? null,
     selectedVersionId: selectedVersion?.id ?? null,
-    currentMatchId: currentMatch?.id ?? input.application.currentMatchId ?? input.application.matchId,
+    currentMatchId:
+      currentMatch?.id ??
+      versionMatch?.id ??
+      (selectedVersion ? input.application.currentMatchId : original?.id ?? input.application.matchId),
     usingMaster,
   }
+}
+
+export function mergeResumeVersionLists(fetched: ResumeVersion[], existing: ResumeVersion[]): ResumeVersion[] {
+  const byId = new Map(existing.map((item) => [item.id, item]))
+  const merged = fetched.map((incoming) => {
+    const local = byId.get(incoming.id)
+    if (!local) return incoming
+    return {
+      ...incoming,
+      comparisonAnalysisId: incoming.comparisonAnalysisId ?? local.comparisonAnalysisId,
+      isSelected: incoming.isSelected || local.isSelected,
+      originalContent: incoming.originalContent ?? local.originalContent,
+      createdBy: incoming.createdBy === 'ai' && local.createdBy === 'user' ? local.createdBy : incoming.createdBy,
+    }
+  })
+  const fetchedIds = new Set(fetched.map((item) => item.id))
+  return [...merged, ...existing.filter((item) => !fetchedIds.has(item.id))]
+}
+
+export function mergeFetchedResumeVersions(
+  fetched: ResumeVersion[],
+  existing: ResumeVersion[],
+  jobId: string,
+): ResumeVersion[] {
+  const others = existing.filter((item) => item.jobId !== jobId)
+  const merged = fetched.map((incoming) => {
+    const local = existing.find((item) => item.id === incoming.id)
+    if (!local) return incoming
+    return {
+      ...incoming,
+      comparisonAnalysisId: incoming.comparisonAnalysisId ?? local.comparisonAnalysisId,
+      isSelected: incoming.isSelected || local.isSelected,
+      originalContent: incoming.originalContent ?? local.originalContent,
+      createdBy: incoming.createdBy === 'ai' && local.createdBy === 'user' ? local.createdBy : incoming.createdBy,
+    }
+  })
+  const fetchedIds = new Set(fetched.map((item) => item.id))
+  const localOnly = existing.filter((item) => item.jobId === jobId && !fetchedIds.has(item.id))
+  return [...merged, ...localOnly, ...others]
 }
 
 export function pdfContentForSelection(

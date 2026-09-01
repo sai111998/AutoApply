@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, Select, TextInput } from '@/components/ui/Field'
@@ -10,10 +10,14 @@ import type { ApplicationStatus } from '@/types/domain'
 import { APPLICATION_STATUS_LABELS } from '@/types/domain'
 
 export function ApplicationsPage() {
-  const { applications, jobs, matches, resumes, resumeVersions, updateApplication } = useWorkspace()
+  const { applications, jobs, matches, resumes, resumeVersions, updateApplication, refreshAnalyses } = useWorkspace()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<'all' | ApplicationStatus>('all')
   const [minScore, setMinScore] = useState('')
+
+  useEffect(() => {
+    void refreshAnalyses()
+  }, [refreshAnalyses])
 
   const rows = useMemo(() => {
     return applications

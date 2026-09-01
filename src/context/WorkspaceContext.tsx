@@ -24,6 +24,8 @@ import { tailoredResumeToText } from '@/lib/tailored-text'
 import { jobProfileFromMatch, resumeProfileFromTailored } from '@/lib/evidence-profiles'
 import {
   applyResumeSelection,
+  mergeFetchedResumeVersions,
+  mergeResumeVersionLists,
   originalMatchForJob,
 } from '@/lib/application-selection'
 import { mergeResumeVersion, normalizeResumeVersion } from '@/lib/tailor-session'
@@ -164,11 +166,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setHistoryError(history.error)
         return
       }
+      const versions = await fetchResumeVersions(supabase, user.id)
+      if (versions.error) {
+        setHistoryError(`resume versions: ${versions.error}`)
+      }
       replace((current) => ({
         ...current,
         jobs: history.jobs,
-        matches: history.matches,
+        matches: history.matches.reduce((items, match) => upsertById(items, match), current.matches),
         applications: history.applications,
+        resumeVersions: versions.versions.length
+          ? mergeResumeVersionLists(versions.versions, current.resumeVersions ?? [])
+          : current.resumeVersions,
       }))
     } catch (refreshError) {
       setHistoryError(refreshError instanceof Error ? refreshError.message : 'Could not load analysis history')
@@ -710,10 +719,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               : state.applications,
             matches: persisted.matches.reduce((items, match) => upsertById(items, match), state.matches),
             resumeVersions: persisted.versions.length
-              ? [
-                  ...persisted.versions,
-                  ...(state.resumeVersions ?? []).filter((item) => item.jobId !== input.jobId),
-                ]
+              ? mergeFetchedResumeVersions(persisted.versions, state.resumeVersions ?? [], input.jobId)
               : state.resumeVersions,
           }))
         }
@@ -833,7 +839,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         throw new Error(match.errorMessage || 'The updated match analysis did not complete.')
       }
 
-      if (select && job.id) {
+      const latest = snapshotRef.current
+      const application = latest.applications.find((item) => item.jobId === job.id)
+      const alreadySelected =
+        updatedVersion.isSelected ||
+        application?.selectedResumeVersionId === updatedVersion.id ||
+        (latest.resumeVersions ?? []).some((item) => item.id === updatedVersion.id && item.isSelected)
+      if ((select || alreadySelected) && job.id) {
         await selectResumeForJob({ jobId: job.id, resumeVersionId: updatedVersion.id })
       }
 

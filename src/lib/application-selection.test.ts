@@ -286,6 +286,53 @@ describe('resume version selection and application sync', () => {
     expect(display.usingMaster).toBe(false)
   })
 
+  it('uses the selected version score even when the application still stores the original score', () => {
+    const display = resolveApplicationResumeDisplay({
+      application: application({
+        selectedResumeVersionId: 'ver-tailored',
+        currentMatchId: 'match-original',
+        currentMatchScore: 30,
+        matchId: 'match-original',
+      }),
+      versions: [
+        version({
+          isSelected: true,
+          status: 'kept',
+          comparisonAnalysisId: 'match-tailored',
+        }),
+      ],
+      matches: [
+        match({ id: 'match-original', overallScore: 30 }),
+        match({
+          id: 'match-tailored',
+          parentMatchId: 'match-original',
+          resumeVersionId: 'ver-tailored',
+          overallScore: 36,
+        }),
+      ],
+      resumes: [resume()],
+    })
+    expect(display.currentResumeLabel).toBe('Tailored — Senior Java Engineer')
+    expect(display.currentMatchScore).toBe(36)
+    expect(display.previousMatchScore).toBe(30)
+    expect(display.currentMatchId).toBe('match-tailored')
+  })
+
+  it('uses is_selected to find the current score when application current_match_id is missing', () => {
+    const display = resolveApplicationResumeDisplay({
+      application: application({
+        selectedResumeVersionId: null,
+        currentMatchId: null,
+        currentMatchScore: null,
+      }),
+      versions: [version({ isSelected: true, status: 'kept', comparisonAnalysisId: 'match-tailored' })],
+      matches: [original, tailoredMatch],
+      resumes: [resume()],
+    })
+    expect(display.currentMatchScore).toBe(88)
+    expect(display.currentResumeLabel).toBe('Tailored — Senior Java Engineer')
+  })
+
   it('10. previous analyses remain in history', () => {
     const history = analysesForJob([original, tailoredMatch, editedMatch], 'job-1')
     expect(history.map((item) => item.overallScore)).toEqual([92, 88, 94])
