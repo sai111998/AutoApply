@@ -12,7 +12,7 @@ import {
 import { BrandMark } from '@/components/BrandMark'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const links = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -29,22 +29,32 @@ export function AppLayout() {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
 
+  useEffect(() => {
+    if (!open) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previous
+    }
+  }, [open])
+
   async function handleSignOut() {
     await signOut()
     navigate('/')
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-testid="app-shell">
       <aside
-        className={`z-20 flex flex-col border-r border-line bg-white px-3 py-5 max-[960px]:fixed max-[960px]:inset-y-0 max-[960px]:left-0 max-[960px]:w-72 max-[960px]:transition-transform ${
+        data-testid="app-sidebar"
+        className={`app-sidebar z-20 flex flex-col border-r border-line bg-white px-3 py-5 max-[960px]:fixed max-[960px]:inset-y-0 max-[960px]:left-0 max-[960px]:w-72 max-[960px]:transition-transform ${
           open ? 'max-[960px]:translate-x-0' : 'max-[960px]:-translate-x-full'
         }`}
       >
-        <div className="px-2 pb-6">
+        <div className="shrink-0 px-2 pb-6">
           <BrandMark />
         </div>
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
           {links.map((link) => (
             <NavLink
               key={link.to}
@@ -58,7 +68,7 @@ export function AppLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="mt-4 rounded-2xl border border-line bg-canvas p-3">
+        <div className="mt-4 shrink-0 rounded-2xl border border-line bg-canvas p-3" data-testid="sidebar-user-footer">
           <p className="text-sm font-semibold text-charcoal">{profile.fullName || user?.email}</p>
           <p className="truncate text-xs text-muted">{user?.email}</p>
           {isDemo && (
@@ -68,8 +78,8 @@ export function AppLayout() {
           )}
           <button
             type="button"
-            onClick={() => void handleSignOut()}
             className="mt-3 inline-flex items-center gap-2 text-sm text-muted transition hover:text-olive-dark"
+            onClick={() => void handleSignOut()}
           >
             <LogOut size={15} />
             Sign out
@@ -86,8 +96,8 @@ export function AppLayout() {
         />
       )}
 
-      <div className="flex min-h-screen flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-line bg-white/80 px-4 py-3 backdrop-blur-sm sm:px-8">
+      <div className="app-shell-main" data-testid="app-main">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-white/80 px-4 py-3 backdrop-blur-sm sm:px-8">
           <button
             type="button"
             className="rounded-xl border border-line bg-white px-3 py-2 text-sm font-semibold min-[961px]:hidden"
@@ -104,7 +114,7 @@ export function AppLayout() {
             <p className="text-muted">{profile.targetJobTitles[0] || 'Set a target role'}</p>
           </div>
         </header>
-        <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8">
+        <main className="app-shell-content px-4 py-6 sm:px-8 sm:py-8">
           {error && (
             <div className="mb-4 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">
               {error}

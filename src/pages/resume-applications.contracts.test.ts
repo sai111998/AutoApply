@@ -49,6 +49,15 @@ describe('resume version card contracts', () => {
     expect(resumePage).toMatch(/ConfirmDialog/)
     expect(resumePage).not.toMatch(/window\.alert|window\.confirm|alert\(/)
   })
+
+  it('lets stored master resumes be viewed and downloaded without deleting them', () => {
+    expect(resumePage).toMatch(/openStoredResume/)
+    expect(resumePage).toMatch(/downloadStoredResume/)
+    expect(resumePage).toMatch(/createResumeSignedUrl/)
+    expect(resumePage).toMatch(/ResumeFilePreview/)
+    expect(resumePage).toMatch(/onDelete=\{resume\.isMaster \? undefined/)
+    expect(resumePage).toMatch(/The master resume stays/)
+  })
 })
 
 describe('application bulk delete contracts', () => {
@@ -113,6 +122,12 @@ describe('application bulk delete contracts', () => {
     expect(schema).toMatch(/using \(auth\.uid\(\) = user_id\)/)
     expect(schema).toMatch(/with check \(auth\.uid\(\) = user_id\)/)
     expect(schema).toMatch(/alter table public\.applications enable row level security/)
+  })
+
+  it('keeps the resumes storage bucket private with owner-only object policies', () => {
+    expect(schema).toMatch(/values \('resumes', 'resumes', false\)/)
+    expect(schema).toMatch(/Users can read own resumes/)
+    expect(schema).toMatch(/auth\.uid\(\)::text = \(storage\.foldername\(name\)\)\[1\]/)
   })
 
   it('keeps a compact applications table and a usable mobile list', () => {

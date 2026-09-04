@@ -44,6 +44,7 @@ import {
 } from '@/lib/mappers'
 import { userFacingPersistError } from '@/lib/persist-errors'
 import { supabase } from '@/lib/supabase'
+import { RESUME_BUCKET } from '@/lib/resume-storage'
 import { createSampleWorkspace } from '@/data/sample'
 import type {
   Application,
@@ -75,6 +76,8 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   saveProfile: (profile: Profile, skills: Skill[]) => Promise<void>
   uploadResume: (file: File, versionLabel: string) => Promise<void>
   setMasterResume: (resumeId: string) => Promise<void>
+  renameStoredResume: (id: string, versionLabel: string) => Promise<void>
+  deleteStoredResume: (id: string) => Promise<void>
   hydrateResumeText: (resumeId: string) => Promise<string>
   analyzeJob: (input: AnalyzeJobInput) => Promise<string>
   refreshAnalyses: () => Promise<void>
@@ -391,6 +394,51 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (clearError) throw clearError
       const { error: setError } = await supabase.from('resumes').update({ is_master: true }).eq('id', resumeId)
       if (setError) throw setError
+    },
+    [isDemo, replace, user],
+  )
+
+  const renameStoredResume = useCallback(
+    async (id: string, versionLabel: string) => {
+      const nextLabel = versionLabel.trim()
+      if (!nextLabel) throw new Error('Enter a resume name.')
+      replace((current) => ({
+        ...current,
+        resumes: current.resumes.map((resume) => (resume.id === id ? { ...resume, versionLabel: nextLabel } : resume)),
+      }))
+      if (isDemo || !supabase || !user) return
+      const { error: updateError } = await supabase
+        .from('resumes')
+        .update({ version_label: nextLabel })
+        .eq('id', id)
+        .eq('user_id', user.id)
+      if (updateError) throw updateError
+    },
+    [isDemo, replace, user],
+  )
+
+  const deleteStoredResume = useCallback(
+    async (id: string) => {
+      const current = snapshotRef.current
+      const resume = current.resumes.find((item) => item.id === id)
+      if (!resume) return
+      if (resume.isMaster) {
+        throw new Error('The master resume cannot be deleted. Select another master first.')
+      }
+      if ((current.resumeVersions ?? []).some((item) => item.sourceResumeId === id)) {
+        throw new Error('Delete tailored versions of this resume first. The master resume stays.')
+      }
+      replace((state) => ({
+        ...state,
+        resumes: state.resumes.filter((item) => item.id !== id),
+      }))
+      if (isDemo || !supabase || !user) return
+      if (resume.storagePath) {
+        const removed = await supabase.storage.from(RESUME_BUCKET).remove([resume.storagePath])
+        if (removed.error) throw removed.error
+      }
+      const { error: deleteError } = await supabase.from('resumes').delete().eq('id', id).eq('user_id', user.id)
+      if (deleteError) throw deleteError
     },
     [isDemo, replace, user],
   )
@@ -901,6 +949,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       saveProfile,
       uploadResume,
       setMasterResume,
+      renameStoredResume,
+      deleteStoredResume,
       hydrateResumeText,
       analyzeJob,
       refreshAnalyses,
@@ -921,6 +971,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteAnalysis,
       deleteApplications,
       deleteResumeVersion,
+      deleteStoredResume,
       error,
       historyError,
       historyLoading,
@@ -929,6 +980,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       masterResume,
       refreshAnalyses,
       renameResumeVersion,
+      renameStoredResume,
       savePreferences,
       saveResumeVersion,
       saveProfile,

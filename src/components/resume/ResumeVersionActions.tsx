@@ -9,9 +9,9 @@ export function ResumeVersionActions({
   onDelete,
 }: {
   onView: () => void
-  onRename: () => void
+  onRename?: () => void
   onDownload: () => void
-  onDelete: () => void
+  onDelete?: () => void
 }) {
   const [open, setOpen] = useState(false)
 
@@ -21,15 +21,19 @@ export function ResumeVersionActions({
         <IconButton label="View" onClick={onView}>
           <Eye size={16} />
         </IconButton>
-        <IconButton label="Rename" onClick={onRename}>
-          <Pencil size={16} />
-        </IconButton>
+        {onRename && (
+          <IconButton label="Rename" onClick={onRename}>
+            <Pencil size={16} />
+          </IconButton>
+        )}
         <IconButton label="Download" onClick={onDownload}>
           <Download size={16} />
         </IconButton>
-        <IconButton label="Delete" variant="danger" onClick={onDelete}>
-          <Trash2 size={16} />
-        </IconButton>
+        {onDelete && (
+          <IconButton label="Delete" variant="danger" onClick={onDelete}>
+            <Trash2 size={16} />
+          </IconButton>
+        )}
       </div>
       <div className="sm:hidden" data-testid="resume-actions-mobile">
         <IconButton label="Actions" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu">
@@ -38,9 +42,9 @@ export function ResumeVersionActions({
         {open && (
           <div className="mt-2 flex flex-col gap-1 rounded-xl border border-line bg-white p-1">
             <MobileAction label="View" onClick={() => { setOpen(false); onView() }} />
-            <MobileAction label="Rename" onClick={() => { setOpen(false); onRename() }} />
+            {onRename && <MobileAction label="Rename" onClick={() => { setOpen(false); onRename() }} />}
             <MobileAction label="Download" onClick={() => { setOpen(false); onDownload() }} />
-            <MobileAction label="Delete" onClick={() => { setOpen(false); onDelete() }} danger />
+            {onDelete && <MobileAction label="Delete" onClick={() => { setOpen(false); onDelete() }} danger />}
           </div>
         )}
       </div>
