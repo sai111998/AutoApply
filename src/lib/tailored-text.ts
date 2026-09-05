@@ -4,6 +4,7 @@ export function emptyTailoredContent(): TailoredResumeContent {
   return {
     summary: '',
     skills: [],
+    skillGroups: [],
     experience: [],
     projects: [],
     education: [],
@@ -23,6 +24,12 @@ export function sanitizeTailoredContent(resume: TailoredResumeContent): Tailored
     ...resume,
     summary: typeof resume?.summary === 'string' ? resume.summary.trim() : '',
     skills: (resume?.skills ?? []).map((item) => item.trim()).filter(Boolean),
+    skillGroups: (resume?.skillGroups ?? [])
+      .map((group) => ({
+        label: (group.label ?? '').trim(),
+        items: (group.items ?? []).map((item) => item.trim()).filter(Boolean),
+      }))
+      .filter((group) => group.label && group.items.length),
     experience: (resume?.experience ?? []).map((role) => ({
       ...role,
       title: (role.title ?? '').trim(),
@@ -62,13 +69,17 @@ export function tailoredResumeToText(resume: TailoredResumeContent): string {
   if (contact) lines.push(contact)
   lines.push('')
   if (clean.summary) {
-    lines.push('Summary')
+    lines.push('Professional Summary')
     lines.push(clean.summary)
     lines.push('')
   }
   if (clean.skills.length) {
-    lines.push('Skills')
-    lines.push(clean.skills.join(', '))
+    lines.push('Technical Skills')
+    lines.push(
+      clean.skillGroups?.length
+        ? clean.skillGroups.map((group) => `${group.label}: ${group.items.join(', ')}`).join('\n')
+        : clean.skills.join(', '),
+    )
     lines.push('')
   }
   if (clean.experience.length) {

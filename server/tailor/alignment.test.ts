@@ -3,76 +3,7 @@ import { scoreMatch } from '../match/engine'
 import { extractJobLocal, extractResumeLocal } from '../match/extract-local'
 import { conservativeTailor } from './engine'
 import type { TailoredResume } from './types'
-
-const JAVA_RESUME_TEXT = `Jordan Hale
-Austin, TX
-jordan.hale@example.com
-
-Summary
-Software Engineer with experience in Java development.
-
-Experience
-Backend Engineer, Northwind — 2021 to present
-- Developed Java and Spring Boot applications for payments APIs.
-- Owned PostgreSQL schema changes for billing.
-- Worked with Docker in CI.
-- Reduced checkout errors by adding contract tests.
-
-Backend Engineer, Harbor Software — 2018 to 2021
-- Built REST APIs in Java.
-- Supported AWS-based services.
-
-Skills
-Java, Python, React, AWS, Docker, Spring Boot, PostgreSQL
-
-Education
-B.S., Computer Science, State University
-
-Certifications
-AWS Certified Developer
-
-Projects
-Billing API
-`
-
-export const JAVA_BACKEND_JD = `Senior Java Software Engineer
-
-Required qualifications:
-- 3+ years of experience
-- Java
-- Spring Boot and Spring framework
-- Build and maintain RESTful APIs
-- PostgreSQL or a relational database
-- Cloud-native AWS applications
-- Docker
-- CI/CD
-- Bachelor's degree in Computer Science
-
-Preferred:
-- Kubernetes
-- Terraform
-- Go
-- React
-- TypeScript
-- JUnit and Mockito
-- Microservices
-
-Responsibilities:
-- Develop scalable Java/Spring Boot backend services
-- Design REST APIs for payment platforms
-- Own PostgreSQL schema and data access
-- Deploy AWS services
-- Containerize applications with Docker
-- Maintain CI/CD pipelines
-`
-
-const MISSING_STACK_JD = `${JAVA_BACKEND_JD}
-
-Also required:
-- Kubernetes administration
-- Terraform
-- Go
-`
+import { JAVA_BACKEND_JD, JAVA_RESUME_TEXT, MISSING_STACK_JD } from './fixtures'
 
 function tailoredResumeToText(resume: TailoredResume): string {
   const lines: string[] = [resume.summary, `Skills\n${resume.skills.join(', ')}`, 'Experience']
@@ -119,6 +50,11 @@ describe('Java backend tailoring alignment', () => {
     expect(tailored.summary).toMatch(/Spring Boot/)
     expect(result.plan.missingSkills.join(' ')).toMatch(/Kubernetes/)
     expect(result.plan.missingSkills.join(' ')).toMatch(/Terraform/)
+    expect(result.atsAlignmentScore).toBeGreaterThan(0)
+    expect(result.supportedCoverageAfter).toBeGreaterThanOrEqual(result.supportedCoverageBefore ?? 0)
+    expect(result.factualValidation?.passed).toBe(true)
+    expect(result.unsupportedRequirements?.join(' ')).toMatch(/Kubernetes|Terraform|Go/)
+    expect(tailored.summary.split('\n').length).toBeGreaterThanOrEqual(2)
 
     const rewritten = tailored.experience.flatMap((role) => role.bullets)
     expect(rewritten.some((bullet) => /Java/i.test(bullet) && /Spring Boot/i.test(bullet))).toBe(true)

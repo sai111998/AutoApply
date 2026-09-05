@@ -86,9 +86,16 @@ export async function renderResumePdf(resume: TailoredResume): Promise<Buffer> {
       doc.font('Times-Roman').fontSize(10.5).fillColor('#1e221c').text(resume.summary, { align: 'left', lineGap: 2 })
     }
 
-    if (resume.skills.length) {
-      section('Skills')
-      doc.font('Times-Roman').fontSize(10.5).fillColor('#1e221c').text(resume.skills.join('  ·  '), { lineGap: 2 })
+    if (resume.skills.length || resume.skillGroups?.length) {
+      section('Technical Skills')
+      if (resume.skillGroups?.length) {
+        for (const group of resume.skillGroups) {
+          doc.font('Times-Bold').fontSize(10.5).fillColor('#1e221c').text(`${group.label}: `, { continued: true })
+          doc.font('Times-Roman').text(group.items.join(', '))
+        }
+      } else {
+        doc.font('Times-Roman').fontSize(10.5).fillColor('#1e221c').text(resume.skills.join('  ·  '), { lineGap: 2 })
+      }
     }
 
     if (resume.experience.length) {

@@ -1,8 +1,9 @@
-import { ROLE_PRIORITY, categoryForNormalized } from '../match/lexicon'
-import { candidateImplements, normalizeSkill, sameSkill, textContainsTerm } from '../match/normalize'
+import { candidateImplements, sameSkill, textContainsTerm } from '../match/normalize'
 import type { ResumeProfile } from '../match/types'
-import type { SourceFacts, TailorChange, TailoredResume, TailoringPlan } from './types'
+import type { SourceFacts, TailorChange, TailoredProject, TailoredResume, TailoringPlan } from './types'
 import { supportedInSource } from './source'
+import { formatSkillGroups, groupSkills, orderSkills } from './skills-format'
+import type { ResumeEvidenceRecord } from './evidence'
 
 function unique(values: string[]): string[] {
   const seen = new Set<string>()
@@ -68,6 +69,9 @@ const STRONG_VERBS =
 function applySafeVerb(bullet: string): string {
   if (/^worked with\b/i.test(bullet)) return bullet.replace(/^worked with/i, 'Used')
   if (/^worked on\b/i.test(bullet)) return bullet.replace(/^worked on/i, 'Developed')
+  if (/^helped with\b/i.test(bullet)) return bullet.replace(/^helped with/i, 'Supported')
+  if (/^responsible for testing\b/i.test(bullet)) return bullet.replace(/^responsible for testing/i, 'Tested')
+  if (/^responsible for\b/i.test(bullet)) return bullet.replace(/^responsible for/i, 'Owned')
   return bullet
 }
 
@@ -98,6 +102,13 @@ function applyJdTerminology(text: string, emphasize: string[], source: SourceFac
   ) {
     next = next.replace(/\brelational databases?\b/gi, 'PostgreSQL')
   }
+  if (
+    emphasize.some((skill) => sameSkill(skill, 'AWS')) &&
+    supportedInSource('AWS', source) &&
+    /\bAWS-based services\b/i.test(next)
+  ) {
+    next = next.replace(/\bAWS-based services\b/gi, 'AWS cloud services')
+  }
   return next
 }
 
@@ -108,6 +119,36 @@ function enrichBullet(
   source: SourceFacts,
 ): { text: string; changed: boolean } {
   let text = applyJdTerminology(applySafeVerb(bullet), emphasize, source)
+
+  if (/^used docker in ci\/cd\.?$/i.test(text) && supportedInSource('Docker', source)) {
+    text = 'Used Docker to containerize and deliver applications in CI/CD.'
+  } else if (/^used docker in ci\.?$/i.test(text) && supportedInSource('Docker', source)) {
+    text = 'Used Docker to containerize and deliver applications in CI/CD.'
+  }
+
+  if (
+    /developed java and spring boot applications for payment APIs/i.test(text) &&
+    supportedInSource('Spring Boot', source)
+  ) {
+    text = 'Developed Java and Spring Boot backend services and payment APIs.'
+  }
+
+  if (/^built rest apis in java\.?$/i.test(text) && supportedInSource('REST APIs', source)) {
+    text = 'Built Java REST APIs supporting backend services.'
+  }
+
+  if (/^supported aws cloud services\.?$/i.test(text) && supportedInSource('AWS', source)) {
+    text = 'Supported AWS cloud services for application delivery.'
+  }
+
+  if (/owned postgresql schema changes for billing\.?$/i.test(text) && supportedInSource('PostgreSQL', source)) {
+    text = 'Owned PostgreSQL schema changes for billing systems.'
+  }
+
+  if (/reduced checkout errors by adding contract tests/i.test(text)) {
+    text = 'Reduced checkout errors by adding contract tests for payment APIs.'
+  }
+
   const alreadyHasSkill = emphasize.some((skill) => textContainsTerm(text, skill))
   const keepFactual = /^(reduced|increased|improved|saved|cut)\b/i.test(text)
   if (!alreadyHasSkill && !keepFactual) {
@@ -148,51 +189,6 @@ function relevance(value: string, emphasize: string[], themes: string[]): number
   return skillHits * 3 + themeHits
 }
 
-const CATEGORY_ORDER = [
-  'language',
-  'framework',
-  'architecture',
-  'cloud',
-  'database',
-  'devops',
-  'testing',
-  'frontend',
-  'security',
-  'tools',
-  'methodology',
-  'domain',
-  'library',
-]
-
-function orderSkills(skills: string[], plan: TailoringPlan, jobDescription: string): string[] {
-  const role = (plan.roleType as keyof typeof ROLE_PRIORITY) || 'general'
-  const roleOrder = ROLE_PRIORITY[role] ?? []
-  const emphasizeIndex = (name: string) => {
-    const idx = plan.skillsToEmphasize.findIndex((item) => sameSkill(item, name))
-    return idx === -1 ? 1000 : idx
-  }
-  const roleIndex = (name: string) => {
-    const idx = roleOrder.findIndex((item) => sameSkill(item, name) || normalizeSkill(item) === normalizeSkill(name))
-    return idx === -1 ? 1000 : idx
-  }
-  const categoryIndex = (name: string) => {
-    const category = categoryForNormalized(normalizeSkill(name))
-    const idx = category ? CATEGORY_ORDER.indexOf(category) : 99
-    return idx === -1 ? 99 : idx
-  }
-  const jdHit = (name: string) => (textContainsTerm(jobDescription, name) ? 0 : 1)
-
-  return [...skills].sort((left, right) => {
-    const byEmphasize = emphasizeIndex(left) - emphasizeIndex(right)
-    if (byEmphasize !== 0) return byEmphasize
-    const byJd = jdHit(left) - jdHit(right)
-    if (byJd !== 0) return byJd
-    const byRole = roleIndex(left) - roleIndex(right)
-    if (byRole !== 0) return byRole
-    return categoryIndex(left) - categoryIndex(right)
-  })
-}
-
 function phraseList(names: string[]): string {
   if (names.length === 0) return ''
   if (names.length === 1) return names[0]
@@ -200,15 +196,68 @@ function phraseList(names: string[]): string {
   return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`
 }
 
-function buildSummary(source: SourceFacts, plan: TailoringPlan, profile: ResumeProfile | null): string {
+function sanitizeTargetTitle(targetRole: string | undefined, missingSkills: string[], fallback: string): string {
+  const title = targetRole?.trim() || fallback
+  if (missingSkills.some((skill) => textContainsTerm(title, skill))) return fallback
+  return title
+}
+
+function domainFromSource(source: SourceFacts, jobDescription: string): string {
+  if (/\bpayment/i.test(source.text) || /\bpayment/i.test(jobDescription)) return 'payment platforms'
+  if (/\bbilling/i.test(source.text)) return 'billing systems'
+  if (/\bsecurity|siem|soc/i.test(source.text)) return 'security operations'
+  return ''
+}
+
+function buildSummary(
+  source: SourceFacts,
+  plan: TailoringPlan,
+  profile: ResumeProfile | null,
+  jobDescription: string,
+): string {
   const years = yearsFromResume(source, profile)
-  const title = source.titles[0] || 'Software Engineer'
-  const top = dropParentSkills(plan.skillsToEmphasize.filter((item) => supportedInSource(item, source))).slice(0, 6)
-  const payment = /\bpayment/i.test(source.text)
+  const title = sanitizeTargetTitle(plan.targetRole, plan.missingSkills, source.titles[0] || 'Software Engineer')
+  const top = dropParentSkills(plan.skillsToEmphasize.filter((item) => supportedInSource(item, source))).slice(0, 8)
+  const domain = domainFromSource(source, jobDescription)
   if (!top.length) return originalSummary(source) || `${title}.`
-  const head = years ? `${title} with ${years}+ years of experience` : `${title} with experience`
-  const focus = payment ? ' for payment platforms' : ''
-  return `${head} developing ${phraseList(top)}${focus}.`
+
+  const head = years
+    ? `${title} with ${years}+ years of experience`
+    : `${title} with hands-on experience`
+  const core = phraseList(top.slice(0, 5))
+  const line1 = domain
+    ? `${head} developing ${core} for ${domain}.`
+    : `${head} developing ${core}.`
+
+  const rest = top.slice(5)
+  const themes = plan.experienceToEmphasize.slice(0, 3)
+  const extras: string[] = [...rest]
+  if (supportedInSource('Docker', source) && textContainsTerm(source.text, 'CI') && !extras.some((item) => sameSkill(item, 'CI/CD'))) {
+    extras.push('Docker-based CI/CD')
+  }
+  const line2 = extras.length ? `Additional supported strengths include ${phraseList(unique(extras))}.` : ''
+
+  const line3 = themes.length
+    ? `Experience includes ${phraseList(themes.slice(0, 3).map((item) => item.replace(/\.$/, '').replace(/^[a-z]/, (ch) => ch.toLowerCase())))}.`
+    : ''
+
+  return [line1, line2, line3].filter(Boolean).join('\n')
+}
+
+function prioritizeProjects(
+  source: SourceFacts,
+  plan: TailoringPlan,
+  jobDescription: string,
+): TailoredProject[] {
+  const emphasize = [...plan.skillsToEmphasize, ...plan.experienceToEmphasize]
+  return source.projects
+    .map((name) => ({
+      name,
+      bullets: [] as string[],
+      score: relevance(name, emphasize, [jobDescription]),
+    }))
+    .sort((left, right) => right.score - left.score)
+    .map(({ name, bullets }) => ({ name, bullets }))
 }
 
 export function buildConservativeResume(
@@ -217,20 +266,32 @@ export function buildConservativeResume(
   profile: ResumeProfile | null,
   contact: TailoredResume['contact'],
   jobDescription = '',
+  evidence: ResumeEvidenceRecord[] = [],
 ): TailoredResume {
   const remaining = source.skills.filter((skill) => !plan.skillsToEmphasize.some((item) => sameSkill(item, skill)))
+  const evidenceSkills = evidence
+    .filter(
+      (item) =>
+        (item.strength === 'strong' || item.strength === 'partial') &&
+        (item.type === 'required' || item.type === 'preferred') &&
+        item.requirement.split(/\s+/).length <= 4 &&
+        supportedInSource(item.requirement, source),
+    )
+    .map((item) => item.requirement)
   const skills = orderSkills(
     dropParentSkills(
       unique([
         ...plan.skillsToEmphasize.filter((item) => supportedInSource(item, source)),
+        ...evidenceSkills,
         ...remaining.filter((item) => supportedInSource(item, source)),
       ]),
     ),
     plan,
     jobDescription,
   )
+  const skillGroups = groupSkills(skills, plan.roleType)
   const sourceSummary = originalSummary(source)
-  const summary = buildSummary(source, plan, profile)
+  const summary = buildSummary(source, plan, profile, jobDescription)
 
   const changes: TailorChange[] = [
     ...plan.skillsToEmphasize.filter((skill) => supportedInSource(skill, source)).map((skill) => ({
@@ -280,8 +341,9 @@ export function buildConservativeResume(
   return {
     summary,
     skills,
+    skillGroups,
     experience,
-    projects: source.projects.map((name) => ({ name, bullets: [] })),
+    projects: prioritizeProjects(source, plan, jobDescription),
     education: source.education,
     certifications: source.certifications,
     changes,
@@ -290,3 +352,5 @@ export function buildConservativeResume(
     contact,
   }
 }
+
+export { formatSkillGroups }

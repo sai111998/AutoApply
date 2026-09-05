@@ -177,6 +177,28 @@ function emptyPlan(): TailoringPlan {
   return { skillsToEmphasize: [], relatedSkills: [], missingSkills: [], experienceToEmphasize: [] }
 }
 
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function mergePlan(result: Record<string, unknown>): TailoringPlan {
+  const plan = { ...emptyPlan(), ...((result.plan as TailoringPlan) ?? {}) }
+  plan.atsAlignmentScore = plan.atsAlignmentScore ?? asNumber(result.atsAlignmentScore)
+  plan.supportedCoverageBefore = plan.supportedCoverageBefore ?? asNumber(result.supportedCoverageBefore)
+  plan.supportedCoverageAfter = plan.supportedCoverageAfter ?? asNumber(result.supportedCoverageAfter)
+  plan.requiredCoverage = plan.requiredCoverage ?? asNumber(result.requiredCoverage)
+  plan.preferredCoverage = plan.preferredCoverage ?? asNumber(result.preferredCoverage)
+  plan.responsibilityCoverage = plan.responsibilityCoverage ?? asNumber(result.responsibilityCoverage)
+  plan.experienceAlignment = plan.experienceAlignment ?? asNumber(result.experienceAlignment)
+  plan.keywordAlignment = plan.keywordAlignment ?? asNumber(result.keywordAlignment)
+  plan.educationAlignment = plan.educationAlignment ?? asNumber(result.educationAlignment)
+  if (!plan.unsupportedRequirements?.length && Array.isArray(result.unsupportedRequirements)) {
+    plan.unsupportedRequirements = result.unsupportedRequirements.filter((item): item is string => typeof item === 'string')
+  }
+  if (!plan.alignmentSummary && typeof result.summary === 'string') plan.alignmentSummary = result.summary
+  return plan
+}
+
 export async function withTimeout<T>(promise: Promise<T>, ms: number, message = USER_TAILOR_ERROR): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -254,7 +276,7 @@ export function startTailorGeneration(input: TailorGenerationInput): InflightGen
       const status = result.status === 'complete' ? 'completed' : 'failed'
       const tailored = (result.tailored as TailoredResumeContent | null) ?? null
       const original = (result.original as TailoredResumeContent | null) ?? null
-      const plan = (result.plan as TailoringPlan) ?? emptyPlan()
+      const plan = mergePlan(result)
       const message = typeof result.message === 'string' ? result.message : undefined
       const completed: ResumeVersion = {
         ...stub,

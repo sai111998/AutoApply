@@ -25,8 +25,16 @@ export function ResumeDocument({
             {[resume.contact.email, resume.contact.location].filter(Boolean).join(' · ')}
           </p>
         </div>
-        <Section title="Summary" body={resume.summary} marked={changed.has('summary')} />
-        <Section title="Skills" body={resume.skills.join(' · ')} marked={changed.has('skills')} />
+        <Section title="Professional Summary" body={resume.summary} marked={changed.has('summary')} />
+        <Section
+          title="Technical Skills"
+          body={
+            resume.skillGroups?.length
+              ? resume.skillGroups.map((group) => `${group.label}: ${group.items.join(', ')}`).join('\n')
+              : resume.skills.join(' · ')
+          }
+          marked={changed.has('skills')}
+        />
         <div className={changed.has('experience') ? 'rounded-2xl bg-olive-soft/60 px-3 py-2' : ''}>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Experience</p>
           {resume.experience.map((role) => (

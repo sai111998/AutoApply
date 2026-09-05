@@ -31,9 +31,15 @@ export interface TailoredContact {
   location: string
 }
 
+export interface SkillGroup {
+  label: string
+  items: string[]
+}
+
 export interface TailoredResume {
   summary: string
   skills: string[]
+  skillGroups?: SkillGroup[]
   experience: TailoredExperience[]
   projects: TailoredProject[]
   education: TailoredEducation[]
@@ -51,6 +57,13 @@ export interface JdCoverage {
   preferredTotal: number
   overallSupported: number
   overallTotal: number
+  representedBefore?: number
+  representedAfter?: number
+}
+
+export interface FactualValidation {
+  passed: boolean
+  issues: string[]
 }
 
 export interface TailoringPlan {
@@ -61,6 +74,23 @@ export interface TailoringPlan {
   coverage?: JdCoverage
   roleType?: string
   targetRole?: string
+  atsAlignmentScore?: number
+  supportedCoverageBefore?: number
+  supportedCoverageAfter?: number
+  requiredCoverage?: number
+  preferredCoverage?: number
+  responsibilityCoverage?: number
+  experienceAlignment?: number
+  keywordAlignment?: number
+  educationAlignment?: number
+  unsupportedRequirements?: string[]
+  alignmentSummary?: string
+  requiredSupportedCount?: number
+  preferredSupportedCount?: number
+  requiredTotal?: number
+  preferredTotal?: number
+  supportedTotal?: number
+  requirementTotal?: number
 }
 
 export interface SourceRole {
@@ -121,6 +151,19 @@ export interface TailorResponseBody {
   plan: TailoringPlan
   original: TailoredResume
   tailored: TailoredResume | null
+  tailoredResume?: TailoredResume | null
   validation: ValidationResult
+  factualValidation?: FactualValidation
+  atsAlignmentScore?: number
+  supportedCoverageBefore?: number
+  supportedCoverageAfter?: number
+  requiredCoverage?: number
+  preferredCoverage?: number
+  responsibilityCoverage?: number
+  experienceAlignment?: number
+  keywordAlignment?: number
+  educationAlignment?: number
+  unsupportedRequirements?: string[]
+  summary?: string
   message?: string
 }

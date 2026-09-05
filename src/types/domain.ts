@@ -169,9 +169,15 @@ export interface TailoredEducation {
   details: string
 }
 
+export interface SkillGroup {
+  label: string
+  items: string[]
+}
+
 export interface TailoredResumeContent {
   summary: string
   skills: string[]
+  skillGroups?: SkillGroup[]
   experience: TailoredExperience[]
   projects: TailoredProject[]
   education: TailoredEducation[]
@@ -189,6 +195,8 @@ export interface JdCoverage {
   preferredTotal: number
   overallSupported: number
   overallTotal: number
+  representedBefore?: number
+  representedAfter?: number
 }
 
 export interface TailoringPlan {
@@ -199,6 +207,23 @@ export interface TailoringPlan {
   coverage?: JdCoverage
   roleType?: string
   targetRole?: string
+  atsAlignmentScore?: number
+  supportedCoverageBefore?: number
+  supportedCoverageAfter?: number
+  requiredCoverage?: number
+  preferredCoverage?: number
+  responsibilityCoverage?: number
+  experienceAlignment?: number
+  keywordAlignment?: number
+  educationAlignment?: number
+  unsupportedRequirements?: string[]
+  alignmentSummary?: string
+  requiredSupportedCount?: number
+  preferredSupportedCount?: number
+  requiredTotal?: number
+  preferredTotal?: number
+  supportedTotal?: number
+  requirementTotal?: number
 }
 
 export type ResumeVersionStatus =

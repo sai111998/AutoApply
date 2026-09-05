@@ -11,12 +11,26 @@ function matchesKnown(value: string, allowed: string[], sourceText: string): boo
 export function validateTailoredResume(tailored: TailoredResume, source: SourceFacts, missingSkills: string[]): ValidationResult {
   const errors: string[] = []
 
+  const generatedText = [
+    tailored.summary,
+    tailored.skills.join(' '),
+    ...tailored.experience.flatMap((role) => role.bullets),
+    ...tailored.projects.flatMap((project) => [project.name, ...project.bullets]),
+  ].join('\n')
+
   for (const skill of tailored.skills) {
     if (!supportedInSource(skill, source)) {
       errors.push(`Unsupported skill: ${skill}`)
     }
     if (missingSkills.some((missing) => sameSkill(missing, skill)) && !supportedInSource(skill, source)) {
       errors.push(`Missing job requirement was added: ${skill}`)
+    }
+  }
+
+  for (const missing of missingSkills) {
+    if (missing.split(/\s+/).length > 3) continue
+    if (textContainsTerm(generatedText, missing) && !supportedInSource(missing, source)) {
+      errors.push(`Missing job requirement was added: ${missing}`)
     }
   }
 

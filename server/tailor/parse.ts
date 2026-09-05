@@ -1,4 +1,4 @@
-import type { TailorChange, TailoredEducation, TailoredExperience, TailoredProject, TailoredResume } from './types'
+import type { SkillGroup, TailorChange, TailoredEducation, TailoredExperience, TailoredProject, TailoredResume } from './types'
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -73,6 +73,19 @@ function asChanges(value: unknown): TailorChange[] {
   return result
 }
 
+function asSkillGroups(value: unknown): SkillGroup[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const record = item as Record<string, unknown>
+      const label = asString(record.label)
+      const items = asStringArray(record.items)
+      return label && items.length ? { label, items } : null
+    })
+    .filter((item): item is SkillGroup => Boolean(item))
+}
+
 export function parseTailoredResume(value: unknown, contact: TailoredResume['contact']): TailoredResume {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid tailoring payload')
@@ -85,9 +98,11 @@ export function parseTailoredResume(value: unknown, contact: TailoredResume['con
   if (!hasShape) {
     throw new Error('Invalid tailoring payload')
   }
+  const skillGroups = asSkillGroups(record.skillGroups)
   return {
     summary: asString(record.summary),
     skills: asStringArray(record.skills),
+    skillGroups: skillGroups.length ? skillGroups : undefined,
     experience: asExperience(record.experience),
     projects: asProjects(record.projects),
     education: asEducation(record.education),

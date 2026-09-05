@@ -389,6 +389,44 @@ export function TailorResumePage() {
         </div>
       </Card>
 
+      {(complete || version?.status === 'completed' || version?.status === 'kept' || version?.status === 'edited') &&
+        (plan.atsAlignmentScore != null || plan.coverage) && (
+        <Card className="mt-6 p-6">
+          <h2 className="text-lg font-semibold text-charcoal">JobPilot AI Alignment Score</h2>
+          <p className="mt-1 text-sm text-muted">
+            ATS Alignment Estimate based on the supplied resume and job description. This is not a guaranteed ATS score,
+            a guaranteed pass, or a guaranteed interview.
+          </p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <ScoreStat label="ATS Alignment" value={plan.atsAlignmentScore ?? 0} />
+            <ScoreStat
+              label="Supported JD Coverage"
+              value={plan.supportedCoverageAfter ?? plan.coverage?.representedAfter ?? plan.coverage?.overallSupported ?? 0}
+              display={`${plan.supportedCoverageAfter ?? plan.coverage?.representedAfter ?? plan.coverage?.overallSupported ?? 0} / ${plan.requirementTotal ?? plan.coverage?.overallTotal ?? 0}`}
+              suffix=""
+            />
+            <ScoreStat
+              label="Required Skills"
+              value={plan.requiredSupportedCount ?? plan.coverage?.requiredSupported ?? 0}
+              display={`${plan.requiredSupportedCount ?? plan.coverage?.requiredSupported ?? 0} / ${plan.requiredTotal ?? plan.coverage?.requiredTotal ?? 0}`}
+              suffix=""
+            />
+            <ScoreStat
+              label="Preferred Skills"
+              value={plan.preferredSupportedCount ?? plan.coverage?.preferredSupported ?? 0}
+              display={`${plan.preferredSupportedCount ?? plan.coverage?.preferredSupported ?? 0} / ${plan.preferredTotal ?? plan.coverage?.preferredTotal ?? 0}`}
+              suffix=""
+            />
+            <ScoreStat
+              label="Responsibility Alignment"
+              value={plan.responsibilityCoverage ?? 0}
+              display={`${plan.responsibilityCoverage ?? 0}%`}
+              suffix=""
+            />
+          </div>
+        </Card>
+      )}
+
       {generating && (
         <Card className="mt-6 p-6">
           <p className="text-sm font-semibold text-olive-dark">Generating your tailored resume...</p>

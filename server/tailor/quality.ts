@@ -15,6 +15,7 @@ function represented(term: string, tailored: TailoredResume): boolean {
     tailored.summary,
     tailored.skills.join(' '),
     ...tailored.experience.flatMap((role) => role.bullets),
+    ...tailored.projects.flatMap((project) => [project.name, ...project.bullets]),
   ].join('\n')
   return textContainsTerm(blob, term) || tailored.skills.some((skill) => sameSkill(skill, term))
 }

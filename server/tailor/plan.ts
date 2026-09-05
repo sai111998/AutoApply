@@ -3,6 +3,9 @@ import { detectRoleType } from '../match/lexicon'
 import { sameSkill, textContainsTerm } from '../match/normalize'
 import type { JobProfile, MatchReport, ResumeProfile } from '../match/types'
 import type { JdCoverage, SourceFacts, TailorMatchSignals, TailoringPlan } from './types'
+import type { JdIntelligence } from './jd-intel'
+import type { ResumeEvidenceRecord } from './evidence'
+import type { AtsAlignmentBreakdown } from './ats-score'
 
 function uniqueNames(values: string[]): string[] {
   const seen = new Set<string>()
@@ -48,16 +51,46 @@ export function coverageFromReport(report: MatchReport | null): JdCoverage {
   }
 }
 
-function inferTargetRole(jobDescription?: string, jobProfile?: JobProfile | null): string {
+function inferTargetRole(jobDescription?: string, jobProfile?: JobProfile | null, jd?: JdIntelligence | null): string {
+  if (jd?.targetRole) return jd.targetRole
   if (!jobDescription?.trim()) return ''
-  const firstLine = jobDescription.split(/\n/)[0]?.trim() ?? ''
-  if (firstLine.length > 8 && firstLine.length < 80 && !/required|preferred|responsib/i.test(firstLine)) {
-    return firstLine.replace(/[:.]+$/, '')
-  }
   const titled = jobDescription.match(
     /\b((?:senior |staff |principal |lead )?[\w+/]+(?:\s[\w+/]+){0,4}\s(?:engineer|developer|architect|analyst|specialist))\b/i,
   )
-  return titled?.[1] ?? jobProfile?.responsibilities[0]?.text.slice(0, 60) ?? ''
+  if (titled?.[1]) return titled[1]
+  return jobProfile?.responsibilities[0]?.text.slice(0, 60) ?? ''
+}
+
+export function applyAlignmentToPlan(plan: TailoringPlan, alignment: AtsAlignmentBreakdown): TailoringPlan {
+  return {
+    ...plan,
+    coverage: {
+      requiredSupported: alignment.requiredSupported,
+      requiredTotal: alignment.requiredTotal,
+      preferredSupported: alignment.preferredSupported,
+      preferredTotal: alignment.preferredTotal,
+      overallSupported: alignment.supportedTotal,
+      overallTotal: alignment.requirementTotal,
+      representedBefore: alignment.supportedCoverageBefore,
+      representedAfter: alignment.supportedCoverageAfter,
+    },
+    atsAlignmentScore: alignment.atsAlignmentScore,
+    supportedCoverageBefore: alignment.supportedCoverageBefore,
+    supportedCoverageAfter: alignment.supportedCoverageAfter,
+    requiredCoverage: alignment.requiredCoverage,
+    preferredCoverage: alignment.preferredCoverage,
+    responsibilityCoverage: alignment.responsibilityCoverage,
+    experienceAlignment: alignment.experienceAlignment,
+    keywordAlignment: alignment.keywordAlignment,
+    educationAlignment: alignment.educationAlignment,
+    requiredSupportedCount: alignment.requiredSupported,
+    preferredSupportedCount: alignment.preferredSupported,
+    requiredTotal: alignment.requiredTotal,
+    preferredTotal: alignment.preferredTotal,
+    supportedTotal: alignment.supportedTotal,
+    requirementTotal: alignment.requirementTotal,
+    alignmentSummary: `JobPilot AI Alignment Score ${alignment.atsAlignmentScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`,
+  }
 }
 
 export function buildTailoringPlan(
@@ -68,6 +101,8 @@ export function buildTailoringPlan(
     source?: SourceFacts | null
     jobDescription?: string
     jobProfile?: JobProfile | null
+    jd?: JdIntelligence | null
+    evidence?: ResumeEvidenceRecord[] | null
   },
 ): TailoringPlan {
   const resumeSkills = [
@@ -89,14 +124,24 @@ export function buildTailoringPlan(
   const overlapFromText = (extras?.source?.skills ?? []).filter((skill) =>
     extras?.jobDescription ? textContainsTerm(extras.jobDescription, skill) : false,
   )
+  const evidenceSupported = (extras?.evidence ?? [])
+    .filter(
+      (item) =>
+        (item.strength === 'strong' || item.strength === 'partial') &&
+        (item.type === 'required' || item.type === 'preferred') &&
+        item.requirement.split(/\s+/).length <= 4,
+    )
+    .map((item) => item.requirement)
+  const jdRequired = extras?.jd?.required.technicalSkills ?? []
+  const jdPreferred = extras?.jd?.preferred.technicalSkills ?? []
 
   const requiredSupported = uniqueNames(
-    [...requiredMatched, ...(extras?.signals?.matched ?? []), ...overlapFromText].filter((name) =>
-      supportedByResume(name, resumeSkills, extras?.source),
+    [...requiredMatched, ...jdRequired, ...(extras?.signals?.matched ?? []), ...overlapFromText, ...evidenceSupported].filter(
+      (name) => supportedByResume(name, resumeSkills, extras?.source),
     ),
   )
   const preferredSupported = uniqueNames(
-    preferredMatched.filter(
+    [...preferredMatched, ...jdPreferred].filter(
       (name) =>
         supportedByResume(name, resumeSkills, extras?.source) &&
         !requiredSupported.some((item) => sameSkill(item, name)),
@@ -105,14 +150,28 @@ export function buildTailoringPlan(
 
   const skillsToEmphasize = uniqueNames([...requiredSupported, ...preferredSupported])
   const relatedSkills = uniqueNames(
-    [...partial, ...(extras?.signals?.partial ?? [])].filter(
-      (name) => !skillsToEmphasize.some((item) => sameSkill(item, name)),
-    ),
+    [
+      ...partial,
+      ...(extras?.signals?.partial ?? []),
+      ...(extras?.evidence ?? []).filter((item) => item.strength === 'related').map((item) => item.requirement),
+    ].filter((name) => !skillsToEmphasize.some((item) => sameSkill(item, name))),
   )
   const missingSkills = uniqueNames(
-    [...missing, ...(extras?.signals?.missing ?? [])].filter(
+    [
+      ...missing,
+      ...(extras?.signals?.missing ?? []),
+      ...(extras?.evidence ?? [])
+        .filter(
+          (item) =>
+            item.strength === 'missing' &&
+            (item.type === 'required' || item.type === 'preferred') &&
+            item.requirement.split(/\s+/).length <= 4,
+        )
+        .map((item) => item.requirement),
+    ].filter(
       (name) =>
         !skillsToEmphasize.some((item) => sameSkill(item, name)) &&
+        !relatedSkills.some((item) => sameSkill(item, name)) &&
         !(extras?.source && textContainsTerm(extras.source.text, name)),
     ),
   )
@@ -124,11 +183,13 @@ export function buildTailoringPlan(
     experienceToEmphasize: uniqueNames([
       ...(report?.responsibilities?.strongMatches ?? []).map((item) => item.name),
       ...(report?.responsibilities?.partialMatches ?? []).map((item) => item.name),
+      ...(extras?.jd?.required.responsibilities ?? []),
       ...(extras?.signals?.experienceThemes ?? []),
       ...(extras?.signals?.strengths ?? []).filter((item) => !/evidenced on the resume/i.test(item)),
     ]),
     coverage: coverageFromReport(report),
     roleType: extras?.jobDescription ? detectRoleType(extras.jobDescription) : 'general',
-    targetRole: inferTargetRole(extras?.jobDescription, extras?.jobProfile),
+    targetRole: inferTargetRole(extras?.jobDescription, extras?.jobProfile, extras?.jd),
+    unsupportedRequirements: missingSkills,
   }
 }
