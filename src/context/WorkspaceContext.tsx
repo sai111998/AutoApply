@@ -18,6 +18,8 @@ import {
   persistAnalysisRecords,
   persistApplicationSelection,
   persistMatchRecord,
+  mergeFetchedMatches,
+  removeAnalysisFromSnapshot,
   upsertById,
 } from '@/lib/analysis-persist'
 import { deleteResumeVersionRecord, deselectAllResumeVersionsForJob, deselectOtherResumeVersions, fetchResumeVersions, persistResumeVersion } from '@/lib/resume-versions'
@@ -178,7 +180,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       replace((current) => ({
         ...current,
         jobs: history.jobs,
-        matches: history.matches.reduce((items, match) => upsertById(items, match), current.matches),
+        matches: mergeFetchedMatches(history.matches, current.matches),
         applications: history.applications,
         resumeVersions: versions.versions.length
           ? mergeResumeVersionLists(versions.versions, current.resumeVersions ?? [])
@@ -585,26 +587,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         null
 
       if (!isDemo && supabase && user) {
-        await deleteAnalysisRecords(supabase, user.id, {
-          matchId,
-          jobId: match.jobId,
-          applicationId: application?.id ?? null,
-        })
-        await refreshAnalyses()
-        return
+        try {
+          await deleteAnalysisRecords(supabase, user.id, {
+            matchId,
+            jobId: match.jobId,
+            applicationId: application?.id ?? null,
+          })
+        } catch (deleteError) {
+          console.info('[analysis] delete-failed', {
+            matchId,
+            message: deleteError instanceof Error ? deleteError.message : 'unknown',
+          })
+          throw new Error('Could not delete analysis. Please try again.')
+        }
       }
 
-      replace((state) => {
-        const remainingMatches = state.matches.filter((item) => item.id !== matchId)
-        const remainingApplications = state.applications.filter((item) => item.matchId !== matchId)
-        const jobStillUsed = remainingMatches.some((item) => item.jobId === match.jobId)
-        return {
-          ...state,
-          matches: remainingMatches,
-          applications: remainingApplications,
-          jobs: jobStillUsed ? state.jobs : state.jobs.filter((job) => job.id !== match.jobId),
+      replace((state) => removeAnalysisFromSnapshot(state, matchId))
+
+      if (!isDemo && supabase && user) {
+        try {
+          await refreshAnalyses()
+        } catch (refreshError) {
+          console.info('[analysis] delete-refresh-failed', {
+            matchId,
+            message: refreshError instanceof Error ? refreshError.message : 'unknown',
+          })
         }
-      })
+      }
     },
     [isDemo, refreshAnalyses, replace, user],
   )

@@ -27,6 +27,52 @@ export function upsertById<T extends { id: string }>(items: T[], incoming: T): T
   return next
 }
 
+export function removeAnalysisFromSnapshot<
+  TMatch extends { id: string; jobId: string },
+  TJob extends { id: string },
+  TApp extends { matchId: string | null },
+  T extends { matches: TMatch[]; jobs: TJob[]; applications: TApp[] },
+>(state: T, matchId: string): T {
+  const match = state.matches.find((item) => item.id === matchId)
+  if (!match) return state
+  const remainingMatches = state.matches.filter((item) => item.id !== matchId)
+  const remainingApplications = state.applications.filter((item) => item.matchId !== matchId)
+  const jobStillUsed = remainingMatches.some((item) => item.jobId === match.jobId)
+  return {
+    ...state,
+    matches: remainingMatches,
+    applications: remainingApplications,
+    jobs: jobStillUsed ? state.jobs : state.jobs.filter((job) => job.id !== match.jobId),
+  }
+}
+
+export function mergeFetchedMatches<T extends { id: string; analysisStatus: string }>(
+  fetched: T[],
+  current: T[],
+): T[] {
+  const fetchedIds = new Set(fetched.map((item) => item.id))
+  const localInFlight = current.filter(
+    (item) => !fetchedIds.has(item.id) && item.analysisStatus !== 'complete',
+  )
+  return [...fetched, ...localInFlight]
+}
+
+export function filterAnalysisHistory<
+  T extends {
+    job?: { title?: string; company?: string } | null
+    match: { recommendation?: string | null }
+    version?: { versionName?: string } | null
+  },
+>(rows: T[], query: string): T[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return rows
+  return rows.filter((row) =>
+    `${row.job?.title ?? ''} ${row.job?.company ?? ''} ${row.match.recommendation ?? ''} ${row.version?.versionName ?? ''}`
+      .toLowerCase()
+      .includes(needle),
+  )
+}
+
 export async function persistMatchRecord(client: SupabaseClient, match: JobMatch) {
   const full = matchToRow(match)
   let result = await client.from('job_matches').upsert(full, { onConflict: 'id', defaultToNull: false })

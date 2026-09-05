@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { FileText, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { EmptyState, ErrorState, SkeletonBlock } from '@/components/ui/EmptyState'
 import { Field, Select, TextArea, TextInput } from '@/components/ui/Field'
 import { Pill, RecommendationBadge, ScoreBadge } from '@/components/ui/Badge'
@@ -19,6 +20,7 @@ import {
 import { getAnalysisHealth } from '@/lib/ai/client'
 import { formatDate } from '@/lib/format'
 import { compactVersionName } from '@/lib/resume-names'
+import { filterAnalysisHistory } from '@/lib/analysis-persist'
 import type { Job, JobMatch, Resume, ResumeVersion } from '@/types/domain'
 
 const ANALYSIS_STEPS = ['Reading the posting', 'Comparing resume evidence', 'Scoring fit']
@@ -75,6 +77,7 @@ export function JobAnalysisPage() {
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null)
   const [query, setQuery] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
   const fieldsRef = useRef({
     title: initial.draft.title,
@@ -215,8 +218,7 @@ export function JobAnalysisPage() {
   }
 
   const history = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return [...matches]
+    const rows = [...matches]
       .sort((a, b) => (b.analyzedAt ?? b.createdAt).localeCompare(a.analyzedAt ?? a.createdAt))
       .map((match) => ({
         match,
@@ -227,10 +229,7 @@ export function JobAnalysisPage() {
           : undefined,
       }))
       .filter((row) => row.job)
-      .filter((row) => {
-        if (!needle) return true
-        return `${row.job?.title} ${row.job?.company} ${row.match.recommendation ?? ''} ${row.version?.versionName ?? ''}`.toLowerCase().includes(needle)
-      })
+    return filterAnalysisHistory(rows, query)
   }, [jobs, matches, query, resumeVersions, resumes])
 
   const jobEmpty = !description.trim()
@@ -300,17 +299,7 @@ export function JobAnalysisPage() {
           query={query}
           onQuery={setQuery}
           deletingId={deletingId}
-          onDelete={async (matchId) => {
-            setDeletingId(matchId)
-            try {
-              await deleteAnalysis(matchId)
-              notify('Analysis removed.')
-            } catch (deleteError) {
-              notify(deleteError instanceof Error ? deleteError.message : 'Could not delete analysis', 'error')
-            } finally {
-              setDeletingId(null)
-            }
-          }}
+          onDelete={(matchId) => setPendingDeleteId(matchId)}
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[1.4fr_0.8fr]">
@@ -470,6 +459,36 @@ export function JobAnalysisPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(pendingDeleteId)}
+        title="Delete this analysis?"
+        confirmLabel="Delete"
+        busy={Boolean(deletingId)}
+        onCancel={() => {
+          if (deletingId) return
+          setPendingDeleteId(null)
+        }}
+        onConfirm={() => {
+          if (!pendingDeleteId || deletingId) return
+          const matchId = pendingDeleteId
+          setDeletingId(matchId)
+          void deleteAnalysis(matchId)
+            .then(() => {
+              notify('Analysis deleted')
+              setPendingDeleteId(null)
+            })
+            .catch((deleteError: unknown) => {
+              notify(
+                deleteError instanceof Error ? deleteError.message : 'Could not delete analysis. Please try again.',
+                'error',
+              )
+            })
+            .finally(() => setDeletingId(null))
+        }}
+      >
+        This removes the saved match report from your history. Related resumes stay in your workspace.
+      </ConfirmDialog>
     </div>
   )
 }
@@ -489,19 +508,19 @@ function HistoryPanel({
   query: string
   onQuery: (value: string) => void
   deletingId: string | null
-  onDelete: (matchId: string) => Promise<void>
+  onDelete: (matchId: string) => void
 }) {
   return (
     <div>
       <Card className="mb-5 p-4">
-        <Field label="Search history">
-          <div className="relative">
-            <Search size={16} className="pointer-events-none absolute top-3 left-3 text-muted" />
+        <Field label="Search">
+          <div className="flex items-center gap-2" data-testid="history-search">
+            <Search size={16} className="shrink-0 text-muted" aria-hidden="true" />
             <TextInput
-              className="pl-9"
               value={query}
               onChange={(e) => onQuery(e.target.value)}
               placeholder="Job title, company, or APPLY / REVIEW / SKIP"
+              aria-label="Search history"
             />
           </div>
         </Field>

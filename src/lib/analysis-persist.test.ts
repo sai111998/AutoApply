@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { isUuid, persistApplicationSelection, deleteApplicationRecords, upsertById } from './analysis-persist'
+import {
+  isUuid,
+  persistApplicationSelection,
+  deleteApplicationRecords,
+  filterAnalysisHistory,
+  mergeFetchedMatches,
+  removeAnalysisFromSnapshot,
+  upsertById,
+} from './analysis-persist'
 import { matchToRow } from './mappers'
 import type { Application, JobMatch } from '@/types/domain'
 
@@ -217,5 +225,83 @@ describe('analysis persistence helpers', () => {
     )
     expect(result.deletedIds).toEqual([])
     expect(result.remainingIds).toEqual(['app-other'])
+  })
+})
+
+describe('analysis history state', () => {
+  const jobA = { id: 'job-a' }
+  const jobB = { id: 'job-b' }
+  const matchA = { id: 'match-a', jobId: 'job-a', analysisStatus: 'complete' as const }
+  const matchB = { id: 'match-b', jobId: 'job-b', analysisStatus: 'complete' as const }
+  const appA = { id: 'app-a', matchId: 'match-a', jobId: 'job-a' }
+
+  it('removes a deleted history item, its application, and an unused job immediately', () => {
+    const next = removeAnalysisFromSnapshot(
+      {
+        matches: [matchA, matchB],
+        jobs: [jobA, jobB],
+        applications: [appA],
+      },
+      'match-a',
+    )
+    expect(next.matches.map((item) => item.id)).toEqual(['match-b'])
+    expect(next.jobs.map((item) => item.id)).toEqual(['job-b'])
+    expect(next.applications).toEqual([])
+  })
+
+  it('updates history counts and keeps a job that still has another analysis', () => {
+    const next = removeAnalysisFromSnapshot(
+      {
+        matches: [matchA, { ...matchB, jobId: 'job-a' }],
+        jobs: [jobA],
+        applications: [appA],
+      },
+      'match-a',
+    )
+    expect(next.matches).toHaveLength(1)
+    expect(next.jobs).toEqual([jobA])
+  })
+
+  it('does not change state when the delete target is missing', () => {
+    const current = { matches: [matchA], jobs: [jobA], applications: [appA] }
+    expect(removeAnalysisFromSnapshot(current, 'missing')).toEqual(current)
+  })
+
+  it('does not resurrect a deleted complete analysis when merging a refetch', () => {
+    const fetched = [{ id: 'match-b', jobId: 'job-b', analysisStatus: 'complete' as const }]
+    const current = [matchA, matchB]
+    expect(mergeFetchedMatches(fetched, current).map((item) => item.id)).toEqual(['match-b'])
+  })
+
+  it('keeps an in-flight local analysis that the refetch has not stored yet', () => {
+    const generating = { id: 'match-local', jobId: 'job-a', analysisStatus: 'pending' as const }
+    const merged = mergeFetchedMatches([matchB], [generating, matchA])
+    expect(merged.map((item) => item.id)).toEqual(['match-b', 'match-local'])
+  })
+
+  it('filters search results and treats an empty query as all rows', () => {
+    const rows = [
+      { job: { title: 'Java Engineer', company: 'Acme' }, match: { recommendation: 'APPLY' } },
+      { job: { title: 'AI Engineer', company: 'Northwind' }, match: { recommendation: 'REVIEW' } },
+    ]
+    expect(filterAnalysisHistory(rows, 'java')).toHaveLength(1)
+    expect(filterAnalysisHistory(rows, 'NORTHWIND')).toHaveLength(1)
+    expect(filterAnalysisHistory(rows, '')).toHaveLength(2)
+    expect(filterAnalysisHistory(rows, 'missing')).toHaveLength(0)
+  })
+
+  it('shows an empty list after the last matching item is removed', () => {
+    const afterDelete = removeAnalysisFromSnapshot(
+      { matches: [matchA], jobs: [jobA], applications: [appA] },
+      'match-a',
+    )
+    const rows = afterDelete.matches.map((match) => ({
+      job: afterDelete.jobs.find((job) => job.id === match.jobId)
+        ? { title: 'Java Engineer', company: 'Acme' }
+        : undefined,
+      match: { recommendation: 'APPLY' },
+    }))
+    expect(filterAnalysisHistory(rows, '')).toEqual([])
+    expect(afterDelete.matches).toHaveLength(0)
   })
 })
