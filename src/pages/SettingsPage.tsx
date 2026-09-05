@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, Select, TextArea, TextInput } from '@/components/ui/Field'
+import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { getAnalysisHealth } from '@/lib/ai/client'
 import type { UserPreferences, WorkArrangement } from '@/types/domain'
@@ -9,6 +10,7 @@ import { WORK_ARRANGEMENT_LABELS } from '@/types/domain'
 
 export function SettingsPage() {
   const { preferences, savePreferences } = useWorkspace()
+  const { notify } = useToast()
   const [form, setForm] = useState<UserPreferences>(preferences)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +33,7 @@ export function SettingsPage() {
     try {
       await savePreferences(form)
       setMessage('Preferences saved.')
+      notify('Preferences saved.')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Could not save preferences')
     } finally {
@@ -48,7 +51,7 @@ export function SettingsPage() {
 
       <form className="grid gap-6 lg:grid-cols-2" onSubmit={(event) => void onSubmit(event)}>
         <Card className="p-6">
-          <h2 className="font-display text-2xl text-navy">AI preferences</h2>
+          <h2 className="text-lg font-semibold text-charcoal">AI preferences</h2>
           <div className="mt-4 space-y-4">
             <Field label="Preferred model (passed to the API)">
               <TextInput
@@ -74,7 +77,7 @@ export function SettingsPage() {
               />
               Highlight roles at or above the minimum score
             </label>
-            <p className={`rounded-xl px-3 py-2 text-sm ${aiConfigured ? 'bg-emerald-50 text-pine' : 'bg-paper text-slate-ink'}`}>
+            <p className={`rounded-xl px-3 py-2 text-sm ${aiConfigured ? 'bg-olive-soft text-olive-dark' : 'bg-canvas text-muted'}`}>
               {aiConfigured
                 ? 'Analysis runs through POST /api/jobs/analyze using the server-side LLM_API_KEY.'
                 : 'LLM_API_KEY is not set on the server. Add it to .env.local — never a VITE_ variable.'}
@@ -83,7 +86,7 @@ export function SettingsPage() {
         </Card>
 
         <Card className="p-6">
-          <h2 className="font-display text-2xl text-navy">Target roles & locations</h2>
+          <h2 className="text-lg font-semibold text-charcoal">Target roles & locations</h2>
           <div className="mt-4 space-y-4">
             <Field label="Target roles (comma separated)">
               <TextArea
@@ -113,7 +116,7 @@ export function SettingsPage() {
         </Card>
 
         <Card className="p-6 lg:col-span-2">
-          <h2 className="font-display text-2xl text-navy">Application preferences</h2>
+          <h2 className="text-lg font-semibold text-charcoal">Application preferences</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <Field label="Preferred work arrangements">
               <Select
@@ -141,7 +144,7 @@ export function SettingsPage() {
                 />
                 Prepare a cover letter when an application is marked ready
               </label>
-              <p className="rounded-2xl bg-paper p-4 text-sm text-slate-ink">
+              <p className="rounded-2xl bg-canvas p-4 text-sm text-muted">
                 Automatic job submission and browser automation are not part of this MVP. Preferences here shape how
                 you prepare materials, not how they are sent.
               </p>
@@ -151,8 +154,8 @@ export function SettingsPage() {
             <Button type="submit" disabled={saving}>
               {saving ? 'Saving…' : 'Save settings'}
             </Button>
-            {message && <p className="text-sm text-pine">{message}</p>}
-            {error && <p className="text-sm text-clay">{error}</p>}
+            {message && <p className="text-sm text-olive">{message}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
           </div>
         </Card>
       </form>

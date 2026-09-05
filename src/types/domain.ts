@@ -18,6 +18,7 @@ export type ApplicationStatus =
   | 'withdrawn'
 
 export type Recommendation = 'APPLY' | 'REVIEW' | 'SKIP'
+export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW'
 
 export type AnalysisStatus = 'pending' | 'queued' | 'complete' | 'failed' | 'unavailable'
 
@@ -73,6 +74,8 @@ export interface Job {
 export interface SkillSignal {
   name: string
   note?: string
+  source?: 'required' | 'preferred'
+  evidence?: string
 }
 
 export interface DimensionMatch {
@@ -86,6 +89,8 @@ export interface JobMatch {
   userId: string
   jobId: string
   resumeId: string | null
+  parentMatchId?: string | null
+  resumeVersionId?: string | null
   overallScore: number | null
   skillsMatched: SkillSignal[]
   skillsPartial: SkillSignal[]
@@ -104,6 +109,8 @@ export interface JobMatch {
   summary: string | null
   createdAt: string
   analyzedAt: string | null
+  confidence?: Confidence | null
+  report?: import('@/lib/ai/types').MatchReport | null
 }
 
 export interface Application {
@@ -112,6 +119,9 @@ export interface Application {
   jobId: string
   matchId: string | null
   resumeId: string | null
+  selectedResumeVersionId: string | null
+  currentMatchId: string | null
+  currentMatchScore: number | null
   status: ApplicationStatus
   dateAdded: string
   dateApplied: string | null
@@ -132,6 +142,121 @@ export interface UserPreferences {
   updatedAt: string
 }
 
+export type TailorChangeKind = 'emphasis' | 'rewritten' | 'reordered' | 'omitted'
+
+export interface TailorChange {
+  kind: TailorChangeKind
+  label: string
+  before?: string
+  after?: string
+}
+
+export interface TailoredExperience {
+  company: string
+  title: string
+  dates: string
+  bullets: string[]
+}
+
+export interface TailoredProject {
+  name: string
+  bullets: string[]
+}
+
+export interface TailoredEducation {
+  degree: string
+  field: string
+  details: string
+}
+
+export interface SkillGroup {
+  label: string
+  items: string[]
+}
+
+export interface TailoredResumeContent {
+  summary: string
+  skills: string[]
+  skillGroups?: SkillGroup[]
+  experience: TailoredExperience[]
+  projects: TailoredProject[]
+  education: TailoredEducation[]
+  certifications: string[]
+  changes: TailorChange[]
+  omissions: string[]
+  warnings: string[]
+  contact: { name: string; email: string; location: string }
+}
+
+export interface JdCoverage {
+  requiredSupported: number
+  requiredTotal: number
+  preferredSupported: number
+  preferredTotal: number
+  overallSupported: number
+  overallTotal: number
+  representedBefore?: number
+  representedAfter?: number
+}
+
+export interface TailoringPlan {
+  skillsToEmphasize: string[]
+  relatedSkills: string[]
+  missingSkills: string[]
+  experienceToEmphasize: string[]
+  coverage?: JdCoverage
+  roleType?: string
+  targetRole?: string
+  atsAlignmentScore?: number
+  supportedCoverageBefore?: number
+  supportedCoverageAfter?: number
+  requiredCoverage?: number
+  preferredCoverage?: number
+  responsibilityCoverage?: number
+  experienceAlignment?: number
+  keywordAlignment?: number
+  educationAlignment?: number
+  unsupportedRequirements?: string[]
+  alignmentSummary?: string
+  requiredSupportedCount?: number
+  preferredSupportedCount?: number
+  requiredTotal?: number
+  preferredTotal?: number
+  supportedTotal?: number
+  requirementTotal?: number
+}
+
+export type ResumeVersionStatus =
+  | 'draft'
+  | 'generating'
+  | 'completed'
+  | 'failed'
+  | 'edited'
+  | 'kept'
+  | 'archived'
+export type ResumeVersionAuthor = 'ai' | 'user'
+
+export interface ResumeVersion {
+  id: string
+  userId: string
+  sourceResumeId: string
+  jobId: string | null
+  analysisId: string | null
+  versionName: string
+  resumeContent: TailoredResumeContent
+  tailoringSummary: TailoringPlan
+  changes: TailorChange[]
+  warnings: string[]
+  status: ResumeVersionStatus
+  createdBy: ResumeVersionAuthor
+  isSelected: boolean
+  generationId: string
+  comparisonAnalysisId: string | null
+  originalContent: TailoredResumeContent | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface WorkspaceSnapshot {
   profile: Profile
   skills: Skill[]
@@ -140,6 +265,7 @@ export interface WorkspaceSnapshot {
   matches: JobMatch[]
   applications: Application[]
   preferences: UserPreferences
+  resumeVersions: ResumeVersion[]
 }
 
 export const WORK_AUTHORIZATION_LABELS: Record<WorkAuthorization, string> = {
@@ -158,7 +284,7 @@ export const WORK_ARRANGEMENT_LABELS: Record<WorkArrangement, string> = {
 }
 
 export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
-  ready: 'Ready',
+  ready: 'Ready to Apply',
   applied: 'Applied',
   interview: 'Interview',
   offer: 'Offer',

@@ -1,19 +1,28 @@
-export type Recommendation = 'APPLY' | 'REVIEW' | 'SKIP'
+import type { Confidence, MatchReport, Recommendation } from './match/types'
+
+export type { Recommendation }
 
 export interface AnalyzeJobRequestBody {
   jobDescription: string
   resumeText: string
   userId?: string
   resumeId?: string
+  jobId?: string
+  matchId?: string
+  applicationId?: string
   title?: string
   company?: string
   location?: string
   jobUrl?: string
+  resumeProfile?: unknown
+  jobProfile?: unknown
+  persistResults?: boolean
 }
 
 export interface AnalysisResult {
   matchScore: number
   recommendation: Recommendation
+  confidence: Confidence
   matchedSkills: string[]
   partiallyMatchedSkills: string[]
   missingSkills: string[]
@@ -23,6 +32,15 @@ export interface AnalysisResult {
   strengths: string[]
   concerns: string[]
   summary: string
+  requiredSkills: MatchReport['requiredSkills']
+  preferredSkills: MatchReport['preferredSkills']
+  experience: MatchReport['experience']
+  responsibilities: MatchReport['responsibilities']
+  education: MatchReport['education']
+  certifications: MatchReport['certifications']
+  locationFit: MatchReport['location']
+  missingEvidence: string[]
+  report: MatchReport
 }
 
 export interface AnalyzeJobResponseBody extends AnalysisResult {

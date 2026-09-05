@@ -21,7 +21,11 @@ function isAnalysisResult(value: unknown): value is AnalyzeJobApiResult {
     typeof record.locationMatch === 'boolean' &&
     Array.isArray(record.strengths) &&
     Array.isArray(record.concerns) &&
-    typeof record.summary === 'string'
+    typeof record.summary === 'string' &&
+    (record.confidence === undefined ||
+      record.confidence === 'HIGH' ||
+      record.confidence === 'MEDIUM' ||
+      record.confidence === 'LOW')
   )
 }
 
@@ -50,6 +54,33 @@ export async function getAnalysisHealth(): Promise<{
   }
 }
 
+export async function extractResumeTextRequest(file: File): Promise<string> {
+  const response = await fetch(apiUrl('/api/resumes/extract'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-File-Name': file.name,
+    },
+    body: await file.arrayBuffer(),
+  })
+  const body: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message =
+      body && typeof body === 'object' && 'error' in body && typeof (body as { error: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : `Resume extraction returned ${response.status}.`
+    throw new Error(message)
+  }
+  if (!body || typeof body !== 'object' || typeof (body as { text?: unknown }).text !== 'string') {
+    throw new Error('Resume extraction returned an unexpected payload.')
+  }
+  const text = (body as { text: string }).text.trim()
+  if (!text) {
+    throw new Error('No text could be extracted from this resume. Upload a text-based PDF or a .txt file.')
+  }
+  return text
+}
+
 export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<AnalyzeJobClientResponse> {
   try {
     const response = await fetch(apiUrl('/api/jobs/analyze'), {
@@ -60,10 +91,16 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
         resumeText: payload.resumeText,
         userId: payload.userId,
         resumeId: payload.resumeId,
+        jobId: payload.jobId,
+        matchId: payload.matchId,
+        applicationId: payload.applicationId,
         title: payload.title,
         company: payload.company,
         location: payload.location,
         jobUrl: payload.jobUrl,
+        resumeProfile: payload.resumeProfile,
+        jobProfile: payload.jobProfile,
+        persistResults: payload.persistResults,
       }),
     })
 
@@ -88,4 +125,58 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
       message: error instanceof Error ? error.message : 'Could not reach the analysis API.',
     }
   }
+}
+
+export async function tailorResumeRequest(payload: Record<string, unknown>) {
+  const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 70_000)
+    try {
+      const response = await fetch(apiUrl('/api/resumes/tailor'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!body) throw new Error('Your resume could not be tailored right now. Please try again.')
+      if (!response.ok && response.status !== 422) {
+        const raw = typeof body.error === 'string' ? body.error : ''
+        if (/key|secret|service.role|stack/i.test(raw) || !raw.trim()) {
+          throw new Error('Your resume could not be tailored right now. Please try again.')
+        }
+        throw new Error(raw)
+      }
+      return body
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Your resume could not be tailored right now. Please try again.')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+    }
+}
+
+export async function validateTailoredResumeRequest(payload: Record<string, unknown>) {
+  const response = await fetch(apiUrl('/api/resumes/validate-tailor'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  if (!body) throw new Error('Could not validate the tailored resume.')
+  return { ok: response.ok, body }
+}
+
+export async function downloadResumePdfRequest(tailored: unknown, contact: { name?: string; email?: string; location?: string }) {
+  const response = await fetch(apiUrl('/api/resumes/pdf'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tailored, contact }),
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error || 'Could not generate the PDF.')
+  }
+  return response.blob()
 }
