@@ -268,7 +268,12 @@ export function TailorResumePage() {
 
   const activeContent = draft ?? tailored
   const previewScore = previewOption?.matchScore ?? previewComparisonMatch?.overallScore ?? null
-  const comparison = scoreChange(match.overallScore, previewScore)
+  const engineOriginal = plan.originalMatchScore ?? match.overallScore
+  const engineTailored =
+    previewOption?.id === MASTER_RESUME_OPTION_ID
+      ? engineOriginal
+      : (previewScore ?? plan.tailoredMatchScore ?? null)
+  const comparison = scoreChange(engineOriginal ?? null, engineTailored ?? null)
   const comparisonLabel = previewOption?.isSelected ? 'Selected resume match' : `${previewOption?.name ?? 'Resume'} match`
   const stepIndex = inflight ? Math.min(PROGRESS_STEPS.length - 1, Math.floor((Date.now() - inflight.startedAt) / 900)) : generating ? 1 : 0
   const selectedLabel = selectedOption?.name ?? 'Master'
@@ -398,8 +403,8 @@ export function TailorResumePage() {
             Scores come from the existing Match Engine. This is not a guaranteed ATS pass or interview.
           </p>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <ScoreStat label="Original resume" value={plan.originalMatchScore ?? match.overallScore ?? 0} />
-            <ScoreStat label="Tailored resume" value={plan.tailoredMatchScore ?? previewScore ?? 0} highlight />
+            <ScoreStat label="Original resume" value={plan.originalMatchScore ?? engineOriginal ?? 0} />
+            <ScoreStat label="Tailored resume" value={plan.tailoredMatchScore ?? engineTailored ?? 0} highlight />
             <ScoreStat
               label="Improvement"
               value={plan.matchScoreDelta ?? 0}
@@ -512,7 +517,7 @@ export function TailorResumePage() {
               View selected match results
             </Button>
           )}
-          {match.analysisSource === 'sample' && (
+          {match.analysisSource === 'sample' && plan.originalMatchScore == null && (
             <p className="mt-3 text-xs text-muted">
               The original score is from the saved match report. The updated score is from the live match engine on this tailored resume.
             </p>
