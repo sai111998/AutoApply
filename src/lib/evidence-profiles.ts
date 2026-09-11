@@ -75,7 +75,7 @@ export function jobProfileFromMatch(match: JobMatch, job: Pick<Job, 'location'>)
     databases: [],
     tools: [],
     security: [],
-    yearsOfExperience: null,
+    yearsOfExperience: Number(match.report?.experience?.jobRequirement?.match(/(\d+)/)?.[1] ?? 0) || null,
     skillYears: [],
     education: {
       required: false,

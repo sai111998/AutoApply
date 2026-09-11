@@ -9,6 +9,16 @@ import { evaluateAtsAlignment } from './ats-score'
 import { buildConservativeResume, buildOriginalResume } from './conservative'
 import { buildCoverageMatrix, extractRequirementEvidence, formatCoverageMatrix } from './evidence'
 import { extractJdIntelligence } from './jd-intel'
+import {
+  classifyMatchGaps,
+  coverageFromMatch,
+  formatOptimizationReport,
+  lostSupportedNames,
+  matchRetryNote,
+  preferredCandidate,
+  restoreLostEvidence,
+  scoreTailoredResume,
+} from './match-optimize'
 import { parseTailoredResume } from './parse'
 import { applyAlignmentToPlan, buildTailoringPlan } from './plan'
 import { TAILOR_SYSTEM_PROMPT, tailorUserPrompt } from './prompts'
@@ -52,7 +62,7 @@ function prepare(request: TailorRequestBody) {
   const jobProfile = asJobProfile(request.jobProfile, jobDescription)
   const incoming = asMatchReport(request.matchReport)
   const scored = scoreMatch(profile, jobProfile, resumeText)
-  const report = incoming ?? scored
+  const report = scored
   const source = collectSourceFacts(resumeText, profile)
   const jd = extractJdIntelligence(jobDescription, jobProfile)
   const evidence = extractRequirementEvidence(jd, source)
@@ -115,6 +125,7 @@ function withAlignment(
   validation: ReturnType<typeof assessTailoredResume>,
   status: TailorResponseBody['status'],
   message?: string,
+  iterations = 1,
 ): TailorResponseBody {
   const scoredResume = tailored ?? original
   const alignment = evaluateAtsAlignment({
@@ -124,9 +135,16 @@ function withAlignment(
     tailored: scoredResume,
     yearsSupported: yearsSupported(prepared),
   })
+  const matchBefore = coverageFromMatch(prepared.report)
+  const matchAfter = coverageFromMatch(
+    scoreTailoredResume(scoredResume, prepared.jobProfile, prepared.profile),
+  )
   const plan = applyAlignmentToPlan(
     { ...prepared.plan, unsupportedRequirements: prepared.plan.missingSkills },
     alignment,
+    matchBefore,
+    matchAfter,
+    iterations,
   )
   return {
     status,
@@ -144,19 +162,30 @@ function withAlignment(
     supportedCoverageAfter: alignment.supportedCoverageAfter,
     requiredCoverage: alignment.requiredCoverage,
     preferredCoverage: alignment.preferredCoverage,
-    responsibilityCoverage: alignment.responsibilityCoverage,
+    responsibilityCoverage: matchAfter.responsibilityCoverage,
     experienceAlignment: alignment.experienceAlignment,
     keywordAlignment: alignment.keywordAlignment,
     educationAlignment: alignment.educationAlignment,
     unsupportedRequirements: plan.missingSkills,
     summary: plan.alignmentSummary,
     message,
+    originalMatchScore: matchBefore.matchScore,
+    tailoredMatchScore: matchAfter.matchScore,
+    matchScoreDelta: matchAfter.matchScore - matchBefore.matchScore,
+    optimizationIterations: iterations,
+    requiredMatchedBefore: matchBefore.requiredMatched,
+    requiredMatchedAfter: matchAfter.requiredMatched,
+    preferredMatchedBefore: matchBefore.preferredMatched,
+    preferredMatchedAfter: matchAfter.preferredMatched,
+    responsibilityCoverageBefore: matchBefore.responsibilityCoverage,
+    responsibilityCoverageAfter: matchAfter.responsibilityCoverage,
   }
 }
 
 function conservativeResult(
   prepared: ReturnType<typeof prepare>,
   message?: string,
+  iterations = 1,
 ): TailorResponseBody {
   const original = buildOriginalResume(prepared.source, prepared.contact)
   const tailored = finalizeResume(
@@ -178,12 +207,14 @@ function conservativeResult(
     validation,
     validation.ok ? 'complete' : 'invalid',
     validation.ok ? message : VALIDATION_USER_MESSAGE,
+    iterations,
   )
 }
 
 async function generateWithLlm(
   llm: LlmClient,
   prepared: ReturnType<typeof prepare>,
+  optimizationReport: string,
   retryNote?: string,
 ): Promise<TailoredResume> {
   const raw = await llm.extractJson(
@@ -199,10 +230,37 @@ async function generateWithLlm(
       contact: prepared.contact,
       jd: prepared.jd,
       coverageMatrix: formatCoverageMatrix(prepared.coverageMatrix),
+      optimizationReport,
       retryNote,
     }),
   )
   return parseTailoredResume(raw, prepared.contact)
+}
+
+function evaluateCandidate(
+  prepared: ReturnType<typeof prepare>,
+  original: TailoredResume,
+  resume: TailoredResume,
+) {
+  const restored = restoreLostEvidence(
+    resume,
+    prepared.source,
+    lostSupportedNames(
+      prepared.report,
+      scoreTailoredResume(resume, prepared.jobProfile, prepared.profile),
+    ),
+  )
+  const finalized = finalizeResume(restored, prepared.plan)
+  const validation = assessTailoredResume(finalized, prepared.source, prepared.plan)
+  const match = scoreTailoredResume(finalized, prepared.jobProfile, prepared.profile)
+  const alignment = evaluateAtsAlignment({
+    jd: prepared.jd,
+    records: prepared.evidence,
+    original,
+    tailored: finalized,
+    yearsSupported: yearsSupported(prepared),
+  })
+  return { resume: finalized, validation, match, coverageAfter: alignment.supportedCoverageAfter }
 }
 
 export async function tailorResume(
@@ -216,7 +274,11 @@ export async function tailorResume(
 
   const prepared = prepare(request)
   const original = buildOriginalResume(prepared.source, prepared.contact)
-  const conservative = finalizeResume(
+  const gaps = classifyMatchGaps(prepared.report, prepared.source, prepared.evidence)
+  const optimizationReport = formatOptimizationReport(prepared.report, gaps)
+  const conservative = evaluateCandidate(
+    prepared,
+    original,
     buildConservativeResume(
       prepared.source,
       prepared.plan,
@@ -225,46 +287,34 @@ export async function tailorResume(
       prepared.jobDescription,
       prepared.evidence,
     ),
-    prepared.plan,
   )
-  const conservativeAlignment = evaluateAtsAlignment({
-    jd: prepared.jd,
-    records: prepared.evidence,
-    original,
-    tailored: conservative,
-    yearsSupported: yearsSupported(prepared),
-  })
 
   let lastError: string | undefined
-  let best: TailoredResume | null = null
-  let bestAfter = conservativeAlignment.supportedCoverageAfter
-  let bestValidation = assessTailoredResume(conservative, prepared.source, prepared.plan)
+  let best = conservative.validation.ok ? conservative : null
+  let iterations = 1
 
   for (let attempt = 0; attempt < MAX_OPTIMIZATION_ATTEMPTS; attempt += 1) {
     try {
       const retryNote =
         attempt === 0
           ? undefined
-          : `Supported coverage did not improve enough. Represent these supported requirements more clearly without inventing facts: ${prepared.plan.skillsToEmphasize.join(', ')}.`
-      const tailored = finalizeResume(await generateWithLlm(llm, prepared, retryNote), prepared.plan)
-      const validation = assessTailoredResume(tailored, prepared.source, prepared.plan)
-      if (!validation.ok) {
+          : best
+            ? matchRetryNote(prepared.report, best.match, gaps)
+            : `Represent supported Match Engine requirements more clearly without inventing facts: ${prepared.plan.skillsToEmphasize.join(', ')}.`
+      const generated = await generateWithLlm(llm, prepared, optimizationReport, retryNote)
+      const candidate = evaluateCandidate(prepared, original, generated)
+      iterations = attempt + 1
+      if (!candidate.validation.ok) {
         lastError = 'Generated a conservative tailored draft because generated content could not be verified.'
         continue
       }
-      const alignment = evaluateAtsAlignment({
-        jd: prepared.jd,
-        records: prepared.evidence,
-        original,
-        tailored,
-        yearsSupported: yearsSupported(prepared),
-      })
-      if (!best || alignment.supportedCoverageAfter >= bestAfter) {
-        best = tailored
-        bestAfter = alignment.supportedCoverageAfter
-        bestValidation = validation
+      best = best ? (preferredCandidate(prepared.report, best, candidate).resume === candidate.resume ? candidate : best) : candidate
+      if (
+        candidate.match.matchScore > prepared.report.matchScore &&
+        lostSupportedNames(prepared.report, candidate.match).length === 0
+      ) {
+        break
       }
-      if (alignment.supportedCoverageAfter > conservativeAlignment.supportedCoverageBefore) break
     } catch (error) {
       if (error instanceof HttpError && error.status !== 503 && error.status !== 504 && error.status !== 502) {
         throw error
@@ -278,27 +328,21 @@ export async function tailorResume(
     }
   }
 
-  if (!best) {
-    if (!bestValidation.ok) return conservativeResult(prepared, lastError)
-    best = conservative
-  } else if (bestAfter < conservativeAlignment.supportedCoverageAfter && bestValidation.ok) {
-    const conservativeValidation = assessTailoredResume(conservative, prepared.source, prepared.plan)
-    if (conservativeValidation.ok) {
-      best = conservative
-      bestValidation = conservativeValidation
-    }
+  if (!best || !best.validation.ok) {
+    return conservativeResult(prepared, lastError, iterations)
   }
 
-  if (!best.omissions.length) best.omissions = prepared.plan.missingSkills
-  if (!best.changes.length) best.changes = conservative.changes
+  if (!best.resume.omissions.length) best.resume.omissions = prepared.plan.missingSkills
+  if (!best.resume.changes.length) best.resume.changes = conservative.resume.changes
 
   return withAlignment(
     prepared,
     original,
-    best,
-    bestValidation,
+    best.resume,
+    best.validation,
     'complete',
-    lastError && best === conservative ? lastError : undefined,
+    lastError && best.resume === conservative.resume ? lastError : undefined,
+    iterations,
   )
 }
 

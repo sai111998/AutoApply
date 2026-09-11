@@ -1,6 +1,6 @@
 import { allResumeSkills } from '../match/ground'
 import { findLexiconTerms } from '../match/lexicon'
-import { textContainsTerm } from '../match/normalize'
+import { normalizeSkill, textContainsTerm } from '../match/normalize'
 import type { ResumeProfile } from '../match/types'
 import type { SourceFacts, SourceRole, TailoredEducation } from './types'
 
@@ -172,8 +172,14 @@ export function extractContact(resumeText: string): { name: string; email: strin
   return { name, email, location }
 }
 
+const HIDDEN_SUPPORT: Record<string, RegExp> = {
+  'rest apis': /\bHTTP[- ]based services?\b|\bHTTP services\b|\bHTTP APIs?\b/i,
+}
+
 export function supportedInSource(term: string, source: SourceFacts): boolean {
   if (!term.trim()) return false
   if (textContainsTerm(source.text, term)) return true
-  return source.skills.some((skill) => textContainsTerm(skill, term) || textContainsTerm(term, skill))
+  if (source.skills.some((skill) => textContainsTerm(skill, term) || textContainsTerm(term, skill))) return true
+  const hidden = HIDDEN_SUPPORT[normalizeSkill(term)]
+  return Boolean(hidden && hidden.test(source.text))
 }

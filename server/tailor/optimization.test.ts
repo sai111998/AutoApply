@@ -5,7 +5,8 @@ import { conservativeTailor } from './engine'
 import { extractJdIntelligence } from './jd-intel'
 import { buildCoverageMatrix, extractRequirementEvidence } from './evidence'
 import { collectSourceFacts } from './source'
-import { JAVA_BACKEND_JD, JAVA_RESUME_TEXT, MISSING_STACK_JD } from './fixtures'
+import { restoreLostEvidence, scoreTailoredResume } from './match-optimize'
+import { JAVA_BACKEND_JD, JAVA_RESUME_TEXT, MISSING_STACK_JD, HIDDEN_REST_RESUME, REST_ONLY_JD, DOCKER_ONLY_RESUME, KUBERNETES_JD } from './fixtures'
 
 describe('ATS resume optimization', () => {
   it('extracts structured JD intelligence and a coverage matrix from the Java sample', () => {
@@ -85,5 +86,84 @@ describe('ATS resume optimization', () => {
     expect(weaker.unsupportedRequirements?.join(' ')).toMatch(/Terraform/)
     expect(weaker.unsupportedRequirements?.join(' ')).toMatch(/\bGo\b/)
     expect(weaker.atsAlignmentScore ?? 100).toBeLessThanOrEqual(strong.atsAlignmentScore ?? 0)
+  })
+
+  it('surfaces hidden REST evidence from HTTP-based services without adding Kubernetes', () => {
+    const resumeProfile = extractResumeLocal(HIDDEN_REST_RESUME)
+    const jobProfile = extractJobLocal(REST_ONLY_JD)
+    const before = scoreMatch(resumeProfile, jobProfile, HIDDEN_REST_RESUME)
+    const result = conservativeTailor({
+      resumeText: HIDDEN_REST_RESUME,
+      jobDescription: REST_ONLY_JD,
+      resumeProfile,
+      jobProfile,
+      matchReport: before,
+    })
+    const blob = [result.tailored?.summary, result.tailored?.skills.join(' '), ...(result.tailored?.experience.flatMap((role) => role.bullets) ?? [])].join('\n')
+    expect(blob).toMatch(/REST API/i)
+    expect(result.tailoredMatchScore ?? 0).toBeGreaterThanOrEqual(result.originalMatchScore ?? 0)
+    expect(result.tailored?.skills.join(' ')).not.toMatch(/Kubernetes/)
+  })
+
+  it('does not turn Docker evidence into Kubernetes', () => {
+    const resumeProfile = extractResumeLocal(DOCKER_ONLY_RESUME)
+    const jobProfile = extractJobLocal(KUBERNETES_JD)
+    const before = scoreMatch(resumeProfile, jobProfile, DOCKER_ONLY_RESUME)
+    const result = conservativeTailor({
+      resumeText: DOCKER_ONLY_RESUME,
+      jobDescription: KUBERNETES_JD,
+      resumeProfile,
+      jobProfile,
+      matchReport: before,
+    })
+    const blob = [result.tailored?.summary, result.tailored?.skills.join(' '), ...(result.tailored?.experience.flatMap((role) => role.bullets) ?? [])].join('\n')
+    expect(blob).toMatch(/Docker/)
+    expect(blob).not.toMatch(/Kubernetes/)
+    expect(result.plan.missingSkills.join(' ')).toMatch(/Kubernetes/)
+    expect(before.requiredSkills.missing.some((item) => /kubernetes/i.test(item.name))).toBe(true)
+  })
+
+  it('keeps the Java sample Match Engine score from dropping and reports coverage', () => {
+    const resumeProfile = extractResumeLocal(JAVA_RESUME_TEXT)
+    const jobProfile = extractJobLocal(JAVA_BACKEND_JD)
+    const before = scoreMatch(resumeProfile, jobProfile, JAVA_RESUME_TEXT)
+    const result = conservativeTailor({
+      resumeText: JAVA_RESUME_TEXT,
+      jobDescription: JAVA_BACKEND_JD,
+      resumeProfile,
+      jobProfile,
+      matchReport: before,
+    })
+    expect(result.originalMatchScore).toBe(before.matchScore)
+    expect(result.tailoredMatchScore ?? 0).toBeGreaterThanOrEqual(before.matchScore)
+    expect(result.requiredMatchedAfter ?? 0).toBeGreaterThanOrEqual(result.requiredMatchedBefore ?? 0)
+    expect(result.supportedCoverageAfter ?? 0).toBeGreaterThanOrEqual(result.supportedCoverageBefore ?? 0)
+    expect(result.optimizationIterations).toBeGreaterThanOrEqual(1)
+    expect(result.factualValidation?.passed).toBe(true)
+  })
+
+  it('restores supported Java evidence if tailoring accidentally dropped it', () => {
+    const resumeProfile = extractResumeLocal(JAVA_RESUME_TEXT)
+    const jobProfile = extractJobLocal(JAVA_BACKEND_JD)
+    const result = conservativeTailor({
+      resumeText: JAVA_RESUME_TEXT,
+      jobDescription: JAVA_BACKEND_JD,
+      resumeProfile,
+      jobProfile,
+    })
+    const weakened = {
+      ...result.tailored!,
+      skills: result.tailored!.skills.filter((skill) => !/java/i.test(skill)),
+      summary: 'Software engineer.',
+      experience: result.tailored!.experience.map((role) => ({
+        ...role,
+        bullets: role.bullets.map((bullet) => bullet.replace(/Java/gi, 'backend')),
+      })),
+    }
+    const source = collectSourceFacts(JAVA_RESUME_TEXT, resumeProfile)
+    const restored = restoreLostEvidence(weakened, source, ['Java'])
+    expect(restored.skills.join(' ')).toMatch(/Java/)
+    const after = scoreTailoredResume(restored, jobProfile, resumeProfile)
+    expect(after.requiredSkills.matched.some((item) => /java/i.test(item.name))).toBe(true)
   })
 })

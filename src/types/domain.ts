@@ -224,6 +224,16 @@ export interface TailoringPlan {
   preferredTotal?: number
   supportedTotal?: number
   requirementTotal?: number
+  originalMatchScore?: number
+  tailoredMatchScore?: number
+  matchScoreDelta?: number
+  optimizationIterations?: number
+  requiredMatchedBefore?: number
+  requiredMatchedAfter?: number
+  preferredMatchedBefore?: number
+  preferredMatchedAfter?: number
+  responsibilityCoverageBefore?: number
+  responsibilityCoverageAfter?: number
 }
 
 export type ResumeVersionStatus =

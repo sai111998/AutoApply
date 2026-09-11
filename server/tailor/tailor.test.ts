@@ -154,7 +154,7 @@ describe('resume tailoring', () => {
     expect(result.plan.missingSkills).toEqual(expect.arrayContaining(['Kubernetes']))
     expect(result.tailored?.skills[0]).toBe('Java')
     expect(result.tailored?.skills).not.toContain('Kubernetes')
-    expect(result.tailored?.summary).toMatch(/Java and Spring Boot/)
+    expect(result.tailored?.summary).toMatch(/Java(?:,| and) Spring Boot/)
   })
 
   it('builds a plan from a partial matchReport without preferred or certification buckets', () => {

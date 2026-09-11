@@ -41,10 +41,11 @@ import { scoreChange, sanitizeTailoredContent } from '@/lib/tailored-text'
 import type { JobMatch, ResumeVersion, TailoredResumeContent } from '@/types/domain'
 
 const PROGRESS_STEPS = [
-  'Reading resume',
-  'Reviewing job requirements',
-  'Optimizing relevant experience',
-  'Preparing tailored version',
+  'Analyzing match gaps',
+  'Finding supported evidence',
+  'Optimizing relevant sections',
+  'Validating factual accuracy',
+  'Rechecking job match',
 ]
 
 export function TailorResumePage() {
@@ -390,37 +391,39 @@ export function TailorResumePage() {
       </Card>
 
       {(complete || version?.status === 'completed' || version?.status === 'kept' || version?.status === 'edited') &&
-        (plan.atsAlignmentScore != null || plan.coverage) && (
+        (plan.atsAlignmentScore != null || plan.coverage || plan.originalMatchScore != null) && (
         <Card className="mt-6 p-6">
-          <h2 className="text-lg font-semibold text-charcoal">JobPilot AI Alignment Score</h2>
+          <h2 className="text-lg font-semibold text-charcoal">Match Engine result</h2>
           <p className="mt-1 text-sm text-muted">
-            ATS Alignment Estimate based on the supplied resume and job description. This is not a guaranteed ATS score,
-            a guaranteed pass, or a guaranteed interview.
+            Scores come from the existing Match Engine. This is not a guaranteed ATS pass or interview.
           </p>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <ScoreStat label="ATS Alignment" value={plan.atsAlignmentScore ?? 0} />
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <ScoreStat label="Original resume" value={plan.originalMatchScore ?? match.overallScore ?? 0} />
+            <ScoreStat label="Tailored resume" value={plan.tailoredMatchScore ?? previewScore ?? 0} highlight />
+            <ScoreStat
+              label="Improvement"
+              value={plan.matchScoreDelta ?? 0}
+              display={formatScoreDelta(plan.matchScoreDelta ?? ((previewScore ?? 0) - (match.overallScore ?? 0)))}
+              suffix=""
+            />
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <ScoreStat
               label="Supported JD Coverage"
-              value={plan.supportedCoverageAfter ?? plan.coverage?.representedAfter ?? plan.coverage?.overallSupported ?? 0}
-              display={`${plan.supportedCoverageAfter ?? plan.coverage?.representedAfter ?? plan.coverage?.overallSupported ?? 0} / ${plan.requirementTotal ?? plan.coverage?.overallTotal ?? 0}`}
+              value={plan.supportedCoverageAfter ?? 0}
+              display={`${plan.supportedCoverageBefore ?? plan.coverage?.representedBefore ?? 0} → ${plan.supportedCoverageAfter ?? plan.coverage?.representedAfter ?? 0} / ${plan.requirementTotal ?? plan.coverage?.overallTotal ?? 0}`}
               suffix=""
             />
             <ScoreStat
               label="Required Skills"
-              value={plan.requiredSupportedCount ?? plan.coverage?.requiredSupported ?? 0}
-              display={`${plan.requiredSupportedCount ?? plan.coverage?.requiredSupported ?? 0} / ${plan.requiredTotal ?? plan.coverage?.requiredTotal ?? 0}`}
-              suffix=""
-            />
-            <ScoreStat
-              label="Preferred Skills"
-              value={plan.preferredSupportedCount ?? plan.coverage?.preferredSupported ?? 0}
-              display={`${plan.preferredSupportedCount ?? plan.coverage?.preferredSupported ?? 0} / ${plan.preferredTotal ?? plan.coverage?.preferredTotal ?? 0}`}
+              value={plan.requiredMatchedAfter ?? plan.requiredSupportedCount ?? 0}
+              display={`${plan.requiredMatchedBefore ?? plan.coverage?.requiredSupported ?? 0} → ${plan.requiredMatchedAfter ?? plan.requiredSupportedCount ?? 0} / ${plan.requiredTotal ?? plan.coverage?.requiredTotal ?? 0}`}
               suffix=""
             />
             <ScoreStat
               label="Responsibility Alignment"
-              value={plan.responsibilityCoverage ?? 0}
-              display={`${plan.responsibilityCoverage ?? 0}%`}
+              value={plan.responsibilityCoverageAfter ?? plan.responsibilityCoverage ?? 0}
+              display={`${plan.responsibilityCoverageBefore ?? 0}% → ${plan.responsibilityCoverageAfter ?? plan.responsibilityCoverage ?? 0}%`}
               suffix=""
             />
           </div>
@@ -429,7 +432,7 @@ export function TailorResumePage() {
 
       {generating && (
         <Card className="mt-6 p-6">
-          <p className="text-sm font-semibold text-olive-dark">Generating your tailored resume...</p>
+          <p className="text-sm font-semibold text-olive-dark">Optimizing your resume for this job</p>
           <p className="mt-1 text-sm text-muted">This usually takes less than a minute. Switching pages in JobPilot keeps this request running.</p>
           <ol className="mt-5 space-y-3">
             {PROGRESS_STEPS.map((label, index) => {

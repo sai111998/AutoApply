@@ -72,6 +72,7 @@ export function tailorUserPrompt(input: {
   jd?: JdIntelligence | null
   coverageMatrix?: string
   retryNote?: string
+  optimizationReport?: string
 }): string {
   const coverage = input.plan.coverage
   const coverageLine = coverage
@@ -134,6 +135,9 @@ export function tailorUserPrompt(input: {
     input.coverageMatrix ? 'Coverage matrix (internal):' : '',
     input.coverageMatrix ?? '',
     '',
+    input.optimizationReport ? 'Match Engine optimization report:' : '',
+    input.optimizationReport ?? '',
+    '',
     input.retryNote ? `REVISION REQUEST: ${input.retryNote}` : '',
     '',
     'SOURCE RESUME:',
@@ -142,7 +146,9 @@ export function tailorUserPrompt(input: {
     'JOB DESCRIPTION (relevance guide only):',
     input.jobDescription,
     '',
-    input.report ? `Match score: ${input.report.matchScore}. Recommendation: ${input.report.recommendation}.` : '',
+    input.report
+      ? `Match Engine score: ${input.report.matchScore}. Recommendation: ${input.report.recommendation}. Required matched ${input.report.requiredSkills.matched.length}, partial ${input.report.requiredSkills.partial.length}, missing ${input.report.requiredSkills.missing.length}.`
+      : '',
   ]
     .filter((line) => line !== '')
     .join('\n')

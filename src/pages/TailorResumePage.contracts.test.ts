@@ -50,16 +50,20 @@ describe('resume tailoring page contracts', () => {
     expect(tailorPage).toMatch(/scoreImprovementExplanation/)
   })
 
-  it('shows JobPilot AI alignment metrics without claiming a guaranteed ATS score', () => {
-    expect(tailorPage).toMatch(/JobPilot AI Alignment Score/)
-    expect(tailorPage).toMatch(/ATS Alignment Estimate/)
+  it('shows Match Engine before/after scores without claiming a guaranteed ATS score', () => {
+    expect(tailorPage).toMatch(/Match Engine result/)
+    expect(tailorPage).toMatch(/Original resume/)
+    expect(tailorPage).toMatch(/Tailored resume/)
     expect(tailorPage).toMatch(/Supported JD Coverage/)
     expect(tailorPage).toMatch(/Required Skills/)
-    expect(tailorPage).toMatch(/Preferred Skills/)
     expect(tailorPage).toMatch(/Responsibility Alignment/)
+    expect(tailorPage).toMatch(/Optimizing your resume for this job/)
+    expect(tailorPage).toMatch(/Analyzing match gaps/)
+    expect(tailorPage).toMatch(/Rechecking job match/)
     expect(tailorPage).not.toMatch(/Guaranteed ATS/)
     expect(tailorPage).not.toMatch(/Guaranteed to pass ATS/)
     expect(tailorPage).not.toMatch(/Guaranteed interview/)
+    expect(tailorPage).not.toMatch(/LLM retry/)
   })
 
   it('uses client-side routing for application tabs', () => {

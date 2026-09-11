@@ -91,6 +91,16 @@ export interface TailoringPlan {
   preferredTotal?: number
   supportedTotal?: number
   requirementTotal?: number
+  originalMatchScore?: number
+  tailoredMatchScore?: number
+  matchScoreDelta?: number
+  optimizationIterations?: number
+  requiredMatchedBefore?: number
+  requiredMatchedAfter?: number
+  preferredMatchedBefore?: number
+  preferredMatchedAfter?: number
+  responsibilityCoverageBefore?: number
+  responsibilityCoverageAfter?: number
 }
 
 export interface SourceRole {
@@ -166,4 +176,14 @@ export interface TailorResponseBody {
   unsupportedRequirements?: string[]
   summary?: string
   message?: string
+  originalMatchScore?: number
+  tailoredMatchScore?: number
+  matchScoreDelta?: number
+  optimizationIterations?: number
+  requiredMatchedBefore?: number
+  requiredMatchedAfter?: number
+  preferredMatchedBefore?: number
+  preferredMatchedAfter?: number
+  responsibilityCoverageBefore?: number
+  responsibilityCoverageAfter?: number
 }

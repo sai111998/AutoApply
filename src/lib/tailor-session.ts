@@ -192,6 +192,16 @@ function mergePlan(result: Record<string, unknown>): TailoringPlan {
   plan.experienceAlignment = plan.experienceAlignment ?? asNumber(result.experienceAlignment)
   plan.keywordAlignment = plan.keywordAlignment ?? asNumber(result.keywordAlignment)
   plan.educationAlignment = plan.educationAlignment ?? asNumber(result.educationAlignment)
+  plan.originalMatchScore = plan.originalMatchScore ?? asNumber(result.originalMatchScore)
+  plan.tailoredMatchScore = plan.tailoredMatchScore ?? asNumber(result.tailoredMatchScore)
+  plan.matchScoreDelta = plan.matchScoreDelta ?? asNumber(result.matchScoreDelta)
+  plan.optimizationIterations = plan.optimizationIterations ?? asNumber(result.optimizationIterations)
+  plan.requiredMatchedBefore = plan.requiredMatchedBefore ?? asNumber(result.requiredMatchedBefore)
+  plan.requiredMatchedAfter = plan.requiredMatchedAfter ?? asNumber(result.requiredMatchedAfter)
+  plan.preferredMatchedBefore = plan.preferredMatchedBefore ?? asNumber(result.preferredMatchedBefore)
+  plan.preferredMatchedAfter = plan.preferredMatchedAfter ?? asNumber(result.preferredMatchedAfter)
+  plan.responsibilityCoverageBefore = plan.responsibilityCoverageBefore ?? asNumber(result.responsibilityCoverageBefore)
+  plan.responsibilityCoverageAfter = plan.responsibilityCoverageAfter ?? asNumber(result.responsibilityCoverageAfter)
   if (!plan.unsupportedRequirements?.length && Array.isArray(result.unsupportedRequirements)) {
     plan.unsupportedRequirements = result.unsupportedRequirements.filter((item): item is string => typeof item === 'string')
   }

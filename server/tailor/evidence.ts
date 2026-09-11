@@ -76,6 +76,19 @@ export function collectResumeLocations(source: SourceFacts): Array<{ location: s
   return items
 }
 
+function hiddenSemanticHit(requirement: string, text: string): EvidenceStrength | null {
+  if (sameSkill(requirement, 'REST APIs') && /\bHTTP[- ]based services?\b|\bHTTP services\b|\bHTTP APIs?\b/i.test(text)) {
+    return 'partial'
+  }
+  if (sameSkill(requirement, 'AWS') && /\bcloud deployments?\b/i.test(text) && textContainsTerm(text, 'AWS')) {
+    return 'strong'
+  }
+  if (sameSkill(requirement, 'PostgreSQL') && /\brelational databases?\b/i.test(text) && textContainsTerm(text, 'PostgreSQL')) {
+    return 'strong'
+  }
+  return null
+}
+
 function classifyHit(requirement: string, text: string, sourceSkills: string[]): EvidenceStrength | null {
   if (textContainsTerm(text, requirement) || sourceSkills.some((skill) => sameSkill(skill, requirement) && textContainsTerm(text, skill))) {
     return 'strong'
@@ -83,6 +96,8 @@ function classifyHit(requirement: string, text: string, sourceSkills: string[]):
   if (sourceSkills.some((skill) => candidateImplements(requirement, skill) && textContainsTerm(text, skill))) {
     return 'strong'
   }
+  const hidden = hiddenSemanticHit(requirement, text)
+  if (hidden) return hidden
   if (tokenOverlap(requirement, text) >= 0.45) return 'partial'
   if (sourceSkills.some((skill) => relatedSkill(requirement, skill) && textContainsTerm(text, skill))) {
     return 'related'

@@ -6,6 +6,7 @@ import type { JdCoverage, SourceFacts, TailorMatchSignals, TailoringPlan } from 
 import type { JdIntelligence } from './jd-intel'
 import type { ResumeEvidenceRecord } from './evidence'
 import type { AtsAlignmentBreakdown } from './ats-score'
+import type { MatchCoverageSnapshot } from './match-optimize'
 
 function uniqueNames(values: string[]): string[] {
   const seen = new Set<string>()
@@ -61,14 +62,24 @@ function inferTargetRole(jobDescription?: string, jobProfile?: JobProfile | null
   return jobProfile?.responsibilities[0]?.text.slice(0, 60) ?? ''
 }
 
-export function applyAlignmentToPlan(plan: TailoringPlan, alignment: AtsAlignmentBreakdown): TailoringPlan {
+export function applyAlignmentToPlan(
+  plan: TailoringPlan,
+  alignment: AtsAlignmentBreakdown,
+  matchBefore?: MatchCoverageSnapshot,
+  matchAfter?: MatchCoverageSnapshot,
+  iterations?: number,
+): TailoringPlan {
+  const originalMatchScore = matchBefore?.matchScore
+  const tailoredMatchScore = matchAfter?.matchScore
+  const delta =
+    originalMatchScore != null && tailoredMatchScore != null ? tailoredMatchScore - originalMatchScore : undefined
   return {
     ...plan,
     coverage: {
-      requiredSupported: alignment.requiredSupported,
-      requiredTotal: alignment.requiredTotal,
-      preferredSupported: alignment.preferredSupported,
-      preferredTotal: alignment.preferredTotal,
+      requiredSupported: matchAfter?.requiredMatched ?? alignment.requiredSupported,
+      requiredTotal: matchAfter?.requiredTotal ?? alignment.requiredTotal,
+      preferredSupported: matchAfter?.preferredMatched ?? alignment.preferredSupported,
+      preferredTotal: matchAfter?.preferredTotal ?? alignment.preferredTotal,
       overallSupported: alignment.supportedTotal,
       overallTotal: alignment.requirementTotal,
       representedBefore: alignment.supportedCoverageBefore,
@@ -79,17 +90,30 @@ export function applyAlignmentToPlan(plan: TailoringPlan, alignment: AtsAlignmen
     supportedCoverageAfter: alignment.supportedCoverageAfter,
     requiredCoverage: alignment.requiredCoverage,
     preferredCoverage: alignment.preferredCoverage,
-    responsibilityCoverage: alignment.responsibilityCoverage,
+    responsibilityCoverage: matchAfter?.responsibilityCoverage ?? alignment.responsibilityCoverage,
     experienceAlignment: alignment.experienceAlignment,
     keywordAlignment: alignment.keywordAlignment,
     educationAlignment: alignment.educationAlignment,
-    requiredSupportedCount: alignment.requiredSupported,
-    preferredSupportedCount: alignment.preferredSupported,
-    requiredTotal: alignment.requiredTotal,
-    preferredTotal: alignment.preferredTotal,
+    requiredSupportedCount: matchAfter?.requiredMatched ?? alignment.requiredSupported,
+    preferredSupportedCount: matchAfter?.preferredMatched ?? alignment.preferredSupported,
+    requiredTotal: matchAfter?.requiredTotal ?? alignment.requiredTotal,
+    preferredTotal: matchAfter?.preferredTotal ?? alignment.preferredTotal,
     supportedTotal: alignment.supportedTotal,
     requirementTotal: alignment.requirementTotal,
-    alignmentSummary: `JobPilot AI Alignment Score ${alignment.atsAlignmentScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`,
+    originalMatchScore,
+    tailoredMatchScore,
+    matchScoreDelta: delta,
+    optimizationIterations: iterations,
+    requiredMatchedBefore: matchBefore?.requiredMatched,
+    requiredMatchedAfter: matchAfter?.requiredMatched,
+    preferredMatchedBefore: matchBefore?.preferredMatched,
+    preferredMatchedAfter: matchAfter?.preferredMatched,
+    responsibilityCoverageBefore: matchBefore?.responsibilityCoverage,
+    responsibilityCoverageAfter: matchAfter?.responsibilityCoverage,
+    alignmentSummary:
+      originalMatchScore != null && tailoredMatchScore != null
+        ? `Match Engine ${originalMatchScore}/100 → ${tailoredMatchScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`
+        : `JobPilot AI Alignment Score ${alignment.atsAlignmentScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`,
   }
 }
 

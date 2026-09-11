@@ -77,12 +77,11 @@ function applySafeVerb(bullet: string): string {
 
 function applyJdTerminology(text: string, emphasize: string[], source: SourceFacts): string {
   let next = text
-  if (
-    emphasize.some((skill) => sameSkill(skill, 'REST APIs')) &&
-    supportedInSource('REST APIs', source) &&
-    /\bHTTP-based services\b/i.test(next)
-  ) {
-    next = next.replace(/\bHTTP-based services\b/gi, 'REST APIs')
+  const wantsRest = emphasize.some((skill) => sameSkill(skill, 'REST APIs'))
+  if (wantsRest && supportedInSource('REST APIs', source)) {
+    next = next.replace(/\bHTTP[- ]based services\b/gi, 'REST APIs')
+    next = next.replace(/\bHTTP services\b/gi, 'REST APIs')
+    next = next.replace(/\bRESTful services\b/gi, 'REST APIs')
   }
   if (/\bpayments APIs\b/i.test(next) && /\bpayment/i.test(emphasize.join(' ') + source.text)) {
     next = next.replace(/\bpayments APIs\b/gi, 'payment APIs')
@@ -108,6 +107,20 @@ function applyJdTerminology(text: string, emphasize: string[], source: SourceFac
     /\bAWS-based services\b/i.test(next)
   ) {
     next = next.replace(/\bAWS-based services\b/gi, 'AWS cloud services')
+  }
+  if (
+    emphasize.some((skill) => sameSkill(skill, 'AWS')) &&
+    supportedInSource('AWS', source) &&
+    /\bcloud deployments?\b/i.test(next)
+  ) {
+    next = next.replace(/\bcloud deployments?\b/gi, 'AWS deployments')
+  }
+  if (
+    emphasize.some((skill) => sameSkill(skill, 'JUnit')) &&
+    supportedInSource('JUnit', source) &&
+    /\bautomated testing\b/i.test(next)
+  ) {
+    next = next.replace(/\bautomated testing\b/gi, 'JUnit testing')
   }
   return next
 }
@@ -135,6 +148,22 @@ function enrichBullet(
 
   if (/^built rest apis in java\.?$/i.test(text) && supportedInSource('REST APIs', source)) {
     text = 'Built Java REST APIs supporting backend services.'
+  }
+
+  if (/^designed rest apis\.?$/i.test(text) && supportedInSource('REST APIs', source)) {
+    text = 'Designed REST APIs supporting backend services.'
+  }
+
+  if (
+    /investigated production issues/i.test(text) &&
+    /root-cause analysis/i.test(source.text) &&
+    !/application logs/i.test(text) &&
+    /logs/i.test(source.text)
+  ) {
+    text = text.replace(
+      /investigated production issues/i,
+      'Investigated production issues, analyzed application logs, and performed root-cause analysis',
+    )
   }
 
   if (/^supported aws cloud services\.?$/i.test(text) && supportedInSource('AWS', source)) {

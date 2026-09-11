@@ -67,3 +67,50 @@ Also required:
 - Terraform
 - Go
 `
+
+export const HIDDEN_REST_RESUME = `Alex Chen
+Boston, MA
+alex@example.com
+
+Summary
+Backend engineer.
+
+Experience
+Software Engineer, Acme — 2019 to present
+- Designed HTTP-based services.
+- Maintained billing workflows.
+
+Skills
+Java, Docker
+`
+
+export const REST_ONLY_JD = `Backend Engineer
+
+Required qualifications:
+- Java
+- Develop RESTful APIs
+- Docker
+`
+
+export const DOCKER_ONLY_RESUME = `Riley Cole
+Denver, CO
+riley@example.com
+
+Summary
+Engineer who packages applications.
+
+Experience
+Engineer, Harbor — 2020 to present
+- Packaged applications in containers using Docker.
+
+Skills
+Java, Docker
+`
+
+export const KUBERNETES_JD = `Platform Engineer
+
+Required:
+- Java
+- Kubernetes
+- Docker
+`
