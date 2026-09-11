@@ -400,7 +400,7 @@ export function TailorResumePage() {
         <Card className="mt-6 p-6">
           <h2 className="text-lg font-semibold text-charcoal">Match Engine result</h2>
           <p className="mt-1 text-sm text-muted">
-            Scores come from the existing Match Engine. This is not a guaranteed ATS pass or interview.
+            Scores come from the existing Match Engine. This is a JobPilot Alignment Score (ATS alignment estimate), not a guaranteed ATS pass or interview.
           </p>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <ScoreStat label="Original resume" value={plan.originalMatchScore ?? engineOriginal ?? 0} />
@@ -412,7 +412,7 @@ export function TailorResumePage() {
               suffix=""
             />
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <ScoreStat
               label="Supported JD Coverage"
               value={plan.supportedCoverageAfter ?? 0}
@@ -420,18 +420,27 @@ export function TailorResumePage() {
               suffix=""
             />
             <ScoreStat
-              label="Required Skills"
+              label="Required Coverage"
               value={plan.requiredMatchedAfter ?? plan.requiredSupportedCount ?? 0}
               display={`${plan.requiredMatchedBefore ?? plan.coverage?.requiredSupported ?? 0} → ${plan.requiredMatchedAfter ?? plan.requiredSupportedCount ?? 0} / ${plan.requiredTotal ?? plan.coverage?.requiredTotal ?? 0}`}
               suffix=""
             />
             <ScoreStat
-              label="Responsibility Alignment"
+              label="Preferred Coverage"
+              value={plan.preferredMatchedAfter ?? plan.preferredSupportedCount ?? 0}
+              display={`${plan.preferredMatchedBefore ?? plan.coverage?.preferredSupported ?? 0} → ${plan.preferredMatchedAfter ?? plan.preferredSupportedCount ?? 0} / ${plan.preferredTotal ?? plan.coverage?.preferredTotal ?? 0}`}
+              suffix=""
+            />
+            <ScoreStat
+              label="Responsibility Coverage"
               value={plan.responsibilityCoverageAfter ?? plan.responsibilityCoverage ?? 0}
               display={`${plan.responsibilityCoverageBefore ?? 0}% → ${plan.responsibilityCoverageAfter ?? plan.responsibilityCoverage ?? 0}%`}
               suffix=""
             />
           </div>
+          {(plan.alignmentSummary || plan.cannotReachEightyReason) && (
+            <p className="mt-4 text-sm text-charcoal">{plan.cannotReachEightyReason || plan.alignmentSummary}</p>
+          )}
         </Card>
       )}
 
@@ -544,7 +553,7 @@ export function TailorResumePage() {
                     {option.isSelected && <Check size={16} className="text-olive" />}
                     {option.name}
                   </p>
-                  <p className="mt-1 text-sm text-muted">Match {option.matchScore != null ? `${option.matchScore}%` : 'Pending'}</p>
+                  <p className="mt-1 text-sm text-muted">Match {option.matchScore != null ? `${option.matchScore}%` : 'Not analyzed'}</p>
                   <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted">{option.origin}</p>
                 </button>
                 <div className="flex flex-wrap items-center gap-2">

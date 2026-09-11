@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scoreMatch } from './engine'
+import { capScoreForRequiredGaps, scoreMatch } from './engine'
 import { emptyJobProfile, emptyResumeProfile, groundResumeProfile } from './ground'
 import type { JobProfile, ResumeProfile } from './types'
 
@@ -239,5 +239,115 @@ describe('match engine scoring', () => {
     }
     const report = scoreMatch(resume, job, 'Developed Java services.')
     expect(report.requiredSkills.missing.some((item) => item.name === 'JavaScript')).toBe(true)
+  })
+
+  it('scores a strongly aligned Java stack above 80 without a 49 ceiling', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      skills: [
+        { name: 'Java', evidence: '5+ years software engineering with Java.', years: 5 },
+        { name: 'Spring Boot', evidence: 'Built Spring Boot services.' },
+        { name: 'REST APIs', evidence: 'Built REST APIs.' },
+        { name: 'AWS', evidence: 'Deployed AWS applications.' },
+        { name: 'PostgreSQL', evidence: 'Owned PostgreSQL databases.' },
+        { name: 'Docker', evidence: 'Used Docker in CI.' },
+        { name: 'Jenkins', evidence: 'Jenkins pipelines.' },
+        { name: 'JUnit', evidence: 'JUnit tests.' },
+        { name: 'Mockito', evidence: 'Mockito tests.' },
+      ],
+      languages: [{ name: 'Java', evidence: '5+ years software engineering with Java.', years: 5 }],
+      frameworks: [{ name: 'Spring Boot', evidence: 'Built Spring Boot services.' }],
+      cloud: [{ name: 'AWS', evidence: 'Deployed AWS applications.' }],
+      databases: [{ name: 'PostgreSQL', evidence: 'Owned PostgreSQL databases.' }],
+      devops: [
+        { name: 'Docker', evidence: 'Used Docker in CI.' },
+        { name: 'Jenkins', evidence: 'Jenkins pipelines.' },
+      ],
+      yearsOfExperience: 5,
+      education: [{ degree: 'B.S.', field: 'Computer Science', evidence: 'B.S., Computer Science' }],
+      responsibilities: [
+        { name: 'Built REST APIs', evidence: 'Built Java Spring Boot REST APIs.' },
+        { name: 'Deployed AWS', evidence: 'Deployed AWS applications.' },
+      ],
+      location: 'Austin, TX',
+      workArrangement: 'remote',
+    }
+    const job: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [
+        { name: 'Java' },
+        { name: 'Spring Boot' },
+        { name: 'REST APIs' },
+        { name: 'AWS' },
+        { name: 'PostgreSQL' },
+        { name: 'Docker' },
+        { name: 'Jenkins' },
+        { name: 'JUnit' },
+        { name: 'Mockito' },
+      ],
+      preferredSkills: [],
+      yearsOfExperience: 5,
+      education: { required: true, degree: 'Bachelor', field: 'Computer Science', details: 'B.S. in Computer Science' },
+      location: 'Remote',
+      workArrangement: 'remote',
+      responsibilities: [
+        { text: 'Build Java Spring Boot REST APIs', required: true },
+        { text: 'Deploy AWS services', required: true },
+        { text: 'Own PostgreSQL databases', required: true },
+      ],
+    }
+    const report = scoreMatch(
+      resume,
+      job,
+      '5+ years software engineering with Java, Spring Boot, REST APIs, AWS, PostgreSQL, Docker, Jenkins, JUnit, Mockito. B.S., Computer Science.',
+    )
+    expect(report.requiredSkills.missing).toHaveLength(0)
+    expect(report.matchScore).toBeGreaterThanOrEqual(80)
+    expect(report.matchScore).not.toBe(49)
+  })
+
+  it('does not flatten an 8/10 required-skill match to 49', () => {
+    const job: JobProfile = {
+      ...strongJob,
+      requiredSkills: [
+        { name: 'Java' },
+        { name: 'Spring Boot' },
+        { name: 'PostgreSQL' },
+        { name: 'Docker' },
+        { name: 'REST APIs' },
+        { name: 'AWS' },
+        { name: 'Jenkins' },
+        { name: 'JUnit' },
+        { name: 'Kubernetes' },
+        { name: 'Terraform' },
+      ],
+      preferredSkills: [],
+    }
+    const resume: ResumeProfile = {
+      ...strongResume,
+      skills: [
+        ...strongResume.skills,
+        { name: 'REST APIs', evidence: 'Built REST APIs.' },
+        { name: 'AWS', evidence: 'AWS deployments.' },
+        { name: 'Jenkins', evidence: 'Jenkins pipelines.' },
+        { name: 'JUnit', evidence: 'JUnit tests.' },
+      ],
+    }
+    const report = scoreMatch(
+      resume,
+      job,
+      'Developed Java and Spring Boot applications for payments APIs. REST APIs. AWS. PostgreSQL. Docker. Jenkins. JUnit. 4 years Java. B.S., Computer Science.',
+    )
+    expect(report.requiredSkills.missing.map((item) => item.name).sort()).toEqual(['Kubernetes', 'Terraform'])
+    expect(report.matchScore).toBeGreaterThan(49)
+    expect(report.recommendation).not.toBe('APPLY')
+  })
+
+  it('caps only when a majority of required skills are missing', () => {
+    expect(capScoreForRequiredGaps(91, 2, 10)).toBe(91)
+    expect(capScoreForRequiredGaps(91, 2, 4)).toBe(49)
+    expect(capScoreForRequiredGaps(91, 1, 2)).toBe(74)
+    expect(capScoreForRequiredGaps(91, 1, 10)).toBe(91)
+    expect(capScoreForRequiredGaps(91, 0, 8)).toBe(91)
   })
 })

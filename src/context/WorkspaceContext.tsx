@@ -892,6 +892,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         resumeProfile: resumeProfileFromTailored(version.resumeContent),
         jobProfile: jobProfileFromMatch(parent, job),
         persistResults: false,
+        parentMatchId: parent.id,
+        resumeVersionId: version.id,
       })
 
       if (response.status === 'complete') {

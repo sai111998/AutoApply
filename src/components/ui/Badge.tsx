@@ -42,8 +42,14 @@ export function RecommendationBadge({ value }: { value: Recommendation | null })
   return <Pill tone={tone}>{value}</Pill>
 }
 
-export function ScoreBadge({ score }: { score: number | null }) {
-  if (score == null) return <Pill tone="pending">Queued</Pill>
+export function ScoreBadge({
+  score,
+  emptyLabel = 'Queued',
+}: {
+  score: number | null
+  emptyLabel?: string
+}) {
+  if (score == null) return <Pill tone="pending">{emptyLabel}</Pill>
   const tone = score >= 80 ? 'strong' : score >= 60 ? 'review' : 'skip'
   return <Pill tone={tone}>{score}</Pill>
 }

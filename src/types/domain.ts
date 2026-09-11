@@ -224,6 +224,7 @@ export interface TailoringPlan {
   preferredTotal?: number
   supportedTotal?: number
   requirementTotal?: number
+  cannotReachEightyReason?: string
   originalMatchScore?: number
   tailoredMatchScore?: number
   matchScoreDelta?: number

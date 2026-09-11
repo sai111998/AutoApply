@@ -62,12 +62,13 @@ export async function persistAnalysis(
     return { persisted: false, jobId: null, matchId: null }
   }
 
-  const matchInsert = await supabase.from('job_matches').upsert(
-    {
+  const matchRow = {
       id: matchId,
       user_id: request.userId,
       job_id: jobId,
       resume_id: request.resumeId ?? null,
+      parent_match_id: request.parentMatchId ?? null,
+      resume_version_id: request.resumeVersionId ?? null,
       overall_score: result.matchScore,
       skills_matched: result.requiredSkills.matched.concat(result.preferredSkills.matched),
       skills_partial: result.requiredSkills.partial.concat(result.preferredSkills.partial),
@@ -101,12 +102,21 @@ export async function persistAnalysis(
       analyzed_at: now,
       summary: result.summary,
       analysis_payload: result.report,
-    },
-    { onConflict: 'id', defaultToNull: false },
-  )
+    }
+
+  let matchInsert = await supabase.from('job_matches').upsert(matchRow, { onConflict: 'id', defaultToNull: false })
+  if (matchInsert.error && /could not find the .* column|PGRST204|schema cache/i.test(matchInsert.error.message ?? '')) {
+    const { parent_match_id: _parent, resume_version_id: _version, ...core } = matchRow
+    matchInsert = await supabase.from('job_matches').upsert(core, { onConflict: 'id', defaultToNull: false })
+  }
 
   if (matchInsert.error) {
     return { persisted: false, jobId, matchId: null }
+  }
+
+  const versionRescore = Boolean(request.parentMatchId || request.resumeVersionId)
+  if (versionRescore) {
+    return { persisted: true, jobId, matchId }
   }
 
   const applicationRow = {

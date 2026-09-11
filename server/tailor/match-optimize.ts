@@ -31,9 +31,12 @@ export interface MatchCoverageSnapshot {
   requiredTotal: number
   preferredMatched: number
   preferredTotal: number
+  supportedCount: number
+  supportedTotal: number
   responsibilityCoverage: number
   responsibilityStrong: number
   responsibilityTotal: number
+  missingRequired: string[]
 }
 
 export function tailoredResumeToText(resume: TailoredResume): string {
@@ -160,16 +163,28 @@ export function coverageFromMatch(report: MatchReport): MatchCoverageSnapshot {
   const responsibilityPoints =
     (report.responsibilities?.strongMatches.length ?? 0) +
     (report.responsibilities?.partialMatches.length ?? 0) * 0.5
+  const requiredMatched = report.requiredSkills?.matched.length ?? 0
+  const preferredMatched = report.preferredSkills?.matched.length ?? 0
   return {
     matchScore: report.matchScore,
-    requiredMatched: report.requiredSkills?.matched.length ?? 0,
+    requiredMatched,
     requiredTotal,
-    preferredMatched: report.preferredSkills?.matched.length ?? 0,
+    preferredMatched,
     preferredTotal,
+    supportedCount: requiredMatched + preferredMatched,
+    supportedTotal: requiredTotal + preferredTotal,
     responsibilityCoverage: responsibilityTotal ? Math.round((responsibilityPoints / responsibilityTotal) * 100) : 100,
     responsibilityStrong: report.responsibilities?.strongMatches.length ?? 0,
     responsibilityTotal,
+    missingRequired: (report.requiredSkills?.missing ?? []).map((item) => item.name),
   }
+}
+
+export function cannotReachEightyReason(report: MatchReport): string | undefined {
+  if (report.matchScore >= 80) return undefined
+  const missingRequired = (report.requiredSkills?.missing ?? []).map((item) => item.name).filter(Boolean)
+  if (!missingRequired.length) return undefined
+  return `80+ alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${missingRequired.join(', ')}.`
 }
 
 function evidenceFor(requirement: string, records: ResumeEvidenceRecord[]): ResumeEvidenceRecord | undefined {

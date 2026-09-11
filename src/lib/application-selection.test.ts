@@ -481,4 +481,64 @@ describe('resume version selection and application sync', () => {
     expect(row).not.toHaveProperty('current_match_score')
     expect(row.match_id).toBe('match-original')
   })
+
+  it('shows version-specific scores instead of copying the original 49 onto every version', () => {
+    const v1 = version({ id: 'ver-1', versionName: 'Tailored — Java Engineer', comparisonAnalysisId: 'match-v1' })
+    const v2 = version({
+      id: 'ver-2',
+      versionName: 'Tailored v2 — Java Engineer',
+      comparisonAnalysisId: 'match-v2',
+      createdAt: '2026-08-24T01:04:00.000Z',
+    })
+    const options = buildSelectableResumeOptions({
+      masterResume: resume(),
+      versions: [v1, v2],
+      matches: [
+        match({ id: 'match-original', overallScore: 49 }),
+        match({ id: 'match-v1', parentMatchId: 'match-original', resumeVersionId: 'ver-1', overallScore: 84 }),
+        match({ id: 'match-v2', parentMatchId: 'match-original', resumeVersionId: 'ver-2', overallScore: 89 }),
+      ],
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      application: application({ currentMatchScore: 49, currentMatchId: 'match-original' }),
+      originalMatch: match({ overallScore: 49 }),
+    })
+    expect(options.map((item) => item.matchScore)).toEqual([49, 84, 89])
+  })
+
+  it('shows null instead of the original score when a tailored version has not been analyzed', () => {
+    const unanalyzed = version({
+      id: 'ver-pending',
+      comparisonAnalysisId: null,
+      versionName: 'Tailored — Java Engineer',
+    })
+    const options = buildSelectableResumeOptions({
+      masterResume: resume(),
+      versions: [unanalyzed],
+      matches: [match({ overallScore: 49 })],
+      sourceResumeId: 'resume-1',
+      jobId: 'job-1',
+      application: application({
+        selectedResumeVersionId: 'ver-pending',
+        currentMatchId: 'match-original',
+        currentMatchScore: 49,
+      }),
+      originalMatch: match({ overallScore: 49 }),
+    })
+    expect(options.find((item) => item.id === 'ver-pending')?.matchScore).toBeNull()
+
+    const display = resolveApplicationResumeDisplay({
+      application: application({
+        selectedResumeVersionId: 'ver-pending',
+        currentMatchId: 'match-original',
+        currentMatchScore: 49,
+      }),
+      versions: [unanalyzed],
+      matches: [match({ overallScore: 49 })],
+      resumes: [resume()],
+    })
+    expect(display.currentMatchScore).toBeNull()
+    expect(display.originalMatchScore).toBe(49)
+    expect(display.currentResumeLabel).toBe('Tailored — Java Engineer')
+  })
 })

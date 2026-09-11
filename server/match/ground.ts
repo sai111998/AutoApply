@@ -191,7 +191,10 @@ export function allResumeSkills(profile: ResumeProfile): EvidenceItem[] {
 }
 
 export function mergeJobSkills(profile: JobProfile): { required: JobSkill[]; preferred: JobSkill[] } {
-  const preferredKeys = new Set(profile.preferredSkills.map((item) => normalizeSkill(item.name)))
+  const requiredListed = profile.requiredSkills
+  const preferredListed = profile.preferredSkills
+  const requiredKeys = new Set(requiredListed.map((item) => normalizeSkill(item.name)))
+  const preferredKeys = new Set(preferredListed.map((item) => normalizeSkill(item.name)))
   const extras = [
     ...profile.languages,
     ...profile.frameworks,
@@ -199,12 +202,23 @@ export function mergeJobSkills(profile: JobProfile): { required: JobSkill[]; pre
     ...profile.databases,
     ...profile.tools,
     ...profile.security,
-  ].filter((item) => !preferredKeys.has(normalizeSkill(item.name)))
-  const required = [...profile.requiredSkills, ...extras]
+  ]
+  const unclassifiedExtras = extras.filter((item) => {
+    const key = normalizeSkill(item.name)
+    return Boolean(key) && !requiredKeys.has(key) && !preferredKeys.has(key)
+  })
+
+  // Category arrays often include preferred tools (Kubernetes, Terraform). When the
+  // extractor already classified required vs preferred, do not promote leftovers into required.
+  const required = requiredListed.length
+    ? requiredListed
+    : extras.filter((item) => !preferredKeys.has(normalizeSkill(item.name)))
+  const preferred = requiredListed.length ? [...preferredListed, ...unclassifiedExtras] : preferredListed
+
   const requiredBlob = required.map((item) => item.name).join(' ')
-  const preferredBlob = profile.preferredSkills.map((item) => item.name).join(' ')
+  const preferredBlob = preferred.map((item) => item.name).join(' ')
   return {
     required: keepJobSkills(required, requiredBlob),
-    preferred: keepJobSkills(profile.preferredSkills, preferredBlob),
+    preferred: keepJobSkills(preferred, preferredBlob),
   }
 }

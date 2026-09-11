@@ -80,14 +80,14 @@ export function applyAlignmentToPlan(
       requiredTotal: matchAfter?.requiredTotal ?? alignment.requiredTotal,
       preferredSupported: matchAfter?.preferredMatched ?? alignment.preferredSupported,
       preferredTotal: matchAfter?.preferredTotal ?? alignment.preferredTotal,
-      overallSupported: alignment.supportedTotal,
-      overallTotal: alignment.requirementTotal,
-      representedBefore: alignment.supportedCoverageBefore,
-      representedAfter: alignment.supportedCoverageAfter,
+      overallSupported: matchAfter?.supportedCount ?? alignment.supportedTotal,
+      overallTotal: matchAfter?.supportedTotal ?? alignment.requirementTotal,
+      representedBefore: matchBefore?.supportedCount ?? alignment.supportedCoverageBefore,
+      representedAfter: matchAfter?.supportedCount ?? alignment.supportedCoverageAfter,
     },
     atsAlignmentScore: alignment.atsAlignmentScore,
-    supportedCoverageBefore: alignment.supportedCoverageBefore,
-    supportedCoverageAfter: alignment.supportedCoverageAfter,
+    supportedCoverageBefore: matchBefore?.supportedCount ?? alignment.supportedCoverageBefore,
+    supportedCoverageAfter: matchAfter?.supportedCount ?? alignment.supportedCoverageAfter,
     requiredCoverage: alignment.requiredCoverage,
     preferredCoverage: alignment.preferredCoverage,
     responsibilityCoverage: matchAfter?.responsibilityCoverage ?? alignment.responsibilityCoverage,
@@ -98,8 +98,8 @@ export function applyAlignmentToPlan(
     preferredSupportedCount: matchAfter?.preferredMatched ?? alignment.preferredSupported,
     requiredTotal: matchAfter?.requiredTotal ?? alignment.requiredTotal,
     preferredTotal: matchAfter?.preferredTotal ?? alignment.preferredTotal,
-    supportedTotal: alignment.supportedTotal,
-    requirementTotal: alignment.requirementTotal,
+    supportedTotal: matchAfter?.supportedTotal ?? alignment.supportedTotal,
+    requirementTotal: matchAfter?.supportedTotal ?? alignment.requirementTotal,
     originalMatchScore,
     tailoredMatchScore,
     matchScoreDelta: delta,
@@ -110,10 +110,20 @@ export function applyAlignmentToPlan(
     preferredMatchedAfter: matchAfter?.preferredMatched,
     responsibilityCoverageBefore: matchBefore?.responsibilityCoverage,
     responsibilityCoverageAfter: matchAfter?.responsibilityCoverage,
-    alignmentSummary:
+    cannotReachEightyReason:
+      matchAfter && matchAfter.matchScore < 80 && matchAfter.missingRequired.length
+        ? `80+ alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${matchAfter.missingRequired.join(', ')}.`
+        : undefined,
+    alignmentSummary: [
       originalMatchScore != null && tailoredMatchScore != null
-        ? `Match Engine ${originalMatchScore}/100 → ${tailoredMatchScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`
-        : `JobPilot AI Alignment Score ${alignment.atsAlignmentScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`,
+        ? `Match Engine ${originalMatchScore}/100 → ${tailoredMatchScore}/100. Supported JD requirements: ${matchAfter?.supportedCount ?? alignment.supportedCoverageAfter}/${matchAfter?.supportedTotal ?? alignment.requirementTotal}.`
+        : `JobPilot Alignment Score ${alignment.atsAlignmentScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`,
+      matchAfter && matchAfter.matchScore < 80 && matchAfter.missingRequired.length
+        ? `80+ alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${matchAfter.missingRequired.join(', ')}.`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
   }
 }
 

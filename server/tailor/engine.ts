@@ -11,6 +11,7 @@ import { buildCoverageMatrix, extractRequirementEvidence, formatCoverageMatrix }
 import { extractJdIntelligence } from './jd-intel'
 import {
   classifyMatchGaps,
+  cannotReachEightyReason,
   coverageFromMatch,
   formatOptimizationReport,
   lostSupportedNames,
@@ -135,10 +136,10 @@ function withAlignment(
     tailored: scoredResume,
     yearsSupported: yearsSupported(prepared),
   })
+  const matchAfterReport = scoreTailoredResume(scoredResume, prepared.jobProfile, prepared.profile)
   const matchBefore = coverageFromMatch(prepared.report)
-  const matchAfter = coverageFromMatch(
-    scoreTailoredResume(scoredResume, prepared.jobProfile, prepared.profile),
-  )
+  const matchAfter = coverageFromMatch(matchAfterReport)
+  const ceiling = cannotReachEightyReason(matchAfterReport)
   const plan = applyAlignmentToPlan(
     { ...prepared.plan, unsupportedRequirements: prepared.plan.missingSkills },
     alignment,
@@ -158,8 +159,8 @@ function withAlignment(
       issues: validation.ok ? [] : validation.errors,
     },
     atsAlignmentScore: alignment.atsAlignmentScore,
-    supportedCoverageBefore: alignment.supportedCoverageBefore,
-    supportedCoverageAfter: alignment.supportedCoverageAfter,
+    supportedCoverageBefore: matchBefore.supportedCount,
+    supportedCoverageAfter: matchAfter.supportedCount,
     requiredCoverage: alignment.requiredCoverage,
     preferredCoverage: alignment.preferredCoverage,
     responsibilityCoverage: matchAfter.responsibilityCoverage,
@@ -179,6 +180,7 @@ function withAlignment(
     preferredMatchedAfter: matchAfter.preferredMatched,
     responsibilityCoverageBefore: matchBefore.responsibilityCoverage,
     responsibilityCoverageAfter: matchAfter.responsibilityCoverage,
+    cannotReachEightyReason: ceiling,
   }
 }
 
@@ -309,10 +311,11 @@ export async function tailorResume(
         continue
       }
       best = best ? (preferredCandidate(prepared.report, best, candidate).resume === candidate.resume ? candidate : best) : candidate
-      if (
-        candidate.match.matchScore > prepared.report.matchScore &&
-        lostSupportedNames(prepared.report, candidate.match).length === 0
-      ) {
+      const lost = lostSupportedNames(prepared.report, candidate.match)
+      const moreLegitimateWork =
+        gaps.some((gap) => gap.action === 'optimize' && (gap.kind === 'hidden' || gap.kind === 'partial')) &&
+        candidate.match.matchScore < 80
+      if (lost.length === 0 && (candidate.match.matchScore >= 80 || !moreLegitimateWork || attempt === MAX_OPTIMIZATION_ATTEMPTS - 1)) {
         break
       }
     } catch (error) {

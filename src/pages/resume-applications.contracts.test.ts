@@ -133,7 +133,9 @@ describe('application bulk delete contracts', () => {
   it('keeps a compact applications table and a usable mobile list', () => {
     expect(applicationsPage).toMatch(/>Job</)
     expect(applicationsPage).toMatch(/>Company</)
-    expect(applicationsPage).toMatch(/>Match</)
+    expect(applicationsPage).toMatch(/>Current Match</)
+    expect(applicationsPage).toMatch(/>Original Match</)
+    expect(applicationsPage).toMatch(/>Selected Resume</)
     expect(applicationsPage).toMatch(/>Status</)
     expect(applicationsPage).toMatch(/data-testid="applications-mobile-list"/)
     expect(applicationsPage).toMatch(/hidden md:block/)

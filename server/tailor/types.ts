@@ -101,6 +101,7 @@ export interface TailoringPlan {
   preferredMatchedAfter?: number
   responsibilityCoverageBefore?: number
   responsibilityCoverageAfter?: number
+  cannotReachEightyReason?: string
 }
 
 export interface SourceRole {
@@ -186,4 +187,5 @@ export interface TailorResponseBody {
   preferredMatchedAfter?: number
   responsibilityCoverageBefore?: number
   responsibilityCoverageAfter?: number
+  cannotReachEightyReason?: string
 }

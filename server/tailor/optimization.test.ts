@@ -123,6 +123,33 @@ describe('ATS resume optimization', () => {
     expect(before.requiredSkills.missing.some((item) => /kubernetes/i.test(item.name))).toBe(true)
   })
 
+  it('explains when 80+ cannot be reached because required qualifications are missing', () => {
+    const jd = `Platform Engineer
+
+Required:
+- Kubernetes
+- Helm
+- Istio
+- Terraform
+`
+    const resumeProfile = extractResumeLocal(DOCKER_ONLY_RESUME)
+    const jobProfile = extractJobLocal(jd)
+    const before = scoreMatch(resumeProfile, jobProfile, DOCKER_ONLY_RESUME)
+    const result = conservativeTailor({
+      resumeText: DOCKER_ONLY_RESUME,
+      jobDescription: jd,
+      resumeProfile,
+      jobProfile,
+      matchReport: before,
+    })
+    expect(result.tailored?.skills.join(' ')).not.toMatch(/Kubernetes|Helm|Istio|Terraform/)
+    expect(result.tailoredMatchScore ?? 100).toBeLessThan(80)
+    expect(result.cannotReachEightyReason ?? result.plan.cannotReachEightyReason ?? '').toMatch(
+      /80\+ alignment could not be achieved/,
+    )
+    expect(result.cannotReachEightyReason ?? result.plan.cannotReachEightyReason ?? '').toMatch(/Kubernetes/)
+  })
+
   it('keeps the Java sample Match Engine score from dropping and reports coverage', () => {
     const resumeProfile = extractResumeLocal(JAVA_RESUME_TEXT)
     const jobProfile = extractJobLocal(JAVA_BACKEND_JD)

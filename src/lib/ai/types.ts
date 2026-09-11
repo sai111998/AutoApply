@@ -19,6 +19,8 @@ export interface AnalyzeJobApiRequest {
   resumeProfile?: unknown
   jobProfile?: unknown
   persistResults?: boolean
+  parentMatchId?: string
+  resumeVersionId?: string
 }
 
 export interface SkillAssessment {

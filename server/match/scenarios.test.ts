@@ -100,3 +100,108 @@ describe('real-world style scenarios (Alex Rivera sample resume)', () => {
     expect(report.matchScore).toBeLessThan(50)
   })
 })
+
+const javaResumeText = `Software Engineer with 5+ years software engineering.
+Skills: Java, Spring Boot, REST APIs, AWS, PostgreSQL, Docker, Jenkins, JUnit, Mockito
+Backend Engineer, Acme — 2018 to present
+- Built Java and Spring Boot services exposing REST APIs.
+- Deployed AWS applications and PostgreSQL databases.
+- Used Docker, Jenkins, JUnit, and Mockito.
+Education: B.S., Computer Science`
+
+const javaResume: ResumeProfile = {
+  ...emptyResumeProfile(),
+  skills: [
+    { name: 'Java', evidence: 'Built Java and Spring Boot services', years: 5 },
+    { name: 'Spring Boot', evidence: 'Built Java and Spring Boot services' },
+    { name: 'REST APIs', evidence: 'exposing REST APIs' },
+    { name: 'AWS', evidence: 'Deployed AWS applications' },
+    { name: 'PostgreSQL', evidence: 'PostgreSQL databases' },
+    { name: 'Docker', evidence: 'Used Docker' },
+    { name: 'Jenkins', evidence: 'Jenkins' },
+    { name: 'JUnit', evidence: 'JUnit' },
+    { name: 'Mockito', evidence: 'Mockito' },
+  ],
+  yearsOfExperience: 5,
+  education: [{ degree: 'B.S.', field: 'Computer Science', evidence: 'B.S., Computer Science' }],
+  responsibilities: [
+    { name: 'Built REST APIs', evidence: 'Built Java and Spring Boot services exposing REST APIs.' },
+    { name: 'Deployed AWS', evidence: 'Deployed AWS applications and PostgreSQL databases.' },
+  ],
+  location: 'Remote',
+  workArrangement: 'remote',
+}
+
+describe('Java stack scoring model (strong / partial / bad)', () => {
+  const strongJob = {
+    ...emptyJobProfile(),
+    requiredSkills: [
+      { name: 'Java' },
+      { name: 'Spring Boot' },
+      { name: 'REST APIs' },
+      { name: 'AWS' },
+      { name: 'PostgreSQL' },
+      { name: 'Docker' },
+      { name: 'Jenkins' },
+      { name: 'JUnit' },
+      { name: 'Mockito' },
+    ],
+    yearsOfExperience: 5,
+    education: { required: true, degree: 'Bachelor', field: 'Computer Science', details: 'B.S. Computer Science' },
+    workArrangement: 'remote',
+    location: 'Remote',
+    responsibilities: [
+      { text: 'Build Java Spring Boot REST APIs', required: true },
+      { text: 'Deploy AWS and PostgreSQL', required: true },
+    ],
+  }
+
+  it('Test A — strong match scores 80+ and is not capped at 49', () => {
+    const report = scoreMatch(javaResume, strongJob, javaResumeText)
+    expect(report.requiredSkills.missing).toHaveLength(0)
+    expect(report.matchScore).toBeGreaterThanOrEqual(80)
+    expect(report.matchScore).not.toBe(49)
+  })
+
+  it('Test B — partial match stays below 80 and names the gaps', () => {
+    const job = {
+      ...strongJob,
+      requiredSkills: [
+        { name: 'Java' },
+        { name: 'Spring Boot' },
+        { name: 'REST APIs' },
+        { name: 'AWS' },
+        { name: 'PostgreSQL' },
+        { name: 'Kubernetes' },
+        { name: 'Terraform' },
+        { name: 'Go' },
+        { name: 'Kafka' },
+      ],
+      preferredSkills: [{ name: 'GraphQL' }, { name: 'Rust' }],
+      location: 'On-site Boston',
+      workArrangement: 'onsite',
+      education: { required: true, degree: 'Master', field: 'Electrical Engineering', details: 'M.S. EE required' },
+    }
+    const report = scoreMatch(javaResume, job, javaResumeText)
+    expect(report.requiredSkills.missing.length).toBeGreaterThanOrEqual(3)
+    expect(report.requiredSkills.missing.map((item) => item.name)).toEqual(
+      expect.arrayContaining(['Kubernetes', 'Terraform', 'Go', 'Kafka']),
+    )
+    expect(report.matchScore).toBeLessThan(80)
+  })
+
+  it('Test C — unrelated resume stays low and is not forced above 80', () => {
+    const resume: ResumeProfile = {
+      ...emptyResumeProfile(),
+      skills: [
+        { name: 'Python', evidence: 'Python scripts' },
+        { name: 'Django', evidence: 'Django apps' },
+        { name: 'Excel', evidence: 'Excel reporting' },
+      ],
+      yearsOfExperience: 2,
+    }
+    const report = scoreMatch(resume, strongJob, 'Marketing analyst. Python scripts. Django apps. Excel reporting.')
+    expect(report.matchScore).toBeLessThan(50)
+    expect(report.recommendation).toBe('SKIP')
+  })
+})

@@ -312,25 +312,41 @@ export function resolveApplicationResumeDisplay(input: {
     input.application.currentMatchId && input.application.currentMatchId !== input.application.matchId
       ? input.matches.find((item) => item.id === input.application.currentMatchId) ?? null
       : null
-  const currentMatch = selectedVersion ? versionMatch ?? storedCurrent : original ?? storedCurrent
+  const storedBelongsToVersion =
+    Boolean(selectedVersion) &&
+    storedCurrent &&
+    (storedCurrent.resumeVersionId === selectedVersion?.id ||
+      storedCurrent.id === selectedVersion?.comparisonAnalysisId)
+  const currentMatch = selectedVersion
+    ? versionMatch ?? (storedBelongsToVersion ? storedCurrent : null)
+    : original ?? storedCurrent
 
   const usingMaster = !selectedVersion
   const currentResumeLabel = selectedVersion
     ? compactVersionName(selectedVersion.versionName)
     : 'Master'
 
+  const versionScore = selectedVersion
+    ? (versionMatch?.overallScore ??
+      (storedBelongsToVersion ? storedCurrent?.overallScore ?? null : null) ??
+      (input.application.currentMatchId &&
+      input.application.currentMatchId !== input.application.matchId &&
+      (input.application.currentMatchId === selectedVersion.comparisonAnalysisId ||
+        storedCurrent?.resumeVersionId === selectedVersion.id)
+        ? input.application.currentMatchScore
+        : null))
+    : (original?.overallScore ?? input.application.currentMatchScore ?? null)
+
   return {
     currentResumeLabel,
-    currentMatchScore: selectedVersion
-      ? (versionMatch?.overallScore ?? currentMatch?.overallScore ?? input.application.currentMatchScore ?? original?.overallScore ?? null)
-      : (original?.overallScore ?? input.application.currentMatchScore ?? null),
+    currentMatchScore: versionScore,
     previousMatchScore: original?.overallScore ?? null,
     originalMatchScore: original?.overallScore ?? null,
     selectedVersionId: selectedVersion?.id ?? null,
     currentMatchId:
       currentMatch?.id ??
       versionMatch?.id ??
-      (selectedVersion ? input.application.currentMatchId : original?.id ?? input.application.matchId),
+      (selectedVersion ? (storedBelongsToVersion ? input.application.currentMatchId : null) : original?.id ?? input.application.matchId),
     usingMaster,
   }
 }

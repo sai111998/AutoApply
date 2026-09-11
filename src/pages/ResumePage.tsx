@@ -261,7 +261,7 @@ export function ResumePage() {
                       {job ? `${job.title} • ${job.company}` : 'Saved copy'}
                     </p>
                   </div>
-                  <ScoreBadge score={comparison?.overallScore ?? null} />
+                  <ScoreBadge score={comparison?.overallScore ?? null} emptyLabel="Not analyzed" />
                 </div>
                 <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
                   {versionTypeLabel(version)}

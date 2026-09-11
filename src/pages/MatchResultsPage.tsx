@@ -203,10 +203,11 @@ export function MatchResultsPage() {
         <div className="grid gap-6 md:grid-cols-[auto_1fr] md:items-center">
           <ScoreRing score={match.overallScore} />
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Match score</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">JobPilot Alignment Score</p>
             <p className="font-display text-4xl text-charcoal">
               {match.overallScore ?? '—'} <span className="text-2xl text-muted">/ 100</span>
             </p>
+            <p className="mt-1 text-xs text-muted">Match Score · ATS Alignment Estimate</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-sm text-muted">Recommendation</span>
               <RecommendationBadge value={match.recommendation} />

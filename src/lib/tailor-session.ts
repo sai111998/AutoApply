@@ -206,6 +206,9 @@ function mergePlan(result: Record<string, unknown>): TailoringPlan {
     plan.unsupportedRequirements = result.unsupportedRequirements.filter((item): item is string => typeof item === 'string')
   }
   if (!plan.alignmentSummary && typeof result.summary === 'string') plan.alignmentSummary = result.summary
+  if (!plan.cannotReachEightyReason && typeof result.cannotReachEightyReason === 'string') {
+    plan.cannotReachEightyReason = result.cannotReachEightyReason
+  }
   return plan
 }
 

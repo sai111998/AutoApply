@@ -163,9 +163,10 @@ export function ApplicationsPage() {
                   </th>
                   <th>Job</th>
                   <th>Company</th>
-                  <th>Match</th>
+                  <th>Current Match</th>
+                  <th>Original Match</th>
                   <th>Status</th>
-                  <th>Resume</th>
+                  <th>Selected Resume</th>
                   <th>
                     <span className="sr-only">Actions</span>
                   </th>
@@ -201,7 +202,10 @@ export function ApplicationsPage() {
                     </td>
                     <td className="font-semibold">{job?.company}</td>
                     <td>
-                      <ScoreBadge score={display.currentMatchScore} />
+                      <ScoreBadge score={display.currentMatchScore} emptyLabel="Not analyzed" />
+                    </td>
+                    <td>
+                      <ScoreBadge score={display.originalMatchScore} emptyLabel="Not analyzed" />
                     </td>
                     <td>
                       <Select
@@ -232,7 +236,7 @@ export function ApplicationsPage() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-ink">
+                    <td colSpan={8} className="py-12 text-center text-slate-ink">
                       No applications match these filters.
                     </td>
                   </tr>
@@ -275,10 +279,11 @@ export function ApplicationsPage() {
                   )}
                   <p className="mt-0.5 text-sm text-muted">{job?.company}</p>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <ScoreBadge score={display.currentMatchScore} />
+                    <ScoreBadge score={display.currentMatchScore} emptyLabel="Not analyzed" />
                     <StatusBadge status={application.status} />
                     <span className="text-xs text-muted">{display.currentResumeLabel}</span>
                   </div>
+                  <p className="mt-1 text-xs text-muted">Original match {display.originalMatchScore != null ? `${display.originalMatchScore}%` : 'Not analyzed'}</p>
                 </div>
                 <IconButton label="Delete" variant="danger" onClick={() => setPendingIds([application.id])}>
                   <Trash2 size={16} />
