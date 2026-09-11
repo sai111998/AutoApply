@@ -19,6 +19,21 @@ npm test
 
 Open http://localhost:5173/ to view the public landing page. Click **Get Started** or **Sign In**, then **Explore with sample data**. After sign-in, the workspace lives at `/dashboard`. Job Analysis is under **Job Analysis**. Demo mode pre-fills Alex Rivera’s sample resume text.
 
+Leave `VITE_API_BASE_URL` unset. The browser always requests same-origin `/api/*`; Vite proxies those calls to the local Express server.
+
+## Production (Vercel)
+
+Vercel hosts the Vite static build. The existing Express app is mounted by `api/[...path].ts` so production can serve the same routes as local development, including `GET /api/health` and `POST /api/jobs/analyze`.
+
+Set these in the Vercel project (server values are not `VITE_` prefixed):
+
+- `LLM_API_KEY` (required for live analysis)
+- `LLM_API_BASE_URL` / `LLM_MODEL` as needed
+- `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` for persistence
+- `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for the frontend
+
+Do **not** set `VITE_API_BASE_URL` to `http://127.0.0.1:8787` or another local address. That would make the production frontend call a backend that only exists on a developer machine.
+
 ## LLM API key (required for live analysis)
 
 The model key **must stay on the server**. Do not put it in any `VITE_` variable or frontend file.

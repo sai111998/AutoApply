@@ -147,6 +147,8 @@ export function createApp(options: AppOptions): Express {
   })
 
   app.post('/api/jobs/analyze', async (req: Request, res: Response) => {
+    const started = Date.now()
+    console.info('[analyze] request', { method: 'POST', path: '/api/jobs/analyze' })
     try {
       const request = parseAnalyzeRequest(req.body)
       const { result, persist: persistResult } = await analyzeJobDescription(
@@ -155,12 +157,19 @@ export function createApp(options: AppOptions): Express {
         request,
         persist,
       )
+      console.info('[analyze] response', { status: 200, durationMs: Date.now() - started })
       res.json(toResponseBody(result, persistResult))
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500
       const message = error instanceof Error ? error.message : 'Unexpected error'
+      console.info('[analyze] response', { status, durationMs: Date.now() - started })
       res.status(status).json({ error: message })
     }
+  })
+
+  app.use((req: Request, res: Response) => {
+    console.info('[api] unmatched', { method: req.method, path: req.path, status: 404 })
+    res.status(404).json({ error: `No API route for ${req.method} ${req.path}` })
   })
 
   return app

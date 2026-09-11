@@ -344,3 +344,12 @@ describe('GET /api/health', () => {
     expect(JSON.stringify(response.body)).not.toContain('test-key')
   })
 })
+
+describe('unmatched API routes', () => {
+  it('returns JSON 404 instead of an empty HTML response', async () => {
+    const app = createApp({ config })
+    const response = await request(app).post('/api/analyze').send({})
+    expect(response.status).toBe(404)
+    expect(response.body.error).toMatch(/POST \/api\/analyze/)
+  })
+})
