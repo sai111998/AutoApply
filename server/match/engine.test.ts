@@ -101,7 +101,6 @@ describe('match engine scoring', () => {
     }
     const report = scoreMatch(strongResume, job, 'Developed Java and Spring Boot applications. Worked with Docker.')
     expect(report.requiredSkills.missing.some((item) => item.name === 'Kubernetes')).toBe(true)
-    expect(report.matchScore).toBeLessThanOrEqual(74)
     expect(report.recommendation).not.toBe('APPLY')
   })
 
@@ -343,11 +342,23 @@ describe('match engine scoring', () => {
     expect(report.recommendation).not.toBe('APPLY')
   })
 
-  it('caps only when a majority of required skills are missing', () => {
+  it('does not flatten a weighted score to 49 when required skills are only partly missing', () => {
     expect(capScoreForRequiredGaps(91, 2, 10)).toBe(91)
-    expect(capScoreForRequiredGaps(91, 2, 4)).toBe(49)
-    expect(capScoreForRequiredGaps(91, 1, 2)).toBe(74)
-    expect(capScoreForRequiredGaps(91, 1, 10)).toBe(91)
-    expect(capScoreForRequiredGaps(91, 0, 8)).toBe(91)
+    expect(capScoreForRequiredGaps(91, 2, 4)).toBe(91)
+    expect(capScoreForRequiredGaps(91, 1, 2)).toBe(91)
+    const job: JobProfile = {
+      ...strongJob,
+      requiredSkills: [{ name: 'Java' }, { name: 'Spring Boot' }, { name: 'Kubernetes' }, { name: 'Terraform' }],
+      preferredSkills: [],
+    }
+    const report = scoreMatch(
+      strongResume,
+      job,
+      'Developed Java and Spring Boot applications for payments APIs. 4 years Java. B.S., Computer Science.',
+    )
+    expect(report.requiredSkills.missing.map((item) => item.name).sort()).toEqual(['Kubernetes', 'Terraform'])
+    expect(report.matchScore).toBeGreaterThan(49)
+    expect(report.matchScore).not.toBe(49)
+    expect(report.recommendation).not.toBe('APPLY')
   })
 })

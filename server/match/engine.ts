@@ -302,13 +302,7 @@ function statusScore(status: FitStatus): number {
   }
 }
 
-export function capScoreForRequiredGaps(score: number, missingCount: number, requiredCount: number): number {
-  if (requiredCount <= 0 || missingCount <= 0) return score
-  const missingRatio = missingCount / requiredCount
-  // Majority of a required list is missing → keep the score in the weak-match band.
-  if (missingCount >= 2 && missingRatio >= 0.5) return Math.min(score, 49)
-  // Half of a short required list is missing → keep below the APPLY range.
-  if (missingRatio >= 0.5) return Math.min(score, 74)
+export function capScoreForRequiredGaps(score: number, _missingCount: number, _requiredCount: number): number {
   return score
 }
 
@@ -376,7 +370,6 @@ export function scoreMatch(resume: ResumeProfile, job: JobProfile, resumeText: s
     }, 0),
   )
 
-  matchScore = capScoreForRequiredGaps(matchScore, requiredSkills.missing.length, requiredAssessed.length)
   matchScore = Math.max(0, Math.min(100, matchScore))
 
   const missingEvidence: string[] = []
