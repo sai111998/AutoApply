@@ -1,7 +1,7 @@
 import { candidateImplements, sameSkill, textContainsTerm } from '../match/normalize'
 import type { ResumeProfile } from '../match/types'
 import type { SourceFacts, TailorChange, TailoredProject, TailoredResume, TailoringPlan } from './types'
-import { supportedInSource } from './source'
+import { extractSummary, supportedInSource } from './source'
 import { formatSkillGroups, groupSkills, orderSkills } from './skills-format'
 import type { ResumeEvidenceRecord } from './evidence'
 
@@ -28,10 +28,7 @@ export function buildOriginalResume(
     ? skillsLine.split(/[,;\n]/).map((part) => part.replace(/^[-•*]\s*/, '').trim()).filter(Boolean)
     : source.skills
   return {
-    summary:
-      source.text.split(/\n\n+/).find((block) => /summary/i.test(block.split('\n')[0] ?? ''))?.replace(/^summary\s*/i, '').trim() ||
-      source.text.split('\n').map((line) => line.trim()).find((line) => line.length > 40) ||
-      '',
+    summary: extractSummary(source.text),
     skills: listed.length ? listed : source.skills,
     experience: source.roles.map((role) => ({ ...role, bullets: [...role.bullets] })),
     projects: source.projects.map((name) => ({ name, bullets: [] })),
@@ -45,11 +42,7 @@ export function buildOriginalResume(
 }
 
 function originalSummary(source: SourceFacts): string {
-  return (
-    source.text.split(/\n\n+/).find((block) => /summary/i.test(block.split('\n')[0] ?? ''))?.replace(/^summary\s*/i, '').trim() ||
-    source.text.split('\n').map((line) => line.trim()).find((line) => line.length > 40) ||
-    ''
-  )
+  return extractSummary(source.text)
 }
 
 function yearsFromResume(source: SourceFacts, profile: ResumeProfile | null): number | null {

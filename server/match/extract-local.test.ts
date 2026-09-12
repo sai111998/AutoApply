@@ -37,6 +37,25 @@ describe('local JD and resume extraction', () => {
     expect(evidence.some((item) => item.technology === 'Spring Boot' && /Northwind/.test(item.source))).toBe(true)
   })
 
+  it('extracts stacked PDF roles as titles and employers', () => {
+    const resume = extractResumeLocal(`Varaha Sai Gopal Mukka
+saigopal1558@gmail.com
+Experienced in backend development, API integration, database interactions, CI/CD pipelines, testing frameworks, and production support.
+
+EXPERIENCE
+Amazon Web Services
+System Development Engineer
+Apr 2021 – Present
+- Developed AWS automation for payment platforms.
+
+EDUCATION
+Master's in Computer Science – Governor's State University
+`)
+    expect(resume.jobTitles).toContain('System Development Engineer')
+    expect(resume.employers).toContain('Amazon Web Services')
+    expect(resume.location).toBe('')
+  })
+
   it('does not infer Kubernetes from Docker in the lexicon scanner', () => {
     const terms = findLexiconTerms('Worked with Docker in CI. Built REST APIs in Java.')
     const names = terms.map((item) => item.name)

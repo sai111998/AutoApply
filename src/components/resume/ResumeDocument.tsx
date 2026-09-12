@@ -37,19 +37,23 @@ export function ResumeDocument({
         />
         <div className={changed.has('experience') ? 'rounded-2xl bg-olive-soft/60 px-3 py-2' : ''}>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Experience</p>
-          {resume.experience.map((role) => (
-            <div key={`${role.company}-${role.dates}-${role.title}`} className="mt-3">
-              <p className="font-semibold text-charcoal">
-                {role.title} · {role.company}
-              </p>
-              <p className="text-xs text-muted">{role.dates}</p>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
-                {role.bullets.filter((bullet) => bullet.trim()).map((bullet) => (
-                  <li key={bullet}>{bullet}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
+          {resume.experience.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">No experience section was detected in this resume.</p>
+          ) : (
+            resume.experience.map((role) => (
+              <div key={`${role.company}-${role.dates}-${role.title}`} className="mt-3">
+                <p className="font-semibold text-charcoal">
+                  {[role.title, role.company].filter(Boolean).join(' · ') || 'Experience'}
+                </p>
+                {role.dates ? <p className="text-xs text-muted">{role.dates}</p> : null}
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+                  {role.bullets.filter((bullet) => bullet.trim()).map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
         </div>
         <Section
           title="Education"

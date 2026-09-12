@@ -25,7 +25,7 @@ import { applyAlignmentToPlan, buildTailoringPlan } from './plan'
 import { TAILOR_SYSTEM_PROMPT, tailorUserPrompt } from './prompts'
 import { assessTailoredResume } from './quality'
 import { groupSkills } from './skills-format'
-import { collectSourceFacts, extractContact } from './source'
+import { collectSourceFacts, extractContact, withSourceExperience } from './source'
 import type { TailorRequestBody, TailorResponseBody, TailoredResume, TailoringPlan } from './types'
 import { VALIDATION_USER_MESSAGE } from './validate'
 
@@ -244,13 +244,16 @@ function evaluateCandidate(
   original: TailoredResume,
   resume: TailoredResume,
 ) {
-  const restored = restoreLostEvidence(
-    resume,
-    prepared.source,
-    lostSupportedNames(
-      prepared.report,
-      scoreTailoredResume(resume, prepared.jobProfile, prepared.profile),
+  const restored = withSourceExperience(
+    restoreLostEvidence(
+      resume,
+      prepared.source,
+      lostSupportedNames(
+        prepared.report,
+        scoreTailoredResume(resume, prepared.jobProfile, prepared.profile),
+      ),
     ),
+    prepared.source,
   )
   const finalized = finalizeResume(restored, prepared.plan)
   const validation = assessTailoredResume(finalized, prepared.source, prepared.plan)

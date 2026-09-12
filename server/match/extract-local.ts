@@ -1,3 +1,4 @@
+import { extractContact, isSectionHeading, parseSourceRoles } from '../tailor/source'
 import { emptyJobProfile, emptyResumeProfile } from './ground'
 import {
   ACTION_VERBS,
@@ -109,17 +110,31 @@ function actionFromLine(line: string): string {
 export function extractResumeEvidence(resumeText: string): ResumeEvidenceItem[] {
   const items: ResumeEvidenceItem[] = []
   const lines = resumeText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const parsedRoles = parseSourceRoles(resumeText)
   let section = 'summary'
   let context = ''
 
   for (const line of lines) {
-    if (/^(summary|skills|experience|education|certifications|projects)\b/i.test(line) && line.length < 40) {
-      section = line.split(/\s+/)[0].toLowerCase()
+    if (isSectionHeading(line)) {
+      section = /experience|employment|work history/i.test(line)
+        ? 'experience'
+        : line.split(/\s+/)[0].toLowerCase()
       continue
     }
     const header = line.match(/^(.+?)(?:,\s+|\s+[—–-]\s+|\s+at\s+)(.+?)(?:\s+[—–-]\s+|\s+\(|,\s+)(.+?)\s*\)?$/i)
     if (header && /(?:19|20)\d{2}|present|current/i.test(line)) {
       context = header[2].trim()
+      section = 'experience'
+      continue
+    }
+    const stacked = parsedRoles.find(
+      (role) =>
+        (role.title && role.title === line) ||
+        (role.company && role.company === line) ||
+        (role.dates && role.dates === line),
+    )
+    if (stacked) {
+      context = stacked.company || stacked.title
       section = 'experience'
       continue
     }
@@ -185,17 +200,9 @@ export function extractResumeLocal(resumeText: string): ResumeProfile {
   profile.devops = uniqueEvidence(profile.devops)
   profile.security = uniqueEvidence(profile.security)
 
-  const roles: string[] = []
-  const employers: string[] = []
-  for (const line of resumeText.split(/\r?\n/)) {
-    const header = line.match(/^(.+?)(?:,\s+|\s+[—–-]\s+|\s+at\s+)(.+?)(?:\s+[—–-]\s+|\s+\(|,\s+)(.+?)\s*\)?$/i)
-    if (header && /(?:19|20)\d{2}|present|current/i.test(line)) {
-      roles.push(header[1].trim())
-      employers.push(header[2].trim())
-    }
-  }
-  profile.jobTitles = [...new Set(roles)]
-  profile.employers = [...new Set(employers)]
+  const parsedRoles = parseSourceRoles(resumeText)
+  profile.jobTitles = [...new Set(parsedRoles.map((role) => role.title).filter(Boolean))]
+  profile.employers = [...new Set(parsedRoles.map((role) => role.company).filter(Boolean))]
   profile.yearsOfExperience = yearsFromText(resumeText)
 
   profile.responsibilities = uniqueEvidence(
@@ -241,8 +248,7 @@ export function extractResumeLocal(resumeText: string): ResumeProfile {
     )
   }
 
-  const locationLine = resumeText.split(/\n/).find((line) => /,\s*[A-Z]{2}\b|remote/i.test(line) && !line.includes('@'))
-  profile.location = locationLine?.trim() ?? ''
+  profile.location = extractContact(resumeText).location
   return profile
 }
 

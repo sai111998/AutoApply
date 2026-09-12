@@ -255,6 +255,53 @@ describe('resume tailoring', () => {
     expect(conservative.tailored?.experience.map((item) => item.company)).toEqual(['Northwind', 'Harbor Software'])
   })
 
+  it('shows stacked PDF experience on the original and tailored drafts', () => {
+    const stacked = `Varaha Sai Gopal Mukka
+saigopal1558@gmail.com
+Experienced in backend development, API integration, database interactions, CI/CD pipelines, testing frameworks, and production support.
+
+PROFESSIONAL SUMMARY
+
+EXPERIENCE
+Amazon Web Services
+System Development Engineer
+Apr 2021 – Present
+- Developed AWS automation for payment platforms.
+
+EDUCATION
+Master's in Computer Science – Governor's State University
+`
+    const result = conservativeTailor({
+      resumeText: stacked,
+      jobDescription: 'System Development Engineer. AWS, Java, CI/CD.',
+    })
+    expect(result.original.experience).toHaveLength(1)
+    expect(result.original.experience[0]).toMatchObject({
+      title: 'System Development Engineer',
+      company: 'Amazon Web Services',
+      dates: 'Apr 2021 – Present',
+    })
+    expect(result.original.contact.location).toBe('')
+    expect(result.original.summary).toMatch(/Experienced in backend development/)
+    expect(result.tailored?.experience).toHaveLength(1)
+    expect(result.tailored?.experience[0].title).toBe('System Development Engineer')
+  })
+
+  it('restores source experience when the model omits every role', async () => {
+    const tailored = validTailored()
+    tailored.experience = []
+    const result = await tailorResume(llmReturning(tailored), {
+      resumeText: JAVA_RESUME_TEXT,
+      jobDescription: 'Senior Java Software Engineer. Java, Spring Boot, PostgreSQL.',
+      resumeProfile: javaResume,
+      matchReport: scoreMatch(javaResume, strongJob, JAVA_RESUME_TEXT),
+    })
+    expect(result.tailored?.experience.length).toBeGreaterThan(0)
+    expect(result.tailored?.experience.map((item) => item.company)).toEqual(
+      expect.arrayContaining(['Northwind', 'Harbor Software']),
+    )
+  })
+
   it('keeps certifications that already exist', () => {
     const conservative = conservativeTailor({
       resumeText: JAVA_RESUME_TEXT,
