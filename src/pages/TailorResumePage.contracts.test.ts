@@ -47,6 +47,7 @@ describe('resume tailoring page contracts', () => {
     expect(tailorPage).toMatch(/Resume versions/)
     expect(tailorPage).not.toMatch(/Changes made/)
     expect(tailorPage).toMatch(/plan\.originalMatchScore \?\? match\.overallScore/)
+    expect(tailorPage).toMatch(/originalMatchForJob/)
     expect(tailorPage).toMatch(/scoreChange\(engineOriginal/)
     expect(tailorPage).toMatch(/scoreImprovementExplanation/)
   })

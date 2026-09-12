@@ -15,6 +15,7 @@ import { downloadResumePdfRequest } from '@/lib/ai/client'
 import {
   MASTER_RESUME_OPTION_ID,
   buildSelectableResumeOptions,
+  originalMatchForJob,
   createEditedResumeVersion,
   formatScoreDelta,
   nextTailoredVersionName,
@@ -135,7 +136,7 @@ export function TailorResumePage() {
             sourceResumeId: resume.id,
             jobId: job.id,
             application,
-            originalMatch: match ?? null,
+            originalMatch: originalMatchForJob(matches, job.id, application) ?? match ?? null,
             jobTitle: job.title,
           })
         : [],

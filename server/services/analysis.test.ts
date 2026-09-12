@@ -65,6 +65,18 @@ describe('parseAnalyzeRequest', () => {
     expect(parsed.resumeProfile).toEqual({ skills: [{ name: 'Java' }] })
     expect(parsed.jobProfile).toEqual({ requiredSkills: ['Java'] })
   })
+
+  it('forwards parentMatchId and resumeVersionId for version re-analysis', () => {
+    const parsed = parseAnalyzeRequest({
+      jobDescription: 'Java engineer',
+      resumeText: 'Java Spring Boot',
+      persistResults: false,
+      parentMatchId: '3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e62',
+      resumeVersionId: '3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e63',
+    })
+    expect(parsed.parentMatchId).toBe('3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e62')
+    expect(parsed.resumeVersionId).toBe('3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e63')
+  })
 })
 
 describe('extract payload parsing', () => {

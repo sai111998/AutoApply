@@ -50,14 +50,14 @@ export function jobProfileFromMatch(match: JobMatch, job: Pick<Job, 'location'>)
         ...(match.report.requiredSkills?.partial ?? []),
         ...(match.report.requiredSkills?.missing ?? []),
       ]
-    : [...match.skillsMatched, ...match.skillsMissing]
+    : [...(match.skillsMatched ?? [])]
   const preferred = match.report
     ? [
         ...(match.report.preferredSkills?.matched ?? []),
         ...(match.report.preferredSkills?.partial ?? []),
         ...(match.report.preferredSkills?.missing ?? []),
       ]
-    : match.skillsPartial
+    : [...(match.skillsPartial ?? []), ...(match.skillsMissing ?? [])]
   const responsibilities = match.report
     ? [
         ...(match.report.responsibilities?.strongMatches ?? []).map((item) => ({ text: item.name, required: true })),

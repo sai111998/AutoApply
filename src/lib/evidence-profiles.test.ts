@@ -108,6 +108,18 @@ describe('tailored resume match recalculation', () => {
     expect(profile.requiredSkills.map((item) => item.name)).toEqual(['Java'])
   })
 
+  it('does not promote flattened skills_missing into required when the report is absent', () => {
+    const match = {
+      report: null,
+      skillsMatched: [{ name: 'Java' }, { name: 'Spring Boot' }],
+      skillsPartial: [{ name: 'microservices' }],
+      skillsMissing: [{ name: 'Kubernetes' }, { name: 'Terraform' }],
+    } as unknown as JobMatch
+    const profile = jobProfileFromMatch(match, { location: 'Austin, TX' })
+    expect(profile.requiredSkills.map((item) => item.name)).toEqual(['Java', 'Spring Boot'])
+    expect(profile.preferredSkills.map((item) => item.name)).toEqual(['microservices', 'Kubernetes', 'Terraform'])
+  })
+
   it('infers years of experience from role dates so the engine does not invent them', () => {
     const profile = resumeProfileFromTailored(sample())
     expect(profile.yearsOfExperience).toBeGreaterThanOrEqual(4)

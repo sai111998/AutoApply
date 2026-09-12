@@ -33,6 +33,8 @@ export function parseAnalyzeRequest(body: unknown): AnalyzeJobRequestBody {
       resumeProfile: record.resumeProfile,
       jobProfile: record.jobProfile,
       persistResults: record.persistResults === false ? false : undefined,
+      parentMatchId: optionalText(record.parentMatchId),
+      resumeVersionId: optionalText(record.resumeVersionId),
     }
   } catch (error) {
     throw new HttpError(400, error instanceof Error ? error.message : 'Invalid request')
