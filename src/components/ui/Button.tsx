@@ -1,11 +1,10 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 
 const variants = {
-  primary:
-    'bg-pine text-white hover:bg-[#16573c] shadow-[0_8px_20px_rgb(28,107,74,0.18)]',
-  secondary: 'bg-white text-ink border border-line hover:bg-fog/60',
-  ghost: 'bg-transparent text-slate-ink hover:bg-fog/80',
-  danger: 'bg-clay text-white hover:bg-[#a84b32]',
+  primary: 'bg-olive text-white hover:bg-olive-dark shadow-[0_8px_18px_rgb(85,99,56,0.16)]',
+  secondary: 'bg-white text-charcoal border border-line hover:bg-olive-soft hover:border-olive-border',
+  ghost: 'bg-transparent text-muted hover:bg-olive-soft hover:text-olive-dark',
+  danger: 'bg-danger text-white hover:bg-[#7f3f32]',
 }
 
 export function Button({
@@ -19,7 +18,7 @@ export function Button({
 }) {
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition duration-150 disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${className}`}
       {...props}
     >
       {children}
