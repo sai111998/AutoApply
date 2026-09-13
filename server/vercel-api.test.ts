@@ -19,6 +19,10 @@ const config: ServerConfig = {
   usajobsApiKey: '',
   usajobsUserAgentEmail: '',
   usajobsEnabled: true,
+  cruciveApiKey: '',
+  cruciveEnabled: true,
+  cruciveUsingDemoKey: false,
+  cruciveApiBaseUrl: 'https://api.crucive.com',
 }
 
 function llmStub(): LlmClient {

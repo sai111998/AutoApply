@@ -1,4 +1,5 @@
-export type JobProviderName = 'jooble' | 'usajobs' | string
+export type JobProviderName = 'crucive' | 'jooble' | 'usajobs' | string
+export type ProviderConnectionLabel = 'Live Demo' | 'Connected' | 'Not configured' | 'Disabled'
 
 export type RemoteFilter = 'any' | 'remote' | 'onsite' | 'hybrid'
 export type EmploymentFilter = 'any' | 'full-time' | 'part-time' | 'contract' | 'temporary' | 'internship'
@@ -24,6 +25,7 @@ export interface NormalizedJob {
   lastVerifiedAt: string
   identityKey: string
   rawMetadata: Record<string, unknown>
+  liveDemoProvider: boolean
 }
 
 export interface ProviderSearchParams {
@@ -66,6 +68,7 @@ export interface ProviderStatus {
   label: string
   enabled: boolean
   available: boolean
+  connectionLabel: ProviderConnectionLabel
 }
 
 export interface DiscoverRequest {
@@ -102,11 +105,24 @@ export interface DiscoverResponse {
   demo: boolean
 }
 
+export function defaultConnectionLabel(
+  enabled: boolean,
+  available: boolean,
+  usingDemoKey = false,
+): ProviderConnectionLabel {
+  if (!enabled) return 'Disabled'
+  if (!available) return 'Not configured'
+  if (usingDemoKey) return 'Live Demo'
+  return 'Connected'
+}
+
 export interface JobProvider {
   providerName(): JobProviderName
   label(): string
   isEnabled(): boolean
   isAvailable(): boolean
+  usesDemoKey?(): boolean
+  connectionLabel(): ProviderConnectionLabel
   search(params: ProviderSearchParams): Promise<ProviderSearchResult>
   getJob?(jobId: string): Promise<NormalizedJob | null>
 }

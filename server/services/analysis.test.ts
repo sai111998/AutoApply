@@ -135,6 +135,10 @@ describe('analyzeJobDescription with supplied profiles', () => {
     usajobsApiKey: '',
     usajobsUserAgentEmail: '',
     usajobsEnabled: true,
+    cruciveApiKey: '',
+    cruciveEnabled: true,
+    cruciveUsingDemoKey: false,
+    cruciveApiBaseUrl: 'https://api.crucive.com',
   }
   const llm = {
     extractJson: async () => {

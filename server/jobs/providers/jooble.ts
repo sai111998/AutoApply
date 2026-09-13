@@ -8,7 +8,13 @@ import {
   inferWorkArrangement,
   parseSalary,
 } from '../normalize'
-import type { JobProvider, ProviderSearchParams, ProviderSearchResult, ProviderWarning } from '../types'
+import {
+  defaultConnectionLabel,
+  type JobProvider,
+  type ProviderSearchParams,
+  type ProviderSearchResult,
+  type ProviderWarning,
+} from '../types'
 
 export interface JoobleClientOptions {
   apiKey: string
@@ -50,6 +56,7 @@ export function createJoobleProvider(options: JoobleClientOptions): JobProvider 
     label: () => 'Jooble',
     isEnabled: () => options.enabled,
     isAvailable: () => options.enabled && Boolean(options.apiKey),
+    connectionLabel: () => defaultConnectionLabel(options.enabled, options.enabled && Boolean(options.apiKey)),
     async search(params) {
       if (!options.enabled) return warning('disabled', 'Jooble is turned off.', params)
       if (!options.apiKey) return warning('missing_key', 'Jooble is unavailable until JOOBLE_API_KEY is set.', params)

@@ -38,6 +38,7 @@ describe('discovered job mapping', () => {
   })
 
   it('labels providers for the UI', () => {
+    expect(providerLabel('crucive')).toBe('Crucive')
     expect(providerLabel('jooble')).toBe('Jooble')
     expect(providerLabel('usajobs')).toBe('USAJOBS')
     expect(formatSalary(sample)).toMatch(/120,000/)

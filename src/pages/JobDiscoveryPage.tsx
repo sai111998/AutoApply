@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Compass, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -9,7 +9,7 @@ import { Pill, ScoreBadge } from '@/components/ui/Badge'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { discoverJobsRequest, type DiscoveredJobResult } from '@/lib/ai/client'
+import { discoverJobsRequest, getAnalysisHealth, type DiscoveredJobResult } from '@/lib/ai/client'
 import { discoveredToJob, formatSalary, providerLabel } from '@/lib/discovered-job'
 import { formatDate } from '@/lib/format'
 
@@ -34,8 +34,16 @@ export function JobDiscoveryPage() {
   const [result, setResult] = useState<Awaited<ReturnType<typeof discoverJobsRequest>> | null>(null)
   const [selected, setSelected] = useState<DiscoveredJobResult | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [providerStatus, setProviderStatus] = useState<
+    Array<{ name: string; label: string; connectionLabel: string }>
+  >([])
 
   const analyzedJobIds = useMemo(() => new Set(matches.map((match) => match.jobId)), [matches])
+  const statusRows = result?.providers ?? providerStatus
+
+  useEffect(() => {
+    void getAnalysisHealth().then((health) => setProviderStatus(health.jobProviders))
+  }, [])
 
   async function onSearch(nextPage = 1) {
     setLoading(true)
@@ -106,7 +114,7 @@ export function JobDiscoveryPage() {
       <PageHeader
         eyebrow="Live search"
         title="Job Discovery"
-        description="Search Jooble and USAJOBS for currently posted roles. Match scores use your stored resume and the existing Match Engine — no auto-apply."
+        description="Search Crucive, Jooble, and USAJOBS for currently posted roles. Match scores use your stored resume and the existing Match Engine — no auto-apply."
       />
 
       {isDemo && (
@@ -154,6 +162,7 @@ export function JobDiscoveryPage() {
           <Field label="Source">
             <Select value={provider} onChange={(event) => setProvider(event.target.value)}>
               <option value="any">All live providers</option>
+              <option value="crucive">Crucive</option>
               <option value="jooble">Jooble</option>
               <option value="usajobs">USAJOBS</option>
             </Select>
@@ -176,6 +185,18 @@ export function JobDiscoveryPage() {
         </form>
       </Card>
 
+      {statusRows.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-3 text-sm text-charcoal">
+          {statusRows.map((item) => (
+            <p key={item.name}>
+              <span className="font-semibold">{item.label}</span>
+              {' — '}
+              {item.connectionLabel}
+            </p>
+          ))}
+        </div>
+      )}
+
       {result?.warnings.length ? (
         <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3 text-sm text-muted">
           {result.warnings.map((warning) => (
@@ -192,7 +213,7 @@ export function JobDiscoveryPage() {
             <EmptyState
               icon={<Compass size={18} />}
               title="Search live listings"
-              description="Choose a role and location, then Find Jobs. Results come from Jooble and USAJOBS when those keys are configured."
+              description="Choose a role and location, then Find Jobs. Crucive can return live demo listings in development. Jooble and USAJOBS run when those keys are configured."
             />
           ) : visibleJobs.length === 0 && !loading ? (
             <EmptyState
@@ -214,6 +235,7 @@ export function JobDiscoveryPage() {
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     <Pill tone="strong">● Live</Pill>
+                    {job.liveDemoProvider && <Pill>Live Demo Provider</Pill>}
                     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
                       Source: {providerLabel(job.provider)}
                     </p>
@@ -260,7 +282,10 @@ export function JobDiscoveryPage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-xl font-semibold text-charcoal">{selected.title}</h2>
-                <Pill tone="strong">● Live</Pill>
+                <div className="flex flex-col items-end gap-2">
+                  <Pill tone="strong">● Live</Pill>
+                  {selected.liveDemoProvider && <Pill>Live Demo Provider</Pill>}
+                </div>
               </div>
               <p className="text-sm text-muted">
                 {selected.company || 'Unknown company'}

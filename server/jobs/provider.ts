@@ -1,11 +1,12 @@
 import type { ServerConfig } from '../config'
 import type { FetchLike } from './http'
+import { cruciveFromConfig } from './providers/crucive'
 import { joobleFromConfig } from './providers/jooble'
 import { usajobsFromConfig } from './providers/usajobs'
 import type { JobProvider, JobProviderName, ProviderStatus } from './types'
 
 export function createJobProviders(config: ServerConfig, fetchImpl?: FetchLike): JobProvider[] {
-  return [joobleFromConfig(config, fetchImpl), usajobsFromConfig(config, fetchImpl)]
+  return [cruciveFromConfig(config, fetchImpl), joobleFromConfig(config, fetchImpl), usajobsFromConfig(config, fetchImpl)]
 }
 
 export function providerStatuses(providers: JobProvider[]): ProviderStatus[] {
@@ -14,6 +15,7 @@ export function providerStatuses(providers: JobProvider[]): ProviderStatus[] {
     label: provider.label(),
     enabled: provider.isEnabled(),
     available: provider.isAvailable(),
+    connectionLabel: provider.connectionLabel(),
   }))
 }
 

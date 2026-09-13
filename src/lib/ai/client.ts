@@ -34,24 +34,39 @@ export async function getAnalysisHealth(): Promise<{
   ok: boolean
   llmConfigured: boolean
   databaseConfigured: boolean
+  jobProviders: Array<{
+    name: string
+    label: string
+    enabled: boolean
+    available: boolean
+    connectionLabel: string
+  }>
 }> {
   try {
     const response = await fetch(apiUrl('/api/health'))
     if (!response.ok) {
-      return { ok: false, llmConfigured: false, databaseConfigured: false }
+      return { ok: false, llmConfigured: false, databaseConfigured: false, jobProviders: [] }
     }
     const body = (await response.json()) as {
       ok?: boolean
       llmConfigured?: boolean
       databaseConfigured?: boolean
+      jobProviders?: Array<{
+        name: string
+        label: string
+        enabled: boolean
+        available: boolean
+        connectionLabel: string
+      }>
     }
     return {
       ok: Boolean(body.ok),
       llmConfigured: Boolean(body.llmConfigured),
       databaseConfigured: Boolean(body.databaseConfigured),
+      jobProviders: Array.isArray(body.jobProviders) ? body.jobProviders : [],
     }
   } catch {
-    return { ok: false, llmConfigured: false, databaseConfigured: false }
+    return { ok: false, llmConfigured: false, databaseConfigured: false, jobProviders: [] }
   }
 }
 
@@ -94,6 +109,7 @@ export interface DiscoveredJobResult {
   matchScore: number | null
   matchedSkills: string[]
   demo: boolean
+  liveDemoProvider?: boolean
 }
 
 export interface DiscoverJobsResponse {
@@ -101,7 +117,13 @@ export interface DiscoverJobsResponse {
   page: number
   pageSize: number
   total: number
-  providers: Array<{ name: string; label: string; enabled: boolean; available: boolean }>
+  providers: Array<{
+    name: string
+    label: string
+    enabled: boolean
+    available: boolean
+    connectionLabel: string
+  }>
   warnings: Array<{ provider: string; code: string; message: string }>
   hasMore: boolean
   demo: boolean

@@ -29,6 +29,7 @@ export function discoveredToJob(job: DiscoveredJobResult, userId: string): Job {
 
 export function providerLabel(provider: string | null | undefined): string {
   if (!provider) return 'Unknown'
+  if (provider === 'crucive') return 'Crucive'
   if (provider === 'jooble') return 'Jooble'
   if (provider === 'usajobs') return 'USAJOBS'
   return provider

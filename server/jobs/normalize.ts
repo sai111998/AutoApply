@@ -157,5 +157,6 @@ export function emptyNormalizedJob(partial: Partial<NormalizedJob> & Pick<Normal
     lastVerifiedAt: partial.lastVerifiedAt ?? now,
     identityKey: identity,
     rawMetadata: partial.rawMetadata ?? {},
+    liveDemoProvider: partial.liveDemoProvider ?? false,
   }
 }

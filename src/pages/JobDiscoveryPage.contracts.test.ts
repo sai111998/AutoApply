@@ -12,6 +12,8 @@ describe('job discovery contracts', () => {
     expect(page).toMatch(/Find Jobs/)
     expect(page).toMatch(/discoverJobsRequest/)
     expect(page).toMatch(/● Live/)
+    expect(page).toMatch(/Live Demo Provider/)
+    expect(page).toMatch(/connectionLabel/)
     expect(page).toMatch(/Source: \{providerLabel/)
     expect(page).not.toMatch(/createSampleWorkspace|SAMPLE_RESUME/)
   })

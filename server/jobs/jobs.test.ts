@@ -7,9 +7,11 @@ import { discoverJobs } from './discover'
 import { deduplicateJobs } from './deduplicate'
 import { fingerprint, identityKey, parseSalary, stableJobId } from './normalize'
 import { parseDiscoverRequest } from './parse'
+import { normalizeCruciveJob } from './providers/crucive'
 import { normalizeJoobleJob } from './providers/jooble'
 import { normalizeUsaJobsJob } from './providers/usajobs'
 import { JAVA_RESUME_TEXT } from '../tailor/fixtures'
+import { CRUCIVE_DEMO_API_KEY, resolveCruciveCredentials } from '../config'
 
 const config: ServerConfig = {
   port: 0,
@@ -24,6 +26,10 @@ const config: ServerConfig = {
   usajobsApiKey: 'usajobs-test',
   usajobsUserAgentEmail: 'jobs@example.com',
   usajobsEnabled: true,
+  cruciveApiKey: '',
+  cruciveEnabled: true,
+  cruciveUsingDemoKey: false,
+  cruciveApiBaseUrl: 'https://api.crucive.com',
 }
 
 const jooblePayload = {
@@ -51,6 +57,27 @@ const jooblePayload = {
     },
   ],
 }
+
+const crucivePayload = [
+  {
+    job_uuid: '1fcbc4f2-04c5-45df-8edf-8435159938ef',
+    job_title: 'Java Software Engineer (m/f/d)',
+    job_url: 'https://jobs.koerber.com/supplychain/job/Alges-Java-Software-Engineer/1425341933/',
+    company_name: 'ASL Analytic Service Laboratory GmbH',
+    job_city: 'Algés',
+    job_country: 'Portugal',
+    first_seen_date: '2026-09-06T13:19:44.602089+00:00',
+    accepts_remote: false,
+    accepts_hybrid: true,
+    employment_type: ['full_time'],
+    salary_min: null,
+    salary_max: null,
+    salary_currency: null,
+    job_description_responsibilities: ['Develop Java services for parcel sorting systems.'],
+    job_description_requirements: ['Java as your primary programming language.'],
+    skill_names: ['Java', 'Kubernetes'],
+  },
+]
 
 const usaPayload = {
   SearchResult: {
@@ -98,6 +125,18 @@ describe('normalization and identity', () => {
     expect(normalizeJoobleJob(jooblePayload.jobs[1])).toBeNull()
     expect(normalizeJoobleJob(null)).toBeNull()
     expect(normalizeJoobleJob('nope')).toBeNull()
+  })
+
+  it('parses Crucive jobs and keeps the career-page URL', () => {
+    const job = normalizeCruciveJob(crucivePayload[0], true)
+    expect(job?.provider).toBe('crucive')
+    expect(job?.title).toBe('Java Software Engineer (m/f/d)')
+    expect(job?.jobUrl).toContain('jobs.koerber.com')
+    expect(job?.description).toMatch(/Java/)
+    expect(job?.liveDemoProvider).toBe(true)
+    expect(job?.source).toBe('Crucive')
+    expect(normalizeCruciveJob({ company_name: 'Nope' })).toBeNull()
+    expect(normalizeCruciveJob({ job_title: '***' })).toBeNull()
   })
 
   it('parses USAJOBS jobs and keeps the official URL', () => {
@@ -158,6 +197,7 @@ describe('discover aggregation', () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (url.includes('jooble.org')) return jsonResponse(jooblePayload)
       if (url.includes('usajobs.gov')) return jsonResponse(usaPayload)
+      if (url.includes('crucive.com')) return jsonResponse(crucivePayload)
       return jsonResponse({}, 404)
     })
     const result = await discoverJobs(
@@ -184,7 +224,10 @@ describe('discover aggregation', () => {
     expect(result.jobs.some((job) => job.provider === 'jooble')).toBe(true)
     expect(result.jobs.some((job) => job.provider === 'usajobs')).toBe(true)
     expect(result.jobs.find((job) => job.provider === 'jooble')?.matchScore).toBeGreaterThan(0)
-    expect(result.providers.map((item) => item.name)).toEqual(['jooble', 'usajobs'])
+    expect(result.providers.map((item) => item.name)).toEqual(['crucive', 'jooble', 'usajobs'])
+    expect(result.providers.find((item) => item.name === 'jooble')?.connectionLabel).toBe('Connected')
+    expect(result.providers.find((item) => item.name === 'usajobs')?.connectionLabel).toBe('Connected')
+    expect(result.providers.find((item) => item.name === 'crucive')?.connectionLabel).toBe('Not configured')
   })
 
   it('keeps Jooble results when USAJOBS fails', async () => {
@@ -235,6 +278,79 @@ describe('discover aggregation', () => {
     expect(result.jobs).toEqual([])
     expect(result.warnings.map((item) => item.code)).toEqual(expect.arrayContaining(['missing_key']))
     expect(result.providers.every((item) => item.available === false)).toBe(true)
+    expect(result.providers.find((item) => item.name === 'jooble')?.connectionLabel).toBe('Not configured')
+    expect(result.providers.find((item) => item.name === 'usajobs')?.connectionLabel).toBe('Not configured')
+    expect(result.providers.find((item) => item.name === 'crucive')?.connectionLabel).toBe('Not configured')
+  })
+
+  it('aggregates Crucive demo results without exposing the API key', async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toContain('api.crucive.com/v1/jobs/search')
+      expect(String(init?.headers)).not.toMatch(/test-demo-api-key-2026/)
+      const headers = new Headers(init?.headers)
+      expect(headers.get('X-API-Key')).toBe('crucive-test')
+      return jsonResponse(crucivePayload)
+    })
+    const result = await discoverJobs(
+      { ...config, cruciveApiKey: 'crucive-test', cruciveUsingDemoKey: true, joobleEnabled: false, usajobsEnabled: false },
+      {
+        roles: ['Java Software Engineer'],
+        location: 'United States',
+        remote: 'any',
+        employmentType: 'any',
+        experienceLevel: 'any',
+        keywords: [],
+        datePostedDays: 30,
+        page: 1,
+        pageSize: 10,
+        minMatchScore: null,
+        providers: ['crucive'],
+        persist: false,
+      },
+      fetchImpl,
+    )
+    expect(result.jobs[0]?.provider).toBe('crucive')
+    expect(result.jobs[0]?.liveDemoProvider).toBe(true)
+    expect(result.jobs[0]?.jobUrl).toMatch(/^https:\/\//)
+    expect(result.providers.find((item) => item.name === 'crucive')?.connectionLabel).toBe('Live Demo')
+    expect(JSON.stringify(result)).not.toMatch(/crucive-test|test-demo-api-key-2026/)
+  })
+
+  it('retries Crucive without a United States filter when that market is empty', async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { query?: { bool?: { filter?: unknown[] } } }
+      const hasCountry = JSON.stringify(body).includes('United States')
+      return jsonResponse(hasCountry ? [] : crucivePayload)
+    })
+    const result = await discoverJobs(
+      { ...config, cruciveApiKey: 'crucive-test', cruciveUsingDemoKey: true, joobleEnabled: false, usajobsEnabled: false },
+      {
+        roles: ['Java Software Engineer'],
+        location: 'United States',
+        remote: 'any',
+        employmentType: 'any',
+        experienceLevel: 'any',
+        keywords: [],
+        datePostedDays: 30,
+        page: 1,
+        pageSize: 10,
+        minMatchScore: null,
+        providers: ['crucive'],
+        persist: false,
+      },
+      fetchImpl,
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(result.jobs).toHaveLength(1)
+    expect(result.jobs[0]?.location).toMatch(/Portugal/)
+    expect(result.warnings[0]?.message).toMatch(/United States listings/)
+  })
+
+  it('does not use the Crucive demo key outside development', () => {
+    expect(resolveCruciveCredentials({ NODE_ENV: 'production' }).cruciveApiKey).toBe('')
+    expect(resolveCruciveCredentials({ NODE_ENV: 'production', CRUCIVE_API_KEY: CRUCIVE_DEMO_API_KEY }).cruciveApiKey).toBe('')
+    expect(resolveCruciveCredentials({ NODE_ENV: 'development' }).cruciveUsingDemoKey).toBe(true)
+    expect(resolveCruciveCredentials({ NODE_ENV: 'development' }).cruciveApiKey).toBe(CRUCIVE_DEMO_API_KEY)
   })
 
   it('returns a timeout warning when the provider aborts', async () => {
