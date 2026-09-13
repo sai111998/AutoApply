@@ -9,6 +9,10 @@ import {
   toResponseBody,
   type PersistFn,
 } from './services/analysis'
+import { discoverJobs } from './jobs/discover'
+import { parseDiscoverRequest, parseNormalizedJob } from './jobs/parse'
+import { createJobProviders, providerStatuses } from './jobs/provider'
+import { persistSavedJob } from './jobs/store'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
 import { tailorResume, validateSubmittedResume } from './tailor/engine'
@@ -35,7 +39,35 @@ export function createApp(options: AppOptions): Express {
       ok: true,
       llmConfigured: Boolean(options.config.llmApiKey),
       databaseConfigured: Boolean(options.config.supabaseUrl && options.config.supabaseServiceRoleKey),
+      jobProviders: providerStatuses(createJobProviders(options.config)),
     })
+  })
+
+  app.post('/api/jobs/discover', async (req: Request, res: Response) => {
+    try {
+      const request = parseDiscoverRequest(req.body)
+      const result = await discoverJobs(options.config, request)
+      res.json(result)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Job discovery failed.'
+      res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Job discovery failed.' : message })
+    }
+  })
+
+  app.post('/api/jobs/save', async (req: Request, res: Response) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
+      const userId = typeof body.userId === 'string' ? body.userId.trim() : ''
+      if (!userId) throw new HttpError(400, 'userId is required to save a job.')
+      const job = parseNormalizedJob(body.job)
+      const result = await persistSavedJob(options.config, userId, job)
+      res.json({ ok: true, jobId: result.jobId, applicationCreated: false })
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Could not save the job.'
+      res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Could not save the job.' : message })
+    }
   })
 
   app.post(

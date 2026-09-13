@@ -25,6 +25,12 @@ function loadEnvFile(fileName: string) {
 loadEnvFile('.env')
 loadEnvFile('.env.local')
 
+function envFlag(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase()
+  if (!raw) return fallback
+  return raw !== 'false' && raw !== '0' && raw !== 'off'
+}
+
 export function getServerConfig() {
   const llmApiKey = process.env.LLM_API_KEY?.trim() ?? ''
   return {
@@ -34,6 +40,12 @@ export function getServerConfig() {
     llmModel: process.env.LLM_MODEL?.trim() || 'gpt-4o-mini',
     supabaseUrl: process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim() || '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '',
+    joobleApiKey: process.env.JOOBLE_API_KEY?.trim() ?? '',
+    joobleEnabled: envFlag('JOOBLE_ENABLED', true),
+    joobleApiBaseUrl: (process.env.JOOBLE_API_BASE_URL?.trim() || 'https://jooble.org/api').replace(/\/$/, ''),
+    usajobsApiKey: process.env.USAJOBS_API_KEY?.trim() ?? '',
+    usajobsUserAgentEmail: process.env.USAJOBS_USER_AGENT_EMAIL?.trim() ?? '',
+    usajobsEnabled: envFlag('USAJOBS_ENABLED', true),
   }
 }
 

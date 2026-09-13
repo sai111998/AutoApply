@@ -129,6 +129,12 @@ describe('analyzeJobDescription with supplied profiles', () => {
     llmModel: '',
     supabaseUrl: '',
     supabaseServiceRoleKey: '',
+    joobleApiKey: '',
+    joobleEnabled: true,
+    joobleApiBaseUrl: 'https://jooble.org/api',
+    usajobsApiKey: '',
+    usajobsUserAgentEmail: '',
+    usajobsEnabled: true,
   }
   const llm = {
     extractJson: async () => {

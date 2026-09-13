@@ -8,12 +8,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { analyzeJobRequest, extractResumeTextRequest } from '@/lib/ai/client'
+import { analyzeJobRequest, extractResumeTextRequest, saveDiscoveredJobRequest } from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import {
   deleteAnalysisRecords,
   deleteApplicationRecords,
   fetchAnalysisHistory,
+  fetchSavedJobIds,
   fetchJobApplicationBundle,
   persistAnalysisRecords,
   persistApplicationSelection,
@@ -67,6 +68,24 @@ const DEMO_WORKSPACE_KEY = 'jobpilot.workspace'
 interface AnalyzeJobInput {
   description: string
   resumeId: string
+  jobId?: string
+  title?: string
+  company?: string
+  location?: string
+  jobUrl?: string
+  provider?: string | null
+  providerJobId?: string | null
+  source?: string | null
+  remote?: boolean | null
+  workArrangement?: string | null
+  employmentType?: string | null
+  postedAt?: string | null
+  discoveredAt?: string | null
+  lastVerifiedAt?: string | null
+  salaryMin?: number | null
+  salaryMax?: number | null
+  salaryCurrency?: string | null
+  identityKey?: string | null
 }
 
 interface WorkspaceContextValue extends WorkspaceSnapshot {
@@ -87,6 +106,8 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   updateApplication: (id: string, patch: Partial<Pick<Application, 'status' | 'notes' | 'dateApplied'>>) => Promise<void>
   deleteApplications: (ids: string[]) => Promise<number>
   savePreferences: (preferences: UserPreferences) => Promise<void>
+  saveDiscoveredJob: (job: Job) => Promise<Job>
+  savedJobIds: string[]
   saveResumeVersion: (version: ResumeVersion) => Promise<void>
   renameResumeVersion: (id: string, versionName: string) => Promise<void>
   deleteResumeVersion: (id: string) => Promise<void>
@@ -147,6 +168,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [savedJobIds, setSavedJobIds] = useState<string[]>([])
   const analyzeLock = useRef(false)
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
@@ -173,6 +195,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setHistoryError(history.error)
         return
       }
+      const savedIds = await fetchSavedJobIds(supabase, user.id)
+      setSavedJobIds(savedIds)
       const versions = await fetchResumeVersions(supabase, user.id)
       if (versions.error) {
         setHistoryError(`resume versions: ${versions.error}`)
@@ -237,6 +261,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         const history = await fetchAnalysisHistory(supabase, userId)
         if (history.error) setHistoryError(history.error)
+        setSavedJobIds(await fetchSavedJobIds(supabase, userId))
         const versions = await fetchResumeVersions(supabase, userId)
         if (versions.error) {
           setHistoryError(`resume versions: ${versions.error}`)
@@ -462,15 +487,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const now = new Date().toISOString()
 
+        const existing = input.jobId ? snapshot.jobs.find((item) => item.id === input.jobId) : undefined
         const job: Job = {
-          id: createId(),
+          id: input.jobId || existing?.id || createId(),
           userId: user.id,
-          title: titleFromJobDescription(jobDescription),
-          company: 'Unknown company',
-          location: '',
-          jobUrl: '',
+          title: input.title?.trim() || existing?.title || titleFromJobDescription(jobDescription),
+          company: input.company?.trim() || existing?.company || 'Unknown company',
+          location: input.location?.trim() || existing?.location || '',
+          jobUrl: input.jobUrl?.trim() || existing?.jobUrl || '',
           description: jobDescription,
-          createdAt: now,
+          createdAt: existing?.createdAt || now,
+          provider: input.provider ?? existing?.provider ?? null,
+          providerJobId: input.providerJobId ?? existing?.providerJobId ?? null,
+          remote: input.remote ?? existing?.remote ?? null,
+          workArrangement: input.workArrangement ?? existing?.workArrangement ?? null,
+          employmentType: input.employmentType ?? existing?.employmentType ?? null,
+          postedAt: input.postedAt ?? existing?.postedAt ?? null,
+          discoveredAt: input.discoveredAt ?? existing?.discoveredAt ?? null,
+          lastVerifiedAt: input.lastVerifiedAt ?? existing?.lastVerifiedAt ?? null,
+          salaryMin: input.salaryMin ?? existing?.salaryMin ?? null,
+          salaryMax: input.salaryMax ?? existing?.salaryMax ?? null,
+          salaryCurrency: input.salaryCurrency ?? existing?.salaryCurrency ?? null,
+          source: input.source ?? existing?.source ?? null,
+          identityKey: input.identityKey ?? existing?.identityKey ?? null,
         }
 
         let match: JobMatch = {
@@ -573,7 +612,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         analyzeLock.current = false
       }
     },
-    [hydrateResumeText, isDemo, refreshAnalyses, replace, snapshot.resumes, user],
+    [hydrateResumeText, isDemo, refreshAnalyses, replace, snapshot.jobs, snapshot.resumes, user],
+  )
+
+  const saveDiscoveredJob = useCallback(
+    async (job: Job) => {
+      if (!user) throw new Error('Not signed in')
+      const stored: Job = { ...job, userId: user.id }
+      replace((current) => ({ ...current, jobs: upsertById(current.jobs, stored) }))
+      setSavedJobIds((current) => (current.includes(stored.id) ? current : [...current, stored.id]))
+      if (isDemo || !supabase) return stored
+      await saveDiscoveredJobRequest({ userId: user.id, job: stored })
+      try {
+        await supabase.from('saved_jobs').upsert({ user_id: user.id, job_id: stored.id }, { onConflict: 'user_id,job_id' })
+      } catch {
+        // saved_jobs is added by 006_job_discovery.sql; discovery still keeps the job in workspace state.
+      }
+      return stored
+    },
+    [isDemo, replace, user],
   )
 
   const deleteAnalysis = useCallback(
@@ -964,6 +1021,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteStoredResume,
       hydrateResumeText,
       analyzeJob,
+      saveDiscoveredJob,
+      savedJobIds,
       refreshAnalyses,
       deleteAnalysis,
       updateApplication,
@@ -979,6 +1038,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [
       analyzeJob,
       analyzeTailoredVersion,
+      saveDiscoveredJob,
+      savedJobIds,
       deleteAnalysis,
       deleteApplications,
       deleteResumeVersion,

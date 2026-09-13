@@ -21,6 +21,8 @@ Open http://localhost:5173/ to view the public landing page. Click **Get Started
 
 Leave `VITE_API_BASE_URL` unset. The browser always requests same-origin `/api/*`; Vite proxies those calls to the local Express server.
 
+Live job discovery is under **Job Discovery**. The server calls Jooble (`POST https://jooble.org/api/{JOOBLE_API_KEY}`) and USAJOBS (`GET https://data.usajobs.gov/api/search`) and never sends those keys to the browser. Set `JOOBLE_API_KEY`, `USAJOBS_API_KEY`, and `USAJOBS_USER_AGENT_EMAIL` in `.env.local`. A provider without a key is marked unavailable instead of crashing the app.
+
 ## Production (Vercel)
 
 Vercel hosts the Vite static build. The existing Express app is mounted by `api/[...path].ts` so production can serve the same routes as local development, including `GET /api/health` and `POST /api/jobs/analyze`.

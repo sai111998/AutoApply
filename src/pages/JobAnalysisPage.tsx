@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { FileText, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
@@ -21,6 +21,7 @@ import { getAnalysisHealth } from '@/lib/ai/client'
 import { formatDate } from '@/lib/format'
 import { compactVersionName } from '@/lib/resume-names'
 import { filterAnalysisHistory } from '@/lib/analysis-persist'
+import type { DiscoveredJobResult } from '@/lib/ai/client'
 import type { Job, JobMatch, Resume, ResumeVersion } from '@/types/domain'
 
 const ANALYSIS_STEPS = ['Reading the posting', 'Comparing resume evidence', 'Scoring fit']
@@ -46,8 +47,10 @@ export function JobAnalysisPage() {
   } = useWorkspace()
   const { user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const { notify } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
+  const liveJob = (location.state as { liveJob?: DiscoveredJobResult } | null)?.liveJob
   const tab = searchParams.get('tab') === 'history' ? 'history' : 'new'
   const userId = user?.id ?? ''
   const defaultResumeId = masterResume?.id ?? resumes[0]?.id ?? ''
@@ -64,7 +67,31 @@ export function JobAnalysisPage() {
     [userId],
   )
 
-  const [description, setDescription] = useState(initial.draft.description)
+  const [description, setDescription] = useState(liveJob?.description || initial.draft.description)
+  const [jobTitle, setJobTitle] = useState(liveJob?.title || initial.draft.title)
+  const [jobCompany, setJobCompany] = useState(liveJob?.company || initial.draft.company)
+  const [jobLocation, setJobLocation] = useState(liveJob?.location || initial.draft.location)
+  const [jobUrl, setJobUrl] = useState(liveJob?.jobUrl || initial.draft.jobUrl)
+  const [liveJobId] = useState(liveJob?.id ?? '')
+  const [liveMeta] = useState(
+    liveJob
+      ? {
+          provider: liveJob.provider,
+          providerJobId: liveJob.providerJobId,
+          source: liveJob.source,
+          remote: liveJob.remote,
+          workArrangement: liveJob.workArrangement,
+          employmentType: liveJob.employmentType,
+          postedAt: liveJob.postedAt,
+          discoveredAt: liveJob.discoveredAt,
+          lastVerifiedAt: liveJob.lastVerifiedAt,
+          salaryMin: liveJob.salaryMin,
+          salaryMax: liveJob.salaryMax,
+          salaryCurrency: liveJob.salaryCurrency,
+          identityKey: liveJob.identityKey,
+        }
+      : null,
+  )
   const [resumeId, setResumeId] = useState(storedResumeId(initial.draft.resumeId, defaultResumeId))
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(
     initial.restored ? initial.draft.updatedAt : null,
@@ -80,11 +107,11 @@ export function JobAnalysisPage() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
   const fieldsRef = useRef({
-    title: initial.draft.title,
-    company: initial.draft.company,
-    location: initial.draft.location,
-    jobUrl: initial.draft.jobUrl,
-    description: initial.draft.description,
+    title: liveJob?.title || initial.draft.title,
+    company: liveJob?.company || initial.draft.company,
+    location: liveJob?.location || initial.draft.location,
+    jobUrl: liveJob?.jobUrl || initial.draft.jobUrl,
+    description: liveJob?.description || initial.draft.description,
     resumeId: storedResumeId(initial.draft.resumeId, defaultResumeId),
     resumeText: initial.draft.resumeText,
   })
@@ -155,6 +182,10 @@ export function JobAnalysisPage() {
       resumeText: masterResume?.parsedText ?? resumes[0]?.parsedText ?? '',
     }
     fieldsRef.current = next
+    setJobTitle(next.title)
+    setJobCompany(next.company)
+    setJobLocation(next.location)
+    setJobUrl(next.jobUrl)
     setDescription(next.description)
     setResumeId(next.resumeId)
     setDraftSavedAt(null)
@@ -205,6 +236,24 @@ export function JobAnalysisPage() {
       const matchId = await analyzeJob({
         description: jobDescription,
         resumeId,
+        jobId: liveJobId || undefined,
+        title: fieldsRef.current.title,
+        company: fieldsRef.current.company,
+        location: fieldsRef.current.location,
+        jobUrl: fieldsRef.current.jobUrl,
+        provider: liveMeta?.provider,
+        providerJobId: liveMeta?.providerJobId,
+        source: liveMeta?.source,
+        remote: liveMeta?.remote,
+        workArrangement: liveMeta?.workArrangement,
+        employmentType: liveMeta?.employmentType,
+        postedAt: liveMeta?.postedAt,
+        discoveredAt: liveMeta?.discoveredAt,
+        lastVerifiedAt: liveMeta?.lastVerifiedAt,
+        salaryMin: liveMeta?.salaryMin,
+        salaryMax: liveMeta?.salaryMax,
+        salaryCurrency: liveMeta?.salaryCurrency,
+        identityKey: liveMeta?.identityKey,
       })
       clearAnalysisDraft(userId)
       setDraftSavedAt(null)
@@ -264,6 +313,12 @@ export function JobAnalysisPage() {
           />
         }
       />
+
+      {liveJob && (
+        <div className="mb-6 rounded-2xl border border-olive-border bg-olive-soft px-4 py-3 text-sm text-olive-dark">
+          This posting was loaded from live job discovery. The description, title, company, location, and URL are pre-filled so you do not need to paste them again.
+        </div>
+      )}
 
       {historyError && (
         <div className="mb-6">
@@ -344,6 +399,49 @@ export function JobAnalysisPage() {
                   ))}
                 </Select>
               </Field>
+
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="Job title">
+                  <TextInput
+                    value={jobTitle}
+                    onChange={(event) => {
+                      setJobTitle(event.target.value)
+                      saveDraftPatch({ title: event.target.value })
+                    }}
+                    placeholder="Senior Java Engineer"
+                  />
+                </Field>
+                <Field label="Company">
+                  <TextInput
+                    value={jobCompany}
+                    onChange={(event) => {
+                      setJobCompany(event.target.value)
+                      saveDraftPatch({ company: event.target.value })
+                    }}
+                    placeholder="Company name"
+                  />
+                </Field>
+                <Field label="Location">
+                  <TextInput
+                    value={jobLocation}
+                    onChange={(event) => {
+                      setJobLocation(event.target.value)
+                      saveDraftPatch({ location: event.target.value })
+                    }}
+                    placeholder="Austin, TX"
+                  />
+                </Field>
+                <Field label="Job URL">
+                  <TextInput
+                    value={jobUrl}
+                    onChange={(event) => {
+                      setJobUrl(event.target.value)
+                      saveDraftPatch({ jobUrl: event.target.value })
+                    }}
+                    placeholder="https://"
+                  />
+                </Field>
+              </div>
 
               <Field label="Job description">
                 <TextArea

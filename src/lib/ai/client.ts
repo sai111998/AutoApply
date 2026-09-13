@@ -1,4 +1,5 @@
 import type { AnalyzeJobApiRequest, AnalyzeJobApiResult, AnalyzeJobClientResponse } from './types'
+import type { Job } from '@/types/domain'
 
 function apiUrl(path: string): string {
   const base = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') ?? ''
@@ -52,6 +53,108 @@ export async function getAnalysisHealth(): Promise<{
   } catch {
     return { ok: false, llmConfigured: false, databaseConfigured: false }
   }
+}
+
+export interface DiscoverJobsRequest {
+  roles?: string[]
+  location?: string
+  remote?: string
+  employmentType?: string
+  experienceLevel?: string
+  keywords?: string[]
+  datePostedDays?: number
+  page?: number
+  pageSize?: number
+  minMatchScore?: number | null
+  providers?: string[]
+  resumeText?: string
+  userId?: string
+}
+
+export interface DiscoveredJobResult {
+  id: string
+  provider: string
+  providerJobId: string | null
+  title: string
+  company: string
+  location: string | null
+  remote: boolean | null
+  workArrangement: string | null
+  employmentType: string | null
+  description: string | null
+  jobUrl: string | null
+  postedAt: string | null
+  salaryMin: number | null
+  salaryMax: number | null
+  salaryCurrency: string | null
+  source: string
+  discoveredAt: string
+  lastVerifiedAt: string
+  identityKey: string
+  matchScore: number | null
+  matchedSkills: string[]
+  demo: boolean
+}
+
+export interface DiscoverJobsResponse {
+  jobs: DiscoveredJobResult[]
+  page: number
+  pageSize: number
+  total: number
+  providers: Array<{ name: string; label: string; enabled: boolean; available: boolean }>
+  warnings: Array<{ provider: string; code: string; message: string }>
+  hasMore: boolean
+  demo: boolean
+}
+
+export async function discoverJobsRequest(payload: DiscoverJobsRequest): Promise<DiscoverJobsResponse> {
+  const response = await fetch(apiUrl('/api/jobs/discover'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as DiscoverJobsResponse | { error?: string } | null
+  if (!response.ok || !body || !('jobs' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Job discovery failed.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Job discovery failed.' : message)
+  }
+  return body
+}
+
+export async function saveDiscoveredJobRequest(payload: { userId: string; job: Job }) {
+  const response = await fetch(apiUrl('/api/jobs/save'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: payload.userId,
+      job: {
+        id: payload.job.id,
+        provider: payload.job.provider,
+        providerJobId: payload.job.providerJobId,
+        title: payload.job.title,
+        company: payload.job.company,
+        location: payload.job.location,
+        remote: payload.job.remote,
+        workArrangement: payload.job.workArrangement,
+        employmentType: payload.job.employmentType,
+        description: payload.job.description,
+        jobUrl: payload.job.jobUrl,
+        postedAt: payload.job.postedAt,
+        salaryMin: payload.job.salaryMin,
+        salaryMax: payload.job.salaryMax,
+        salaryCurrency: payload.job.salaryCurrency,
+        source: payload.job.source,
+        identityKey: payload.job.identityKey,
+        discoveredAt: payload.job.discoveredAt,
+        lastVerifiedAt: payload.job.lastVerifiedAt,
+      },
+    }),
+  })
+  const body = (await response.json().catch(() => null)) as { error?: string; jobId?: string } | null
+  if (!response.ok) {
+    throw new Error(body?.error && !/key|secret|service.role/i.test(body.error) ? body.error : 'Could not save the job.')
+  }
+  return body
 }
 
 export async function extractResumeTextRequest(file: File): Promise<string> {

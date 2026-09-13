@@ -57,6 +57,19 @@ type JobRow = {
   job_url: string | null
   description: string
   created_at: string
+  provider?: string | null
+  provider_job_id?: string | null
+  remote?: boolean | null
+  work_arrangement?: string | null
+  employment_type?: string | null
+  posted_at?: string | null
+  discovered_at?: string | null
+  last_verified_at?: string | null
+  salary_min?: number | null
+  salary_max?: number | null
+  salary_currency?: string | null
+  source?: string | null
+  identity_key?: string | null
 }
 
 type MatchRow = {
@@ -210,10 +223,49 @@ export function mapJob(row: JobRow): Job {
     jobUrl: row.job_url ?? '',
     description: row.description,
     createdAt: row.created_at,
+    provider: row.provider ?? null,
+    providerJobId: row.provider_job_id ?? null,
+    remote: row.remote ?? null,
+    workArrangement: row.work_arrangement ?? null,
+    employmentType: row.employment_type ?? null,
+    postedAt: row.posted_at ?? null,
+    discoveredAt: row.discovered_at ?? null,
+    lastVerifiedAt: row.last_verified_at ?? null,
+    salaryMin: row.salary_min ?? null,
+    salaryMax: row.salary_max ?? null,
+    salaryCurrency: row.salary_currency ?? null,
+    source: row.source ?? null,
+    identityKey: row.identity_key ?? null,
   }
 }
 
 export function jobToRow(job: Job) {
+  return {
+    id: job.id,
+    user_id: job.userId,
+    title: job.title,
+    company: job.company,
+    location: job.location,
+    job_url: job.jobUrl,
+    description: job.description,
+    created_at: job.createdAt,
+    provider: job.provider ?? null,
+    provider_job_id: job.providerJobId ?? null,
+    remote: job.remote ?? null,
+    work_arrangement: job.workArrangement ?? null,
+    employment_type: job.employmentType ?? null,
+    posted_at: job.postedAt ?? null,
+    discovered_at: job.discoveredAt ?? null,
+    last_verified_at: job.lastVerifiedAt ?? null,
+    salary_min: job.salaryMin ?? null,
+    salary_max: job.salaryMax ?? null,
+    salary_currency: job.salaryCurrency ?? null,
+    source: job.source ?? null,
+    identity_key: job.identityKey ?? null,
+  }
+}
+
+export function jobCoreRow(job: Job) {
   return {
     id: job.id,
     user_id: job.userId,

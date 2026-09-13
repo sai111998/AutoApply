@@ -8,6 +8,7 @@ import { ProtectedRoute } from '@/components/layout/ProtectedRoute'
 import { ApplicationsPage } from '@/pages/ApplicationsPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { JobAnalysisPage } from '@/pages/JobAnalysisPage'
+import { JobDiscoveryPage } from '@/pages/JobDiscoveryPage'
 import { LandingPage } from '@/pages/LandingPage'
 import { LegalPlaceholderPage } from '@/pages/LegalPlaceholderPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -90,6 +91,7 @@ export default function App() {
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/resume" element={<ResumePage />} />
                   <Route path="/resume/versions/:versionId" element={<ResumeVersionPage />} />
+                  <Route path="/discover" element={<JobDiscoveryPage />} />
                   <Route path="/analyze" element={<JobAnalysisPage />} />
                   <Route path="/matches/:matchId" element={<MatchResultsPage />} />
                   <Route path="/matches/:matchId/tailor" element={<TailorResumePage />} />

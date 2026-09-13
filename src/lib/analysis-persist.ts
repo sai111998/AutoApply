@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   applicationCoreRow,
   applicationToRow,
+  jobCoreRow,
   jobToRow,
   mapApplication,
   mapJob,
@@ -100,7 +101,10 @@ export async function persistAnalysisRecords(
   client: SupabaseClient,
   records: { job: Job; match: JobMatch; application: Application },
 ) {
-  const jobResult = await client.from('jobs').upsert(jobToRow(records.job), { onConflict: 'id', defaultToNull: false })
+  let jobResult = await client.from('jobs').upsert(jobToRow(records.job), { onConflict: 'id', defaultToNull: false })
+  if (jobResult.error && isMissingColumnError(jobResult.error)) {
+    jobResult = await client.from('jobs').upsert(jobCoreRow(records.job), { onConflict: 'id', defaultToNull: false })
+  }
   if (jobResult.error) throw jobResult.error
 
   const matchResult = await client
@@ -119,6 +123,12 @@ export async function persistAnalysisRecords(
     return
   }
   if (applicationResult.error) throw applicationResult.error
+}
+
+export async function fetchSavedJobIds(client: SupabaseClient, userId: string): Promise<string[]> {
+  const result = await client.from('saved_jobs').select('job_id').eq('user_id', userId)
+  if (result.error) return []
+  return (result.data ?? []).map((row) => row.job_id).filter(Boolean)
 }
 
 export async function fetchAnalysisHistory(client: SupabaseClient, userId: string) {

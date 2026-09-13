@@ -13,6 +13,12 @@ const config: ServerConfig = {
   llmModel: 'test-model',
   supabaseUrl: '',
   supabaseServiceRoleKey: '',
+  joobleApiKey: '',
+  joobleEnabled: true,
+  joobleApiBaseUrl: 'https://jooble.org/api',
+  usajobsApiKey: '',
+  usajobsUserAgentEmail: '',
+  usajobsEnabled: true,
 }
 
 function llmStub(): LlmClient {
