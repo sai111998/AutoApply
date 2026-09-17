@@ -1,4 +1,4 @@
-export type JobProviderName = 'crucive' | 'jooble' | 'usajobs' | string
+export type JobProviderName = 'job-opportunities' | 'jooble' | 'usajobs' | string
 export type ProviderConnectionLabel = 'Live Demo' | 'Connected' | 'Not configured' | 'Disabled'
 
 export type RemoteFilter = 'any' | 'remote' | 'onsite' | 'hybrid'
@@ -33,6 +33,7 @@ export interface ProviderSearchParams {
   location: string
   remote: RemoteFilter
   employmentType: EmploymentFilter
+  experienceLevel?: string
   datePostedDays: number
   page: number
   pageSize: number

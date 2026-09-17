@@ -110,6 +110,7 @@ export interface DiscoveredJobResult {
   matchedSkills: string[]
   demo: boolean
   liveDemoProvider?: boolean
+  rawMetadata?: Record<string, unknown>
 }
 
 export interface DiscoverJobsResponse {
@@ -139,6 +140,16 @@ export async function discoverJobsRequest(payload: DiscoverJobsRequest): Promise
   if (!response.ok || !body || !('jobs' in body)) {
     const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Job discovery failed.'
     throw new Error(/key|secret|service.role/i.test(message) ? 'Job discovery failed.' : message)
+  }
+  return body
+}
+
+export async function getLiveJobRequest(provider: string, jobId: string): Promise<DiscoveredJobResult> {
+  const response = await fetch(apiUrl(`/api/jobs/live/${encodeURIComponent(provider)}/${encodeURIComponent(jobId)}`))
+  const body = (await response.json().catch(() => null)) as DiscoveredJobResult | { error?: string } | null
+  if (!response.ok || !body || !('title' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
   }
   return body
 }

@@ -10,8 +10,9 @@ import {
   type PersistFn,
 } from './services/analysis'
 import { discoverJobs } from './jobs/discover'
+import type { FetchLike } from './jobs/http'
 import { parseDiscoverRequest, parseNormalizedJob } from './jobs/parse'
-import { createJobProviders, providerStatuses } from './jobs/provider'
+import { createJobProviders, fetchProviderJob, providerStatuses } from './jobs/provider'
 import { persistSavedJob } from './jobs/store'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
@@ -24,6 +25,7 @@ export interface AppOptions {
   config: ServerConfig
   llm?: LlmClient
   persist?: PersistFn
+  fetchImpl?: FetchLike
 }
 
 export function createApp(options: AppOptions): Express {
@@ -39,14 +41,14 @@ export function createApp(options: AppOptions): Express {
       ok: true,
       llmConfigured: Boolean(options.config.llmApiKey),
       databaseConfigured: Boolean(options.config.supabaseUrl && options.config.supabaseServiceRoleKey),
-      jobProviders: providerStatuses(createJobProviders(options.config)),
+      jobProviders: providerStatuses(createJobProviders(options.config, options.fetchImpl)),
     })
   })
 
   app.post('/api/jobs/discover', async (req: Request, res: Response) => {
     try {
       const request = parseDiscoverRequest(req.body)
-      const result = await discoverJobs(options.config, request)
+      const result = await discoverJobs(options.config, request, options.fetchImpl)
       res.json(result)
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500
@@ -67,6 +69,24 @@ export function createApp(options: AppOptions): Express {
       const status = error instanceof HttpError ? error.status : 500
       const message = error instanceof Error ? error.message : 'Could not save the job.'
       res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Could not save the job.' : message })
+    }
+  })
+
+  app.get('/api/jobs/live/:provider/:jobId', async (req: Request, res: Response) => {
+    try {
+      const provider = typeof req.params.provider === 'string' ? req.params.provider : ''
+      const jobId = typeof req.params.jobId === 'string' ? req.params.jobId : ''
+      if (!provider || !jobId) throw new HttpError(400, 'provider and jobId are required.')
+      const job = await fetchProviderJob(options.config, provider, jobId, options.fetchImpl)
+      if (!job) {
+        res.status(404).json({ error: 'Live job source temporarily unavailable.' })
+        return
+      }
+      res.json(job)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Live job source temporarily unavailable.'
+      res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message })
     }
   })
 

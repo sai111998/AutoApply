@@ -25,6 +25,7 @@ function providerParams(request: DiscoverRequest): ProviderSearchParams {
     location: request.location.trim() || 'United States',
     remote: request.remote,
     employmentType: request.employmentType,
+    experienceLevel: request.experienceLevel,
     datePostedDays: request.datePostedDays,
     page: request.page,
     pageSize: request.pageSize,

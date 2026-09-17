@@ -9,8 +9,8 @@ import { Pill, ScoreBadge } from '@/components/ui/Badge'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { discoverJobsRequest, getAnalysisHealth, type DiscoveredJobResult } from '@/lib/ai/client'
-import { discoveredToJob, formatSalary, providerLabel } from '@/lib/discovered-job'
+import { discoverJobsRequest, getAnalysisHealth, getLiveJobRequest, type DiscoveredJobResult } from '@/lib/ai/client'
+import { discoveredToJob, formatSalary, listingSource, mergeLiveJob, providerLabel } from '@/lib/discovered-job'
 import { formatDate } from '@/lib/format'
 
 export function JobDiscoveryPage() {
@@ -96,8 +96,32 @@ export function JobDiscoveryPage() {
     }
   }
 
-  function goAnalyze(job: DiscoveredJobResult) {
-    navigate('/analyze', { state: { liveJob: job } })
+  async function hydrateJob(job: DiscoveredJobResult): Promise<DiscoveredJobResult> {
+    if (!job.providerJobId) return job
+    if (job.provider !== 'job-opportunities' && job.description?.trim()) return job
+    try {
+      const fresh = await getLiveJobRequest(job.provider, job.providerJobId)
+      const merged = mergeLiveJob(job, fresh)
+      setResult((current) =>
+        current
+          ? { ...current, jobs: current.jobs.map((item) => (item.id === job.id ? { ...item, description: merged.description } : item)) }
+          : current,
+      )
+      return merged
+    } catch {
+      return job
+    }
+  }
+
+  async function onView(job: DiscoveredJobResult) {
+    setSelected(job)
+    const hydrated = await hydrateJob(job)
+    setSelected(hydrated)
+  }
+
+  async function goAnalyze(job: DiscoveredJobResult) {
+    const hydrated = await hydrateJob(job)
+    navigate('/analyze', { state: { liveJob: hydrated } })
   }
 
   function goTailor(job: DiscoveredJobResult) {
@@ -114,7 +138,7 @@ export function JobDiscoveryPage() {
       <PageHeader
         eyebrow="Live search"
         title="Job Discovery"
-        description="Search Crucive, Jooble, and USAJOBS for currently posted roles. Match scores use your stored resume and the existing Match Engine — no auto-apply."
+        description="Search live US listings from Job Opportunities API, plus Jooble and USAJOBS when those keys are configured. Match scores use your stored resume and the existing Match Engine — no auto-apply."
       />
 
       {isDemo && (
@@ -162,7 +186,7 @@ export function JobDiscoveryPage() {
           <Field label="Source">
             <Select value={provider} onChange={(event) => setProvider(event.target.value)}>
               <option value="any">All live providers</option>
-              <option value="crucive">Crucive</option>
+              <option value="job-opportunities">Job Opportunities API</option>
               <option value="jooble">Jooble</option>
               <option value="usajobs">USAJOBS</option>
             </Select>
@@ -213,7 +237,7 @@ export function JobDiscoveryPage() {
             <EmptyState
               icon={<Compass size={18} />}
               title="Search live listings"
-              description="Choose a role and location, then Find Jobs. Crucive can return live demo listings in development. Jooble and USAJOBS run when those keys are configured."
+              description="Choose a role and location, then Find Jobs. Job Opportunities API is keyless. Jooble and USAJOBS run when those keys are configured."
             />
           ) : visibleJobs.length === 0 && !loading ? (
             <EmptyState
@@ -235,9 +259,9 @@ export function JobDiscoveryPage() {
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     <Pill tone="strong">● Live</Pill>
-                    {job.liveDemoProvider && <Pill>Live Demo Provider</Pill>}
                     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
                       Source: {providerLabel(job.provider)}
+                      {listingSource(job) ? ` · ${listingSource(job)}` : ''}
                     </p>
                     <ScoreBadge score={job.matchScore} emptyLabel="Not analyzed" />
                   </div>
@@ -249,10 +273,10 @@ export function JobDiscoveryPage() {
                   </p>
                 )}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" variant="secondary" onClick={() => setSelected(job)}>
+                  <Button type="button" variant="secondary" onClick={() => void onView(job)}>
                     View
                   </Button>
-                  <Button type="button" variant="secondary" onClick={() => goAnalyze(job)}>
+                  <Button type="button" variant="secondary" onClick={() => void goAnalyze(job)}>
                     Analyze
                   </Button>
                   <Button type="button" onClick={() => void onSave(job)} disabled={savingId === job.id || savedJobIds.includes(job.id)}>
@@ -261,6 +285,14 @@ export function JobDiscoveryPage() {
                 </div>
               </Card>
             ))
+          )}
+          {visibleJobs.some((job) => job.provider === 'job-opportunities') && (
+            <p className="text-xs text-muted">
+              Job data provided by{' '}
+              <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
+                Job Opportunities API
+              </a>
+            </p>
           )}
           {result && (result.hasMore || page > 1) && (
             <div className="flex justify-between">
@@ -284,7 +316,6 @@ export function JobDiscoveryPage() {
                 <h2 className="text-xl font-semibold text-charcoal">{selected.title}</h2>
                 <div className="flex flex-col items-end gap-2">
                   <Pill tone="strong">● Live</Pill>
-                  {selected.liveDemoProvider && <Pill>Live Demo Provider</Pill>}
                 </div>
               </div>
               <p className="text-sm text-muted">
@@ -293,31 +324,47 @@ export function JobDiscoveryPage() {
               </p>
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
                 Source: {providerLabel(selected.provider)}
+                {listingSource(selected) ? ` · ${listingSource(selected)}` : ''}
               </p>
               <ScoreBadge score={selected.matchScore} emptyLabel="Not analyzed" />
-              {selected.workArrangement && <p className="text-sm">Arrangement: {selected.workArrangement}</p>}
+              {selected.workArrangement && <p className="text-sm">Remote: {selected.workArrangement}</p>}
+              {selected.employmentType && <p className="text-sm">Employment type: {selected.employmentType}</p>}
               {formatSalary(selected) && <p className="text-sm">Salary: {formatSalary(selected)}</p>}
               {selected.postedAt && <p className="text-sm">Posted: {formatDate(selected.postedAt)}</p>}
               {selected.lastVerifiedAt && (
-                <p className="text-xs text-muted">Last verified with the provider: {formatDate(selected.lastVerifiedAt)}</p>
+                <p className="text-xs text-muted">Last verified: {formatDate(selected.lastVerifiedAt)}</p>
               )}
-              <p className="whitespace-pre-wrap text-sm leading-6 text-charcoal">{selected.description || 'No description was supplied by the provider.'}</p>
+              {typeof selected.rawMetadata?.firstSeenAt === 'string' && selected.rawMetadata.firstSeenAt && (
+                <p className="text-xs text-muted">First seen: {formatDate(String(selected.rawMetadata.firstSeenAt))}</p>
+              )}
+              {typeof selected.rawMetadata?.status === 'string' && selected.rawMetadata.status && (
+                <p className="text-xs text-muted">Status: {String(selected.rawMetadata.status)}</p>
+              )}
+              <p className="whitespace-pre-wrap text-sm leading-6 text-charcoal">{selected.description || 'Loading the full description when the provider supplies one…'}</p>
               {selected.jobUrl && (
                 <a className="inline-flex items-center gap-1 text-sm font-semibold text-olive" href={selected.jobUrl} target="_blank" rel="noreferrer">
-                  Original listing <ExternalLink size={14} />
+                  Open Original Job <ExternalLink size={14} />
                 </a>
               )}
               <div className="flex flex-wrap gap-2 pt-2">
-                <Button type="button" onClick={() => goAnalyze(selected)}>
+                <Button type="button" onClick={() => void goAnalyze(selected)}>
                   Analyze
                 </Button>
                 <Button type="button" variant="secondary" onClick={() => void onSave(selected)} disabled={savedJobIds.includes(selected.id)}>
-                  Save Job
+                  Save
                 </Button>
                 <Button type="button" variant="secondary" onClick={() => goTailor(selected)}>
                   Tailor Resume
                 </Button>
               </div>
+              {visibleJobs.some((job) => job.provider === 'job-opportunities') || selected.provider === 'job-opportunities' ? (
+                <p className="pt-2 text-xs text-muted">
+                  Job data provided by{' '}
+                  <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
+                    Job Opportunities API
+                  </a>
+                </p>
+              ) : null}
               <Link className="block text-sm font-semibold text-olive" to="/analyze">
                 Open Job Analysis
               </Link>

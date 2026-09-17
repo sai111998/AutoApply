@@ -17,10 +17,8 @@ const config: ServerConfig = {
   usajobsApiKey: '',
   usajobsUserAgentEmail: '',
   usajobsEnabled: true,
-  cruciveApiKey: '',
-  cruciveEnabled: true,
-  cruciveUsingDemoKey: false,
-  cruciveApiBaseUrl: 'https://api.crucive.com',
+  jobOpportunitiesEnabled: true,
+  jobOpportunitiesApiBaseUrl: 'https://api.jobopportunitiesapi.org',
 }
 
 const resumeExtract = {
@@ -352,7 +350,7 @@ describe('GET /api/health', () => {
     expect(response.body.ok).toBe(true)
     expect(response.body.llmConfigured).toBe(true)
     expect(response.body.jobProviders.map((item: { name: string }) => item.name)).toEqual([
-      'crucive',
+      'job-opportunities',
       'jooble',
       'usajobs',
     ])

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { discoveredToJob, formatSalary, providerLabel } from './discovered-job'
+import { discoveredToJob, formatSalary, listingSource, mergeLiveJob, providerLabel } from './discovered-job'
 import type { DiscoveredJobResult } from './ai/client'
 
 const sample: DiscoveredJobResult = {
@@ -38,10 +38,30 @@ describe('discovered job mapping', () => {
   })
 
   it('labels providers for the UI', () => {
-    expect(providerLabel('crucive')).toBe('Crucive')
+    expect(providerLabel('job-opportunities')).toBe('Job Opportunities API')
     expect(providerLabel('jooble')).toBe('Jooble')
     expect(providerLabel('usajobs')).toBe('USAJOBS')
     expect(formatSalary(sample)).toMatch(/120,000/)
     expect(formatSalary({ salaryMin: null, salaryMax: null, salaryCurrency: null })).toBeNull()
+  })
+
+  it('preserves the underlying listing source and merges a hydrated live job', () => {
+    const live: DiscoveredJobResult = {
+      ...sample,
+      provider: 'job-opportunities',
+      providerJobId: 'ffd759ce-b1fa-4ace-a823-bb0d0595e4ae',
+      source: 'Job Opportunities API',
+      description: '',
+      rawMetadata: { listingSource: 'workday' },
+    }
+    expect(listingSource(live)).toBe('workday')
+    const merged = mergeLiveJob(live, {
+      ...live,
+      description: 'Full Java posting from the detail endpoint.',
+      jobUrl: 'https://flir.wd1.myworkdayjobs.com/flircareers/job/java-engineer',
+    })
+    expect(merged.description).toMatch(/Full Java posting/)
+    expect(merged.jobUrl).toContain('myworkdayjobs.com')
+    expect(merged.source).toBe('Job Opportunities API')
   })
 })

@@ -21,7 +21,7 @@ Open http://localhost:5173/ to view the public landing page. Click **Get Started
 
 Leave `VITE_API_BASE_URL` unset. The browser always requests same-origin `/api/*`; Vite proxies those calls to the local Express server.
 
-Live job discovery is under **Job Discovery**. The server calls Crucive (`POST https://api.crucive.com/v1/jobs/search`), Jooble (`POST https://jooble.org/api/{JOOBLE_API_KEY}`), and USAJOBS (`GET https://data.usajobs.gov/api/search`) and never sends those keys to the browser. Set `CRUCIVE_API_KEY`, `JOOBLE_API_KEY`, `USAJOBS_API_KEY`, and `USAJOBS_USER_AGENT_EMAIL` in `.env.local`. In development, Crucive can use its documented demo key when `CRUCIVE_API_KEY` is empty; that fallback is disabled in production. A provider without a key is marked unavailable instead of crashing the app. Crucive results are labeled **Live Demo Provider**.
+Live job discovery is under **Job Discovery**. The server calls the keyless Job Opportunities API (`GET https://api.jobopportunitiesapi.org/public/jobs?country=US`), plus Jooble and USAJOBS when those keys are set. No Job Opportunities API key is required. Jooble/USAJOBS keys stay server-side and are never sent to the browser. A provider without a key is marked unavailable instead of crashing the app. Live rows are labeled **Live**, with source **Job Opportunities API**.
 
 ## Production (Vercel)
 
