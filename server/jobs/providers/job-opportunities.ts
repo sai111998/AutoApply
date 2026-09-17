@@ -1,6 +1,6 @@
 import type { ServerConfig } from '../../config'
 import { fetchWithPolicy, type FetchLike } from '../http'
-import { asIsoDate, asNumber, cleanText, emptyNormalizedJob, inferWorkArrangement } from '../normalize'
+import { asIsoDate, asNumber, cleanMultilineText, cleanText, emptyNormalizedJob, inferWorkArrangement } from '../normalize'
 import {
   defaultConnectionLabel,
   type EmploymentFilter,
@@ -113,8 +113,8 @@ function workArrangementFrom(remote: unknown): string | null {
 }
 
 function descriptionFrom(raw: unknown, record: Record<string, unknown>): string | null {
-  if (typeof raw === 'string' && raw.trim()) return cleanText(raw)
-  return cleanText(record.description)
+  if (typeof raw === 'string' && raw.trim()) return cleanMultilineText(raw)
+  return cleanMultilineText(record.description)
 }
 
 export function normalizeJobOpportunitiesJob(raw: unknown, descriptionOverride?: string | null) {
@@ -143,7 +143,7 @@ export function normalizeJobOpportunitiesJob(raw: unknown, descriptionOverride?:
     ),
     employmentType: cleanText(record.employment_type),
     seniority: cleanText(record.seniority),
-    description: descriptionOverride !== undefined ? cleanText(descriptionOverride) : descriptionFrom(null, record),
+    description: descriptionOverride !== undefined ? cleanMultilineText(descriptionOverride) : descriptionFrom(null, record),
     jobUrl: cleanText(record.apply_url),
     postedAt: asIsoDate(record.posted_at),
     salaryMin: asNumber(record.salary_min),

@@ -1,17 +1,32 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Compass, ExternalLink } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Compass, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
 import { EmptyState, ErrorState, SkeletonBlock } from '@/components/ui/EmptyState'
 import { Field, Select, TextInput } from '@/components/ui/Field'
-import { Pill, ScoreBadge } from '@/components/ui/Badge'
+import { Pill } from '@/components/ui/Badge'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { getLiveJobRequest, listLiveJobsRequest, type DiscoveredJobResult } from '@/lib/ai/client'
-import { applyUrl, discoveredToJob, listingSource, mergeLiveJob, providerLabel } from '@/lib/discovered-job'
+import {
+  getLiveJobRequest,
+  listLiveJobsRequest,
+  previewLiveJobRequest,
+  type DiscoveredJobResult,
+  type LiveTailorPreviewResult,
+} from '@/lib/ai/client'
+import { applyUrl, discoveredToJob, mergeLiveJob } from '@/lib/discovered-job'
 import { formatDate } from '@/lib/format'
+import {
+  employerApplyHref,
+  jobMetaLine,
+  liveMatch,
+  sortDiscoveredJobs,
+  topSkills,
+  type LiveJobSort,
+} from '@/lib/live-job'
+import { matchBandLabel, matchBandTone } from '@/lib/match-band'
 
 const US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
@@ -23,6 +38,7 @@ const SENIORITY_OPTIONS = ['Entry', 'Mid', 'Senior', 'Lead', 'Manager', 'Directo
 
 function normalizeListedJob(job: DiscoveredJobResult): DiscoveredJobResult {
   const url = applyUrl(job)
+  const match = liveMatch(job)
   return {
     ...job,
     jobUrl: url,
@@ -31,45 +47,93 @@ function normalizeListedJob(job: DiscoveredJobResult): DiscoveredJobResult {
     sourceJobId: job.sourceJobId || job.providerJobId || null,
     discoveredAt: job.discoveredAt || job.fetchedAt || job.discoveredAt,
     fetchedAt: job.fetchedAt || job.discoveredAt,
-    matchScore: job.matchScore ?? null,
-    matchedSkills: job.matchedSkills ?? [],
+    match,
+    matchScore: match.score,
+    matchedSkills: match.matchedSkills,
+    missingSkills: match.missingSkills,
     demo: false,
   }
 }
 
-function remoteLabel(job: DiscoveredJobResult): string | null {
-  if (job.workArrangement) return job.workArrangement
-  if (job.remote === true) return 'remote'
-  if (job.remote === false) return 'onsite'
-  return null
+function ScoreDisplay({ score, size = 'md' }: { score: number | null; size?: 'sm' | 'md' }) {
+  const tone = matchBandTone(score)
+  const toneClass =
+    tone === 'strong'
+      ? 'text-olive-dark'
+      : tone === 'review'
+        ? 'text-warning'
+        : tone === 'skip'
+          ? 'text-danger'
+          : 'text-muted'
+  return (
+    <div className={size === 'sm' ? 'text-right' : ''}>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Resume Match</p>
+      <p className={`font-semibold leading-none ${size === 'sm' ? 'mt-1 text-2xl' : 'mt-1 text-3xl'} ${toneClass}`}>
+        {score == null ? '—' : `${score}%`}
+      </p>
+      <p className="mt-1 text-xs font-semibold text-muted">{score == null ? 'Add a resume to score' : matchBandLabel(score)}</p>
+    </div>
+  )
+}
+
+function SkillLine({ label, skills }: { label: string; skills: string[] }) {
+  if (!skills.length) return null
+  return (
+    <p className="text-sm text-charcoal">
+      <span className="font-semibold">{label}: </span>
+      {skills.join(' • ')}
+    </p>
+  )
+}
+
+function ApplyNowLink({ href, className = '' }: { href: string | null; className?: string }) {
+  if (!href) {
+    return (
+      <Button type="button" disabled>
+        Apply Now
+      </Button>
+    )
+  }
+  return (
+    <a
+      className={`inline-flex items-center justify-center rounded-xl bg-olive px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgb(85,99,56,0.16)] transition hover:bg-olive-dark ${className}`}
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+    >
+      Apply Now
+    </a>
+  )
 }
 
 export function JobDiscoveryPage() {
   const { user, isDemo } = useAuth()
-  const { profile, preferences, matches, jobs, savedJobIds, saveDiscoveredJob } = useWorkspace()
+  const { profile, preferences, jobs, savedJobIds, saveDiscoveredJob, masterResume, resumes, loading: workspaceLoading } =
+    useWorkspace()
   const { notify } = useToast()
   const navigate = useNavigate()
 
+  const resume = masterResume ?? resumes[0] ?? null
   const [query, setQuery] = useState(profile.targetJobTitles[0] || preferences.targetRoles[0] || 'Java Software Engineer')
+  const [location, setLocation] = useState('')
   const [state, setState] = useState('')
   const [remote, setRemote] = useState('any')
   const [employmentType, setEmploymentType] = useState('any')
   const [seniority, setSeniority] = useState('any')
+  const [sort, setSort] = useState<LiveJobSort>('match')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const [listed, setListed] = useState<DiscoveredJobResult[] | null>(null)
-  const [selected, setSelected] = useState<DiscoveredJobResult | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [hydratingId, setHydratingId] = useState<string | null>(null)
+  const [reviewing, setReviewing] = useState<DiscoveredJobResult | null>(null)
+  const [preview, setPreview] = useState<LiveTailorPreviewResult | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
-  const analyzedByJobId = useMemo(() => {
-    const map = new Map<string, (typeof matches)[number]>()
-    for (const match of matches) {
-      if (match.analysisStatus === 'complete') map.set(match.jobId, match)
-    }
-    return map
-  }, [matches])
+  const visibleJobs = useMemo(() => (listed ? sortDiscoveredJobs(listed, sort, query) : null), [listed, query, sort])
 
   async function onSearch() {
     setLoading(true)
@@ -79,20 +143,24 @@ export function JobDiscoveryPage() {
       const response = await listLiveJobsRequest({
         q: query.trim() || undefined,
         country: 'US',
+        location: location.trim() || undefined,
         state: state || undefined,
         remote,
         employment_type: employmentType,
         seniority,
         page: 1,
         limit: 25,
+        sort,
+        resumeText: resume?.parsedText || undefined,
+        resumeVersionId: resume?.id,
       })
-      const rows = response.jobs.map(normalizeListedJob)
+      const rows = sortDiscoveredJobs(response.jobs.map(normalizeListedJob), sort, query)
       setListed(rows)
       setWarning(response.warning?.message ?? null)
-      if (!rows.length) setSelected(null)
+      if (!rows.length) setExpandedId(null)
     } catch (searchError) {
       setListed([])
-      setSelected(null)
+      setExpandedId(null)
       setError(searchError instanceof Error ? searchError.message : 'Live job source temporarily unavailable.')
     } finally {
       setLoading(false)
@@ -100,16 +168,17 @@ export function JobDiscoveryPage() {
   }
 
   useEffect(() => {
+    if (workspaceLoading) return
     void onSearch()
-    // Default US live listings on first visit. Later filter changes wait for Search.
+    // Search once workspace (and selected resume) is ready so list scores can be computed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [workspaceLoading, resume?.id])
 
   async function onSave(job: DiscoveredJobResult) {
     if (!user) return
     setSavingId(job.id)
     try {
-      await saveDiscoveredJob(discoveredToJob(job, user.id))
+      await saveDiscoveredJob(discoveredToJob(job, user.id), { resumeVersionId: resume?.id ?? null })
       notify('Job saved. No application was created.', 'success')
     } catch (saveError) {
       notify(saveError instanceof Error ? saveError.message : 'Could not save the job.', 'error')
@@ -134,24 +203,62 @@ export function JobDiscoveryPage() {
     }
   }
 
-  async function onView(job: DiscoveredJobResult) {
-    setSelected(job)
-    const hydrated = await hydrateJob(job)
-    setSelected(hydrated)
-  }
-
-  async function goAnalyze(job: DiscoveredJobResult) {
-    const hydrated = await hydrateJob(job)
-    navigate('/analyze', { state: { liveJob: hydrated } })
-  }
-
-  function goTailor(job: DiscoveredJobResult) {
-    const match = analyzedByJobId.get(job.id)
-    if (match) {
-      navigate(`/matches/${match.id}/tailor`)
+  async function onToggleDetails(job: DiscoveredJobResult) {
+    if (expandedId === job.id) {
+      setExpandedId(null)
       return
     }
-    void goAnalyze(job)
+    setExpandedId(job.id)
+    await hydrateJob(job)
+  }
+
+  async function onReview(job: DiscoveredJobResult) {
+    setReviewing(job)
+    setPreview(null)
+    setPreviewError(null)
+    const hydrated = await hydrateJob(job)
+    setReviewing(hydrated)
+    const resumeText = resume?.parsedText?.trim() ?? ''
+    if (!resumeText || !hydrated.description?.trim()) {
+      setPreviewError(
+        !resumeText
+          ? 'Select a master resume to score and tailor this job.'
+          : 'This listing does not include a job description to review.',
+      )
+      return
+    }
+    setPreviewLoading(true)
+    try {
+      const result = await previewLiveJobRequest({
+        resumeText,
+        resumeVersionId: resume?.id,
+        job: hydrated,
+      })
+      setPreview(result)
+    } catch (reviewError) {
+      setPreviewError(reviewError instanceof Error ? reviewError.message : 'Could not preview the tailored resume match.')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  function closeReview() {
+    setReviewing(null)
+    setPreview(null)
+    setPreviewError(null)
+  }
+
+  async function onUseCurrentResume() {
+    if (!reviewing) return
+    await onSave(reviewing)
+    notify('Current resume kept. Open Apply Now to continue on the employer site.', 'success')
+  }
+
+  async function onTailorResume() {
+    if (!reviewing) return
+    const hydrated = await hydrateJob(reviewing)
+    closeReview()
+    navigate('/analyze', { state: { liveJob: hydrated } })
   }
 
   const saved = (jobId: string) => savedJobIds.includes(jobId) || jobs.some((item) => item.id === jobId && savedJobIds.includes(item.id))
@@ -161,7 +268,7 @@ export function JobDiscoveryPage() {
       <PageHeader
         eyebrow="Live jobs"
         title="Live Jobs"
-        description="Browse current US listings from Job Opportunities API. Analyze uses your selected resume and the existing Match Engine. Saving a job does not apply for you."
+        description="See how your current resume matches live openings, then apply on the employer site or review a tailored version first."
       />
 
       {isDemo && (
@@ -170,9 +277,9 @@ export function JobDiscoveryPage() {
         </div>
       )}
 
-      <Card className="p-6">
+      <Card className="p-5">
         <form
-          className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+          className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"
           onSubmit={(event) => {
             event.preventDefault()
             void onSearch()
@@ -183,6 +290,13 @@ export function JobDiscoveryPage() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Title, company, or keyword"
+            />
+          </Field>
+          <Field label="Location">
+            <TextInput
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              placeholder="City"
             />
           </Field>
           <Field label="State">
@@ -200,7 +314,7 @@ export function JobDiscoveryPage() {
               <option value="any">Any</option>
               <option value="remote">Remote</option>
               <option value="hybrid">Hybrid</option>
-              <option value="onsite">Onsite</option>
+              <option value="onsite">On-site</option>
             </Select>
           </Field>
           <Field label="Employment type">
@@ -241,204 +355,181 @@ export function JobDiscoveryPage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="space-y-4">
-          {loading && (
-            <>
-              <SkeletonBlock className="h-36 rounded-2xl" />
-              <SkeletonBlock className="h-36 rounded-2xl" />
-              <SkeletonBlock className="h-36 rounded-2xl" />
-            </>
-          )}
-          {!loading && listed && listed.length === 0 && !error && (
-            <EmptyState
-              icon={<Compass size={18} />}
-              title="No live jobs matched your filters."
-              description="Try a broader keyword, clear the state filter, or leave remote and seniority set to Any. Counts are not invented."
-            />
-          )}
-          {!loading &&
-            listed?.map((job) => {
-              const analysis = analyzedByJobId.get(job.id)
-              const url = applyUrl(job)
-              return (
-                <Card key={job.id} className="p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h2 className="text-lg font-semibold text-charcoal">{job.title}</h2>
-                      <p className="mt-1 text-sm text-muted">{job.company || 'Unknown company'}</p>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <Pill tone="strong">● Live</Pill>
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-                        Source: {providerLabel(job.provider) || job.source}
-                        {listingSource(job) ? ` · ${listingSource(job)}` : ''}
-                      </p>
-                      <ScoreBadge score={analysis?.overallScore ?? null} emptyLabel="Not analyzed" />
-                    </div>
-                  </div>
-                  <dl className="mt-3 grid gap-1 text-sm text-charcoal sm:grid-cols-2">
-                    {job.location ? (
-                      <div>
-                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Location</dt>
-                        <dd>{job.location}</dd>
-                      </div>
-                    ) : null}
-                    {remoteLabel(job) ? (
-                      <div>
-                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Remote</dt>
-                        <dd>{remoteLabel(job)}</dd>
-                      </div>
-                    ) : null}
-                    {job.employmentType ? (
-                      <div>
-                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Employment type</dt>
-                        <dd>{job.employmentType}</dd>
-                      </div>
-                    ) : null}
-                    {job.seniority ? (
-                      <div>
-                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Seniority</dt>
-                        <dd>{job.seniority}</dd>
-                      </div>
-                    ) : null}
-                    {job.postedAt ? (
-                      <div>
-                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Posted</dt>
-                        <dd>{formatDate(job.postedAt)}</dd>
-                      </div>
-                    ) : null}
-                  </dl>
-                  {analysis && (
-                    <div className="mt-3 space-y-1 text-sm text-charcoal">
-                      {analysis.skillsMatched.length > 0 && (
-                        <p>
-                          <span className="font-semibold">Matched skills: </span>
-                          {analysis.skillsMatched.map((item) => item.name).join(' · ')}
-                        </p>
-                      )}
-                      {analysis.skillsMissing.length > 0 && (
-                        <p>
-                          <span className="font-semibold">Missing skills: </span>
-                          {analysis.skillsMissing.map((item) => item.name).join(' · ')}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button type="button" variant="secondary" onClick={() => void goAnalyze(job)}>
-                      Analyze Job
-                    </Button>
-                    <Button type="button" onClick={() => void onSave(job)} disabled={savingId === job.id || saved(job.id)}>
-                      {saved(job.id) ? 'Saved' : savingId === job.id ? 'Saving…' : 'Save Job'}
-                    </Button>
-                    {url ? (
-                      <a
-                        className="inline-flex items-center justify-center rounded-xl border border-olive-border bg-white px-4 py-2.5 text-sm font-semibold text-olive transition hover:bg-olive-soft"
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Apply/View Job
-                      </a>
-                    ) : null}
-                    <Button type="button" variant="ghost" onClick={() => void onView(job)}>
-                      Details
-                    </Button>
-                    {analysis ? (
-                      <>
-                        <Link className="inline-flex items-center px-2 text-sm font-semibold text-olive" to={`/matches/${analysis.id}`}>
-                          Match results
-                        </Link>
-                        <Button type="button" variant="secondary" onClick={() => goTailor(job)}>
-                          Tailor Resume
-                        </Button>
-                      </>
-                    ) : null}
-                  </div>
-                </Card>
-              )
-            })}
-          {listed?.some((job) => job.provider === 'job-opportunities' || job.source === 'Job Opportunities API') && (
-            <p className="text-xs text-muted">
-              Job data provided by{' '}
-              <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
-                Job Opportunities API
-              </a>
-            </p>
-          )}
-        </div>
-
-        <Card className="p-6">
-          {!selected ? (
-            <p className="text-sm text-muted">Open Details to read the posting and employer application URL.</p>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-semibold text-charcoal">{selected.title}</h2>
-                <Pill tone="strong">● Live</Pill>
-              </div>
-              <p className="text-sm text-muted">
-                {selected.company || 'Unknown company'}
-                {selected.location ? ` · ${selected.location}` : ''}
-              </p>
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-                Source: {providerLabel(selected.provider) || selected.source}
-                {listingSource(selected) ? ` · ${listingSource(selected)}` : ''}
-              </p>
-              <ScoreBadge
-                score={analyzedByJobId.get(selected.id)?.overallScore ?? null}
-                emptyLabel="Not analyzed"
-              />
-              {remoteLabel(selected) && <p className="text-sm">Remote: {remoteLabel(selected)}</p>}
-              {selected.employmentType && <p className="text-sm">Employment type: {selected.employmentType}</p>}
-              {selected.seniority && <p className="text-sm">Seniority: {selected.seniority}</p>}
-              {selected.postedAt && <p className="text-sm">Posted: {formatDate(selected.postedAt)}</p>}
-              {hydratingId === selected.id && !selected.description ? (
-                <p className="text-sm text-muted">Loading the full description when the provider supplies one…</p>
-              ) : (
-                <p className="whitespace-pre-wrap text-sm leading-6 text-charcoal">
-                  {selected.description || 'No description was supplied for this listing.'}
-                </p>
-              )}
-              {applyUrl(selected) && (
-                <a
-                  className="inline-flex items-center gap-1 text-sm font-semibold text-olive"
-                  href={applyUrl(selected) ?? undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Apply/View Job <ExternalLink size={14} />
-                </a>
-              )}
-              <div className="flex flex-wrap gap-2 pt-2">
-                <Button type="button" onClick={() => void goAnalyze(selected)}>
-                  Analyze Job
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => void onSave(selected)}
-                  disabled={saved(selected.id)}
-                >
-                  Save Job
-                </Button>
-                {analyzedByJobId.get(selected.id) ? (
-                  <Button type="button" variant="secondary" onClick={() => goTailor(selected)}>
-                    Tailor Resume
-                  </Button>
-                ) : null}
-              </div>
-              <p className="pt-2 text-xs text-muted">
-                Job data provided by{' '}
-                <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
-                  Job Opportunities API
-                </a>
-              </p>
-            </div>
-          )}
-        </Card>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted">
+          {resume ? `Scoring with ${resume.versionLabel}` : 'Upload a master resume to see match scores.'}
+        </p>
+        <label className="flex items-center gap-2 text-sm text-charcoal">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Sort</span>
+          <Select
+            value={sort}
+            onChange={(event) => setSort(event.target.value as LiveJobSort)}
+            className="min-w-48"
+          >
+            <option value="match">Match Score: High to Low</option>
+            <option value="recent">Most Recent</option>
+            <option value="relevance">Relevance</option>
+          </Select>
+        </label>
       </div>
+
+      <div className="mt-4 space-y-3">
+        {loading && (
+          <>
+            <SkeletonBlock className="h-28 rounded-2xl" />
+            <SkeletonBlock className="h-28 rounded-2xl" />
+            <SkeletonBlock className="h-28 rounded-2xl" />
+          </>
+        )}
+        {!loading && visibleJobs && visibleJobs.length === 0 && !error && (
+          <EmptyState
+            icon={<Compass size={18} />}
+            title="No live jobs matched your filters."
+            description="Try a broader keyword, clear the state filter, or leave remote and seniority set to Any. Counts are not invented."
+          />
+        )}
+        {!loading &&
+          visibleJobs?.map((job) => {
+            const match = liveMatch(job)
+            const href = employerApplyHref(job)
+            const expanded = expandedId === job.id
+            return (
+              <Card key={job.id} className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-semibold text-charcoal">{job.title}</h2>
+                      <Pill tone="strong">● Live</Pill>
+                    </div>
+                    <p className="mt-1 text-sm text-muted">{job.company || 'Unknown company'}</p>
+                    {jobMetaLine(job) ? <p className="mt-1 text-sm text-charcoal">{jobMetaLine(job)}</p> : null}
+                    {job.postedAt ? <p className="mt-1 text-xs text-muted">Posted {formatDate(job.postedAt)}</p> : null}
+                  </div>
+                  <ScoreDisplay score={match.score} size="sm" />
+                </div>
+                <div className="mt-3 space-y-1">
+                  <SkillLine label="Matched" skills={topSkills(match.matchedSkills)} />
+                  <SkillLine label="Missing" skills={topSkills(match.missingSkills)} />
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <ApplyNowLink href={href} />
+                  <Button type="button" variant="secondary" onClick={() => void onReview(job)}>
+                    Review & Apply
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => void onSave(job)} disabled={savingId === job.id || saved(job.id)}>
+                    {saved(job.id) ? 'Saved' : savingId === job.id ? 'Saving…' : 'Save Job'}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => void onToggleDetails(job)}>
+                    {expanded ? 'Hide Details' : 'View Details'}
+                  </Button>
+                </div>
+                {expanded && (
+                  <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3">
+                    {hydratingId === job.id && !job.description ? (
+                      <p className="text-sm text-muted">Loading the full description when the provider supplies one…</p>
+                    ) : (
+                      <p className="whitespace-pre-wrap text-sm leading-6 text-charcoal">
+                        {job.description || 'No description was supplied for this listing.'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </Card>
+            )
+          })}
+        {visibleJobs?.some((job) => job.provider === 'job-opportunities' || job.source === 'Job Opportunities API') && (
+          <p className="text-xs text-muted">
+            Job data provided by{' '}
+            <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
+              Job Opportunities API
+            </a>
+          </p>
+        )}
+      </div>
+
+      {reviewing && (
+        <div className="fixed inset-0 z-40 flex justify-end bg-charcoal/40" onClick={closeReview}>
+          <aside
+            className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-line px-6 py-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-olive">Review & Apply</p>
+                <h2 className="mt-1 text-xl font-semibold text-charcoal">{reviewing.title}</h2>
+                <p className="mt-1 text-sm text-muted">
+                  {reviewing.company || 'Unknown company'}
+                  {jobMetaLine(reviewing) ? ` · ${jobMetaLine(reviewing)}` : ''}
+                </p>
+              </div>
+              <button type="button" className="rounded-lg p-1 text-muted hover:bg-olive-soft hover:text-olive-dark" onClick={closeReview} aria-label="Close review">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-5 px-6 py-5">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl border border-line bg-canvas p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Current Resume Match</p>
+                  <p className="mt-2 text-3xl font-semibold text-charcoal">
+                    {preview?.current.score ?? liveMatch(reviewing).score ?? '—'}
+                    {(preview?.current.score ?? liveMatch(reviewing).score) != null ? '%' : ''}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-line bg-canvas p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Tailored Resume Match</p>
+                  <p className="mt-2 text-3xl font-semibold text-olive-dark">
+                    {preview?.tailored.score ?? '—'}
+                    {preview?.tailored.score != null ? '%' : ''}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-line bg-canvas p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Improvement</p>
+                  <p className="mt-2 text-3xl font-semibold text-charcoal">
+                    {preview ? `${preview.improvement > 0 ? '+' : ''}${preview.improvement} points` : '—'}
+                  </p>
+                </div>
+              </div>
+              {previewLoading && <p className="text-sm text-muted">Calculating a truthful tailored preview with the Match Engine…</p>}
+              {previewError && <p className="text-sm text-danger">{previewError}</p>}
+              {preview?.cannotReachTargetReason && <p className="text-sm text-charcoal">{preview.cannotReachTargetReason}</p>}
+              <div className="space-y-1">
+                <SkillLine label="Matched" skills={topSkills(preview?.matchedSkills ?? liveMatch(reviewing).matchedSkills, 8)} />
+                <SkillLine label="Still Missing" skills={topSkills(preview?.stillMissing ?? liveMatch(reviewing).missingSkills, 8)} />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Selected resume</p>
+                <p className="mt-1 text-sm text-charcoal">{resume?.versionLabel ?? 'No master resume selected'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Resume preview</p>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-2xl border border-line bg-canvas px-4 py-3 text-xs leading-5 text-charcoal">
+                  {(preview?.previewText || resume?.parsedText || 'No resume text is available.').slice(0, 1800)}
+                </pre>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Application readiness</p>
+                <ul className="mt-2 space-y-1 text-sm text-charcoal">
+                  <li>{resume?.parsedText?.trim() ? 'Current resume is ready to use.' : 'A master resume is required before applying.'}</li>
+                  <li>{employerApplyHref(reviewing) ? 'Employer application URL is available.' : 'This listing does not include an employer application URL.'}</li>
+                  <li>JobPilot does not submit the external application for you.</li>
+                </ul>
+              </div>
+              {!resume?.parsedText?.trim() && (
+                <p className="text-sm text-muted">Upload or select a master resume to tailor keywords that are already evidenced in your experience.</p>
+              )}
+            </div>
+            <div className="mt-auto flex flex-wrap gap-2 border-t border-line px-6 py-4">
+              <Button type="button" variant="secondary" onClick={() => void onUseCurrentResume()} disabled={!reviewing}>
+                Use Current Resume
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => void onTailorResume()} disabled={!resume?.parsedText?.trim()}>
+                Tailor Resume
+              </Button>
+              <ApplyNowLink href={employerApplyHref(reviewing)} />
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   )
 }

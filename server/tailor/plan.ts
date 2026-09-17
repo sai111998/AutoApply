@@ -112,14 +112,14 @@ export function applyAlignmentToPlan(
     responsibilityCoverageAfter: matchAfter?.responsibilityCoverage,
     cannotReachEightyReason:
       matchAfter && matchAfter.matchScore < 80 && matchAfter.missingRequired.length
-        ? `80+ alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${matchAfter.missingRequired.join(', ')}.`
+        ? `80–85% alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${matchAfter.missingRequired.join(', ')}.`
         : undefined,
     alignmentSummary: [
       originalMatchScore != null && tailoredMatchScore != null
         ? `Match Engine ${originalMatchScore}/100 → ${tailoredMatchScore}/100. Supported JD requirements: ${matchAfter?.supportedCount ?? alignment.supportedCoverageAfter}/${matchAfter?.supportedTotal ?? alignment.requirementTotal}.`
         : `JobPilot Alignment Score ${alignment.atsAlignmentScore}/100. Clearly represented supported requirements: ${alignment.supportedCoverageAfter}/${alignment.requirementTotal}.`,
       matchAfter && matchAfter.matchScore < 80 && matchAfter.missingRequired.length
-        ? `80+ alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${matchAfter.missingRequired.join(', ')}.`
+        ? `80–85% alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${matchAfter.missingRequired.join(', ')}.`
         : '',
     ]
       .filter(Boolean)

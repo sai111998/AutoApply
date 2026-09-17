@@ -184,7 +184,7 @@ export function cannotReachEightyReason(report: MatchReport): string | undefined
   if (report.matchScore >= 80) return undefined
   const missingRequired = (report.requiredSkills?.missing ?? []).map((item) => item.name).filter(Boolean)
   if (!missingRequired.length) return undefined
-  return `80+ alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${missingRequired.join(', ')}.`
+  return `80–85% alignment could not be achieved because the resume does not demonstrate the following required qualifications: ${missingRequired.join(', ')}.`
 }
 
 function evidenceFor(requirement: string, records: ResumeEvidenceRecord[]): ResumeEvidenceRecord | undefined {

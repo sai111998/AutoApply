@@ -1,10 +1,9 @@
-import { extractJobLocal, extractResumeLocal } from '../match/extract-local'
-import { scoreMatch } from '../match/engine'
 import type { ServerConfig } from '../config'
 import { deduplicateJobs } from './deduplicate'
 import type { FetchLike } from './http'
 import { stableJobId } from './normalize'
 import { createJobProviders, providerStatuses, selectProviders } from './provider'
+import { scoreJobAgainstResume } from './score'
 import { persistDiscoveredJobs } from './store'
 import type {
   DiscoverRequest,
@@ -56,16 +55,8 @@ function matchesExperience(job: NormalizedJob, level: string): boolean {
 }
 
 function scoreJob(job: NormalizedJob, resumeText: string): Pick<DiscoveredJob, 'matchScore' | 'matchedSkills'> {
-  const description = job.description?.trim()
-  if (!description) return { matchScore: null, matchedSkills: [] }
-  const report = scoreMatch(extractResumeLocal(resumeText), extractJobLocal(description), resumeText)
-  return {
-    matchScore: report.matchScore,
-    matchedSkills: [
-      ...report.requiredSkills.matched.map((item) => item.name),
-      ...report.preferredSkills.matched.map((item) => item.name),
-    ].slice(0, 6),
-  }
+  const scored = scoreJobAgainstResume(job, resumeText)
+  return { matchScore: scored.score, matchedSkills: scored.matchedSkills }
 }
 
 export async function discoverJobs(

@@ -9,6 +9,19 @@ export function cleanText(value: unknown): string | null {
   return text || null
 }
 
+export function cleanMultilineText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const text = value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+  return text || null
+}
+
 export function asNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value !== 'string') return null
@@ -147,7 +160,7 @@ export function emptyNormalizedJob(partial: Partial<NormalizedJob> & Pick<Normal
     workArrangement: partial.workArrangement ?? null,
     employmentType: cleanText(partial.employmentType),
     seniority: cleanText(partial.seniority),
-    description: cleanText(partial.description),
+    description: cleanMultilineText(partial.description),
     jobUrl,
     postedAt: partial.postedAt ?? null,
     salaryMin: partial.salaryMin ?? null,

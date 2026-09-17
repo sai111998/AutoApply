@@ -2,9 +2,11 @@ import { HttpError } from '../types'
 import type { DiscoverRequest, EmploymentFilter, JobProviderName, NormalizedJob, RemoteFilter } from './types'
 import { emptyNormalizedJob } from './normalize'
 import type { LiveJobsRequest } from './list'
+import type { LiveJobMatch } from './score'
 
 const REMOTE: RemoteFilter[] = ['any', 'remote', 'onsite', 'hybrid']
 const EMPLOYMENT: EmploymentFilter[] = ['any', 'full-time', 'part-time', 'contract', 'temporary', 'internship']
+const SORTS = ['match', 'recent', 'relevance'] as const
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -32,6 +34,15 @@ function asEmployment(value: unknown): EmploymentFilter {
   return (EMPLOYMENT as string[]).includes(text) ? (text as EmploymentFilter) : 'any'
 }
 
+function asSort(value: unknown): LiveJobsRequest['sort'] {
+  const text = asString(value).toLowerCase()
+  return (SORTS as readonly string[]).includes(text) ? (text as LiveJobsRequest['sort']) : 'match'
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key) && record[key] != null && record[key] !== ''
+}
+
 function queryString(value: unknown): string {
   if (Array.isArray(value)) return asString(value[0])
   return asString(value)
@@ -50,6 +61,52 @@ export function parseLiveJobsQuery(query: unknown): LiveJobsRequest {
     seniority: queryString(record.seniority),
     page: asBoundedInt(record.page, 1, 1, 50),
     limit: asBoundedInt(record.limit ?? record.pageSize, 25, 1, 50),
+    location: queryString(record.location),
+    resumeText: queryString(record.resumeText) || undefined,
+    resumeVersionId: queryString(record.resumeVersionId) || undefined,
+    sort: asSort(record.sort),
+  }
+}
+
+export function parseLiveJobsRequest(query: unknown, body?: unknown): LiveJobsRequest {
+  const fromQuery = parseLiveJobsQuery(query)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fromQuery
+  const record = body as Record<string, unknown>
+  const fromBody = parseLiveJobsQuery(body)
+  return {
+    q: hasOwn(record, 'q') || hasOwn(record, 'keywords') || hasOwn(record, 'title') ? fromBody.q : fromQuery.q,
+    country: hasOwn(record, 'country') ? fromBody.country : fromQuery.country,
+    state: hasOwn(record, 'state') ? fromBody.state : fromQuery.state,
+    remote: hasOwn(record, 'remote') ? fromBody.remote : fromQuery.remote,
+    employmentType:
+      hasOwn(record, 'employment_type') || hasOwn(record, 'employmentType')
+        ? fromBody.employmentType
+        : fromQuery.employmentType,
+    seniority: hasOwn(record, 'seniority') ? fromBody.seniority : fromQuery.seniority,
+    page: hasOwn(record, 'page') ? fromBody.page : fromQuery.page,
+    limit: hasOwn(record, 'limit') || hasOwn(record, 'pageSize') ? fromBody.limit : fromQuery.limit,
+    location: hasOwn(record, 'location') ? fromBody.location : fromQuery.location,
+    resumeText: fromBody.resumeText || fromQuery.resumeText,
+    resumeVersionId: fromBody.resumeVersionId || fromQuery.resumeVersionId,
+    sort: hasOwn(record, 'sort') ? fromBody.sort : fromQuery.sort,
+  }
+}
+
+export function parseLiveJobPreviewRequest(body: unknown): {
+  resumeText: string
+  resumeVersionId: string | null
+  job: NormalizedJob
+} {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new HttpError(400, 'Request body must be a JSON object')
+  }
+  const record = body as Record<string, unknown>
+  const resumeText = asString(record.resumeText)
+  if (!resumeText) throw new HttpError(400, 'resumeText is required')
+  return {
+    resumeText,
+    resumeVersionId: asString(record.resumeVersionId) || null,
+    job: parseNormalizedJob(record.job),
   }
 }
 
@@ -108,6 +165,33 @@ export function parseNormalizedJob(body: unknown): NormalizedJob {
     discoveredAt: asString(record.discoveredAt) || asString(record.fetchedAt) || undefined,
     lastVerifiedAt: asString(record.lastVerifiedAt) || undefined,
     identityKey: asString(record.identityKey) || undefined,
-    rawMetadata: record.rawMetadata && typeof record.rawMetadata === 'object' ? (record.rawMetadata as Record<string, unknown>) : {},
+    rawMetadata: savedJobMetadata(record),
   })
+}
+
+function savedJobMetadata(record: Record<string, unknown>): Record<string, unknown> {
+  const raw =
+    record.rawMetadata && typeof record.rawMetadata === 'object' && !Array.isArray(record.rawMetadata)
+      ? { ...(record.rawMetadata as Record<string, unknown>) }
+      : {}
+  const match = record.match && typeof record.match === 'object' && !Array.isArray(record.match)
+    ? (record.match as Partial<LiveJobMatch>)
+    : null
+  const matchScore =
+    typeof record.matchScore === 'number'
+      ? record.matchScore
+      : typeof match?.score === 'number'
+        ? match.score
+        : typeof raw.matchScore === 'number'
+          ? raw.matchScore
+          : null
+  const resumeVersionId =
+    asString(record.resumeVersionId) ||
+    asString(match?.resumeVersionId) ||
+    asString(raw.resumeVersionId) ||
+    null
+  if (matchScore != null) raw.matchScore = matchScore
+  if (resumeVersionId) raw.resumeVersionId = resumeVersionId
+  if (typeof record.createdAt === 'string' && record.createdAt.trim()) raw.createdAt = record.createdAt.trim()
+  return raw
 }

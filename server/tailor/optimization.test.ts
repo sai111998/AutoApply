@@ -145,7 +145,7 @@ Required:
     expect(result.tailored?.skills.join(' ')).not.toMatch(/Kubernetes|Helm|Istio|Terraform/)
     expect(result.tailoredMatchScore ?? 100).toBeLessThan(80)
     expect(result.cannotReachEightyReason ?? result.plan.cannotReachEightyReason ?? '').toMatch(
-      /80\+ alignment could not be achieved/,
+      /80–85% alignment could not be achieved/,
     )
     expect(result.cannotReachEightyReason ?? result.plan.cannotReachEightyReason ?? '').toMatch(/Kubernetes/)
   })

@@ -35,6 +35,8 @@ describe('discovered job mapping', () => {
     expect(job.provider).toBe('jooble')
     expect(job.description).toMatch(/Java/)
     expect(job.source).toBe('Jooble')
+    expect(job.matchScore).toBe(94)
+    expect(job.jobUrl).toContain('jooble.org')
   })
 
   it('labels providers for the UI', () => {

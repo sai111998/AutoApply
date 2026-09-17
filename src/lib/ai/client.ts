@@ -86,6 +86,15 @@ export interface DiscoverJobsRequest {
   userId?: string
 }
 
+export interface LiveJobMatchResult {
+  score: number | null
+  matchedSkills: string[]
+  missingSkills: string[]
+  resumeVersionId: string | null
+  scoreUpdatedAt: string | null
+  cached?: boolean
+}
+
 export interface DiscoveredJobResult {
   id: string
   provider: string
@@ -110,8 +119,10 @@ export interface DiscoveredJobResult {
   fetchedAt?: string
   lastVerifiedAt: string
   identityKey: string
+  match?: LiveJobMatchResult
   matchScore: number | null
   matchedSkills: string[]
+  missingSkills?: string[]
   demo: boolean
   liveDemoProvider?: boolean
   rawMetadata?: Record<string, unknown>
@@ -152,11 +163,15 @@ export interface LiveJobsQuery {
   q?: string
   country?: string
   state?: string
+  location?: string
   remote?: string
   employment_type?: string
   seniority?: string
   page?: number
   limit?: number
+  sort?: 'match' | 'recent' | 'relevance'
+  resumeText?: string
+  resumeVersionId?: string
 }
 
 export interface LiveJobsResponse {
@@ -170,20 +185,77 @@ export interface LiveJobsResponse {
 }
 
 export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<LiveJobsResponse> {
+  const payload = {
+    q: query.q?.trim() || undefined,
+    country: query.country?.trim() || undefined,
+    state: query.state?.trim() || undefined,
+    location: query.location?.trim() || undefined,
+    remote: query.remote && query.remote !== 'any' ? query.remote : undefined,
+    employment_type: query.employment_type && query.employment_type !== 'any' ? query.employment_type : undefined,
+    seniority: query.seniority && query.seniority !== 'any' ? query.seniority : undefined,
+    page: query.page,
+    limit: query.limit,
+    sort: query.sort || 'match',
+    resumeText: query.resumeText?.trim() || undefined,
+    resumeVersionId: query.resumeVersionId?.trim() || undefined,
+  }
   const params = new URLSearchParams()
-  if (query.q?.trim()) params.set('q', query.q.trim())
-  if (query.country?.trim()) params.set('country', query.country.trim())
-  if (query.state?.trim()) params.set('state', query.state.trim())
-  if (query.remote && query.remote !== 'any') params.set('remote', query.remote)
-  if (query.employment_type && query.employment_type !== 'any') params.set('employment_type', query.employment_type)
-  if (query.seniority && query.seniority !== 'any') params.set('seniority', query.seniority)
-  if (query.page) params.set('page', String(query.page))
-  if (query.limit) params.set('limit', String(query.limit))
-  const response = await fetch(apiUrl(`/api/jobs?${params.toString()}`))
+  if (payload.q) params.set('q', payload.q)
+  if (payload.country) params.set('country', payload.country)
+  if (payload.state) params.set('state', payload.state)
+  if (payload.location) params.set('location', payload.location)
+  if (payload.remote) params.set('remote', payload.remote)
+  if (payload.employment_type) params.set('employment_type', payload.employment_type)
+  if (payload.seniority) params.set('seniority', payload.seniority)
+  if (payload.page) params.set('page', String(payload.page))
+  if (payload.limit) params.set('limit', String(payload.limit))
+  if (payload.sort) params.set('sort', payload.sort)
+
+  const response = payload.resumeText
+    ? await fetch(apiUrl('/api/jobs'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    : await fetch(apiUrl(`/api/jobs?${params.toString()}`))
   const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
   if (!response.ok || !body || !('jobs' in body)) {
     const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
     throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
+  }
+  return body
+}
+
+export interface LiveTailorPreviewResult {
+  current: LiveJobMatchResult
+  tailored: LiveJobMatchResult
+  improvement: number
+  matchedSkills: string[]
+  missingSkills: string[]
+  stillMissing: string[]
+  cannotReachTargetReason: string | null
+  previewText: string
+  cached?: boolean
+}
+
+export async function previewLiveJobRequest(payload: {
+  resumeText: string
+  resumeVersionId?: string
+  job: Pick<
+    DiscoveredJobResult,
+    'id' | 'providerJobId' | 'title' | 'company' | 'description' | 'sourceJobId'
+  >
+}): Promise<LiveTailorPreviewResult> {
+  const response = await fetch(apiUrl('/api/jobs/preview'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as LiveTailorPreviewResult | { error?: string } | null
+  if (!response.ok || !body || !('current' in body) || !('tailored' in body)) {
+    const message =
+      body && 'error' in body && typeof body.error === 'string' ? body.error : 'Could not preview the tailored resume match.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Could not preview the tailored resume match.' : message)
   }
   return body
 }
@@ -198,7 +270,11 @@ export async function getLiveJobRequest(provider: string, jobId: string): Promis
   return body
 }
 
-export async function saveDiscoveredJobRequest(payload: { userId: string; job: Job }) {
+export async function saveDiscoveredJobRequest(payload: {
+  userId: string
+  job: Job
+  resumeVersionId?: string | null
+}) {
   const response = await fetch(apiUrl('/api/jobs/save'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -225,6 +301,14 @@ export async function saveDiscoveredJobRequest(payload: { userId: string; job: J
         identityKey: payload.job.identityKey,
         discoveredAt: payload.job.discoveredAt,
         lastVerifiedAt: payload.job.lastVerifiedAt,
+        matchScore: payload.job.matchScore ?? null,
+        resumeVersionId: payload.resumeVersionId ?? null,
+        createdAt: payload.job.createdAt,
+        rawMetadata: {
+          matchScore: payload.job.matchScore ?? null,
+          resumeVersionId: payload.resumeVersionId ?? null,
+          createdAt: payload.job.createdAt,
+        },
       },
     }),
   })

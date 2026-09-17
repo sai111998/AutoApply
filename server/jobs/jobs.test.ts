@@ -7,8 +7,10 @@ import { discoverJobs } from './discover'
 import { fetchProviderJob } from './provider'
 import { deduplicateJobs } from './deduplicate'
 import { fingerprint, identityKey, parseSalary, stableJobId } from './normalize'
-import { parseDiscoverRequest, parseLiveJobsQuery } from './parse'
-import { toLiveJob } from './list'
+import { parseDiscoverRequest, parseLiveJobsQuery, parseNormalizedJob } from './parse'
+import { sortLiveJobs, toLiveJob } from './list'
+import { clearLiveScoreCache } from './score'
+import { clearLivePreviewCache } from './preview'
 import { normalizeJoobleJob } from './providers/jooble'
 import {
   buildPublicJobsSearchParams,
@@ -127,6 +129,8 @@ function jsonResponse(body: unknown, status = 200) {
 
 afterEach(() => {
   clearHttpCaches()
+  clearLiveScoreCache()
+  clearLivePreviewCache()
 })
 
 describe('normalization and identity', () => {
@@ -753,6 +757,7 @@ describe('discover HTTP API', () => {
     expect(parsed.employmentType).toBe('full-time')
     expect(parsed.seniority).toBe('Mid')
     expect(parsed.limit).toBe(50)
+    expect(parsed.sort).toBe('match')
   })
 })
 
@@ -795,6 +800,7 @@ describe('GET /api/jobs live catalog', () => {
     expect(response.body.jobs[0].sourceJobId).toBe('ffd759ce-b1fa-4ace-a823-bb0d0595e4ae')
     expect(response.body.jobs[0].fetchedAt).toBeTruthy()
     expect(response.body.jobs[0].seniority).toBe('Senior')
+    expect(response.body.jobs[0].match.score).toBeNull()
     expect(response.body.source).toBe('Job Opportunities API')
     const catalog = toLiveJob(normalizeJobOpportunitiesJob(jobOpportunitiesPayload.data[0])!)
     expect(catalog.url).toBe(catalog.jobUrl)
@@ -821,5 +827,94 @@ describe('GET /api/jobs live catalog', () => {
     expect(response.status).toBe(200)
     expect(response.body.jobs).toEqual([])
     expect(response.body.warning.message).toBe('Live job source temporarily unavailable.')
+  })
+
+  it('scores live jobs against the selected resume and sorts by match score', async () => {
+    const weakJob = {
+      ...jobOpportunitiesPayload.data[0],
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      slug: 'kubernetes-administrator',
+      title: 'Kubernetes Administrator',
+      company: 'Other Corp',
+      description: 'Required qualifications: Kubernetes, Terraform, Go, Kafka. No Java.',
+      apply_url: 'https://jobs.example.com/k8s',
+      posted_at: '2026-09-18T00:00:00Z',
+    }
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        data: [weakJob, jobOpportunitiesPayload.data[0]],
+      }),
+    )
+    const app = createApp({
+      config: { ...config, joobleEnabled: false, usajobsEnabled: false },
+      fetchImpl,
+    })
+    const response = await request(app).post('/api/jobs').send({
+      q: 'Engineer',
+      country: 'US',
+      sort: 'match',
+      resumeText: JAVA_RESUME_TEXT,
+      resumeVersionId: 'resume-1',
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.jobs).toHaveLength(2)
+    expect(response.body.jobs[0].title).toBe('Java Software Engineer')
+    expect(response.body.jobs[0].match.score).toBeGreaterThan(response.body.jobs[1].match.score)
+    expect(response.body.jobs[0].match.matchedSkills.join(' ')).toMatch(/Java/i)
+    expect(response.body.jobs[0].match.resumeVersionId).toBe('resume-1')
+    expect(response.body.jobs[0].url).toContain('myworkdayjobs.com')
+    const ranked = sortLiveJobs(response.body.jobs, {
+      q: 'Engineer',
+      country: 'US',
+      state: '',
+      remote: 'any',
+      employmentType: 'any',
+      seniority: '',
+      page: 1,
+      limit: 25,
+      sort: 'match',
+    })
+    expect(ranked[0].match.score ?? -1).toBeGreaterThanOrEqual(ranked[1].match.score ?? -1)
+  })
+
+  it('previews current and tailored scores without submitting an application', async () => {
+    const job = normalizeJobOpportunitiesJob(jobOpportunitiesPayload.data[0])
+    const app = createApp({ config })
+    const response = await request(app).post('/api/jobs/preview').send({
+      resumeText: JAVA_RESUME_TEXT,
+      resumeVersionId: 'resume-1',
+      job,
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.current.score).toEqual(expect.any(Number))
+    expect(response.body.tailored.score).toEqual(expect.any(Number))
+    expect(response.body.improvement).toEqual(expect.any(Number))
+    expect(response.body.stillMissing).toEqual(expect.any(Array))
+  })
+
+  it('saves a live job with title, employer URL, resume version, and match score', async () => {
+    const app = createApp({ config })
+    const job = normalizeJobOpportunitiesJob(jobOpportunitiesPayload.data[0])
+    const response = await request(app).post('/api/jobs/save').send({
+      userId: '11111111-1111-4111-8111-111111111111',
+      job: {
+        ...job,
+        matchScore: 82,
+        resumeVersionId: 'resume-1',
+        createdAt: '2026-09-17T00:00:00.000Z',
+      },
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.applicationCreated).toBe(false)
+    const parsed = parseNormalizedJob({
+      ...job,
+      matchScore: 82,
+      resumeVersionId: 'resume-1',
+      createdAt: '2026-09-17T00:00:00.000Z',
+    })
+    expect(parsed.jobUrl).toContain('myworkdayjobs.com')
+    expect(parsed.rawMetadata.matchScore).toBe(82)
+    expect(parsed.rawMetadata.resumeVersionId).toBe('resume-1')
+    expect(parsed.rawMetadata.createdAt).toBe('2026-09-17T00:00:00.000Z')
   })
 })

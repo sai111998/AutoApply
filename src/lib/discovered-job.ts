@@ -25,6 +25,7 @@ export function discoveredToJob(job: DiscoveredJobResult, userId: string): Job {
     salaryCurrency: job.salaryCurrency,
     source: job.source,
     identityKey: job.identityKey,
+    matchScore: job.match?.score ?? job.matchScore ?? null,
   }
 }
 

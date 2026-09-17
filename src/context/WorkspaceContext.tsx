@@ -106,7 +106,7 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   updateApplication: (id: string, patch: Partial<Pick<Application, 'status' | 'notes' | 'dateApplied'>>) => Promise<void>
   deleteApplications: (ids: string[]) => Promise<number>
   savePreferences: (preferences: UserPreferences) => Promise<void>
-  saveDiscoveredJob: (job: Job) => Promise<Job>
+  saveDiscoveredJob: (job: Job, extras?: { resumeVersionId?: string | null }) => Promise<Job>
   savedJobIds: string[]
   saveResumeVersion: (version: ResumeVersion) => Promise<void>
   renameResumeVersion: (id: string, versionName: string) => Promise<void>
@@ -616,13 +616,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   )
 
   const saveDiscoveredJob = useCallback(
-    async (job: Job) => {
+    async (job: Job, extras?: { resumeVersionId?: string | null }) => {
       if (!user) throw new Error('Not signed in')
-      const stored: Job = { ...job, userId: user.id }
+      const stored: Job = { ...job, userId: user.id, matchScore: job.matchScore ?? null }
       replace((current) => ({ ...current, jobs: upsertById(current.jobs, stored) }))
       setSavedJobIds((current) => (current.includes(stored.id) ? current : [...current, stored.id]))
       if (isDemo || !supabase) return stored
-      await saveDiscoveredJobRequest({ userId: user.id, job: stored })
+      await saveDiscoveredJobRequest({
+        userId: user.id,
+        job: stored,
+        resumeVersionId: extras?.resumeVersionId ?? null,
+      })
       try {
         await supabase.from('saved_jobs').upsert({ user_id: user.id, job_id: stored.id }, { onConflict: 'user_id,job_id' })
       } catch {

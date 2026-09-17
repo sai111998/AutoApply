@@ -83,6 +83,7 @@ export interface Job {
   salaryCurrency?: string | null
   source?: string | null
   identityKey?: string | null
+  matchScore?: number | null
 }
 
 export interface SkillSignal {

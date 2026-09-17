@@ -11,7 +11,11 @@ describe('job analysis API routing', () => {
 
   it('uses the same live jobs catalog path on the client and Express app', () => {
     expect(client).toMatch(/fetch\(apiUrl\(`\/api\/jobs\?/)
+    expect(client).toMatch(/fetch\(apiUrl\('\/api\/jobs'\)/)
     expect(app).toMatch(/app\.get\('\/api\/jobs'/)
+    expect(app).toMatch(/app\.post\('\/api\/jobs'/)
+    expect(app).toMatch(/app\.post\('\/api\/jobs\/preview'/)
+    expect(client).toMatch(/\/api\/jobs\/preview/)
     expect(client).not.toMatch(/api\.jobopportunitiesapi\.org/)
   })
 
