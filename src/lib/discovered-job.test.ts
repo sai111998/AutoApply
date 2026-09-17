@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { discoveredToJob, formatSalary, listingSource, mergeLiveJob, providerLabel } from './discovered-job'
+import { applyUrl, discoveredToJob, formatSalary, listingSource, mergeLiveJob, providerLabel } from './discovered-job'
 import type { DiscoveredJobResult } from './ai/client'
 
 const sample: DiscoveredJobResult = {
@@ -52,6 +52,7 @@ describe('discovered job mapping', () => {
       providerJobId: 'ffd759ce-b1fa-4ace-a823-bb0d0595e4ae',
       source: 'Job Opportunities API',
       description: '',
+      seniority: 'Senior',
       rawMetadata: { listingSource: 'workday' },
     }
     expect(listingSource(live)).toBe('workday')
@@ -63,5 +64,7 @@ describe('discovered job mapping', () => {
     expect(merged.description).toMatch(/Full Java posting/)
     expect(merged.jobUrl).toContain('myworkdayjobs.com')
     expect(merged.source).toBe('Job Opportunities API')
+    expect(applyUrl(merged)).toContain('myworkdayjobs.com')
+    expect(discoveredToJob(merged, 'user-1').seniority).toBe('Senior')
   })
 })

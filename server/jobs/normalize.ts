@@ -146,6 +146,7 @@ export function emptyNormalizedJob(partial: Partial<NormalizedJob> & Pick<Normal
     remote: partial.remote ?? null,
     workArrangement: partial.workArrangement ?? null,
     employmentType: cleanText(partial.employmentType),
+    seniority: cleanText(partial.seniority),
     description: cleanText(partial.description),
     jobUrl,
     postedAt: partial.postedAt ?? null,

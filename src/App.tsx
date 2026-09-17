@@ -92,6 +92,7 @@ export default function App() {
                   <Route path="/resume" element={<ResumePage />} />
                   <Route path="/resume/versions/:versionId" element={<ResumeVersionPage />} />
                   <Route path="/discover" element={<JobDiscoveryPage />} />
+                  <Route path="/jobs" element={<JobDiscoveryPage />} />
                   <Route path="/analyze" element={<JobAnalysisPage />} />
                   <Route path="/matches/:matchId" element={<MatchResultsPage />} />
                   <Route path="/matches/:matchId/tailor" element={<TailorResumePage />} />

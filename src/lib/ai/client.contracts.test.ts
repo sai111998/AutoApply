@@ -9,6 +9,12 @@ describe('job analysis API routing', () => {
   const vite = readFileSync(path.resolve(process.cwd(), 'vite.config.ts'), 'utf8')
   const handler = readFileSync(path.resolve(process.cwd(), 'api/[...path].ts'), 'utf8')
 
+  it('uses the same live jobs catalog path on the client and Express app', () => {
+    expect(client).toMatch(/fetch\(apiUrl\(`\/api\/jobs\?/)
+    expect(app).toMatch(/app\.get\('\/api\/jobs'/)
+    expect(client).not.toMatch(/api\.jobopportunitiesapi\.org/)
+  })
+
   it('uses the same analyze path on the client and Express app', () => {
     expect(client).toMatch(/fetch\(apiUrl\('\/api\/jobs\/analyze'\)/)
     expect(client).toMatch(/method: 'POST'/)

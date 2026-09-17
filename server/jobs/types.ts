@@ -14,6 +14,7 @@ export interface NormalizedJob {
   remote: boolean | null
   workArrangement: string | null
   employmentType: string | null
+  seniority: string | null
   description: string | null
   jobUrl: string | null
   postedAt: string | null
@@ -38,6 +39,9 @@ export interface ProviderSearchParams {
   page: number
   pageSize: number
   radiusKm?: number | null
+  q?: string
+  country?: string
+  state?: string
 }
 
 export interface ProviderWarning {

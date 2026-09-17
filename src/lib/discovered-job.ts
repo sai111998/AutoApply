@@ -8,16 +8,17 @@ export function discoveredToJob(job: DiscoveredJobResult, userId: string): Job {
     title: job.title,
     company: job.company || 'Unknown company',
     location: job.location ?? '',
-    jobUrl: job.jobUrl ?? '',
+    jobUrl: job.jobUrl || job.url || '',
     description: job.description ?? '',
-    createdAt: job.discoveredAt,
+    createdAt: job.discoveredAt || job.fetchedAt || new Date().toISOString(),
     provider: job.provider,
-    providerJobId: job.providerJobId,
+    providerJobId: job.providerJobId || job.sourceJobId,
     remote: job.remote,
     workArrangement: job.workArrangement,
     employmentType: job.employmentType,
+    seniority: job.seniority,
     postedAt: job.postedAt,
-    discoveredAt: job.discoveredAt,
+    discoveredAt: job.discoveredAt || job.fetchedAt,
     lastVerifiedAt: job.lastVerifiedAt,
     salaryMin: job.salaryMin,
     salaryMax: job.salaryMax,
@@ -49,13 +50,21 @@ export function mergeLiveJob(current: DiscoveredJobResult, fresh: DiscoveredJobR
     remote: fresh.remote ?? current.remote,
     workArrangement: fresh.workArrangement ?? current.workArrangement,
     employmentType: fresh.employmentType ?? current.employmentType,
+    seniority: fresh.seniority ?? current.seniority,
     description: fresh.description || current.description,
-    jobUrl: fresh.jobUrl || current.jobUrl,
+    jobUrl: fresh.jobUrl || fresh.url || current.jobUrl || current.url || null,
+    url: fresh.url || fresh.jobUrl || current.url || current.jobUrl || null,
+    sourceJobId: fresh.sourceJobId || fresh.providerJobId || current.sourceJobId || current.providerJobId,
     postedAt: fresh.postedAt ?? current.postedAt,
     lastVerifiedAt: fresh.lastVerifiedAt || current.lastVerifiedAt,
     source: fresh.source || current.source,
     rawMetadata: { ...current.rawMetadata, ...fresh.rawMetadata },
   }
+}
+
+export function applyUrl(job: Pick<DiscoveredJobResult, 'jobUrl' | 'url'>): string | null {
+  const value = (job.jobUrl || job.url || '').trim()
+  return value || null
 }
 
 export function formatSalary(job: {

@@ -34,12 +34,14 @@ function llmStub(): LlmClient {
 describe('restoreApiPath', () => {
   it('keeps Express routes that already include /api', () => {
     expect(restoreApiPath('/api/jobs/analyze')).toBe('/api/jobs/analyze')
+    expect(restoreApiPath('/api/jobs')).toBe('/api/jobs')
     expect(restoreApiPath('/api/health')).toBe('/api/health')
     expect(restoreApiPath('/api/resumes/tailor?x=1')).toBe('/api/resumes/tailor?x=1')
   })
 
   it('prefixes /api when a Vercel catch-all strips it', () => {
     expect(restoreApiPath('/jobs/analyze')).toBe('/api/jobs/analyze')
+    expect(restoreApiPath('/jobs')).toBe('/api/jobs')
     expect(restoreApiPath('/health')).toBe('/api/health')
     expect(restoreApiPath('/resumes/extract?name=cv.pdf')).toBe('/api/resumes/extract?name=cv.pdf')
   })

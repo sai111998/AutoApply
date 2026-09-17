@@ -10,8 +10,9 @@ import {
   type PersistFn,
 } from './services/analysis'
 import { discoverJobs } from './jobs/discover'
+import { listLiveJobs } from './jobs/list'
 import type { FetchLike } from './jobs/http'
-import { parseDiscoverRequest, parseNormalizedJob } from './jobs/parse'
+import { parseDiscoverRequest, parseLiveJobsQuery, parseNormalizedJob } from './jobs/parse'
 import { createJobProviders, fetchProviderJob, providerStatuses } from './jobs/provider'
 import { persistSavedJob } from './jobs/store'
 import { extractResumeText } from './services/resume-text'
@@ -43,6 +44,20 @@ export function createApp(options: AppOptions): Express {
       databaseConfigured: Boolean(options.config.supabaseUrl && options.config.supabaseServiceRoleKey),
       jobProviders: providerStatuses(createJobProviders(options.config, options.fetchImpl)),
     })
+  })
+
+  app.get('/api/jobs', async (req: Request, res: Response) => {
+    try {
+      const request = parseLiveJobsQuery(req.query)
+      const result = await listLiveJobs(options.config, request, options.fetchImpl)
+      res.json(result)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Live job source temporarily unavailable.'
+      res.status(status).json({
+        error: /key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message,
+      })
+    }
   })
 
   app.post('/api/jobs/discover', async (req: Request, res: Response) => {

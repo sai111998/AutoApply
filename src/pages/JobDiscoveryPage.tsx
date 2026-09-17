@@ -3,85 +3,107 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Compass, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, PageHeader } from '@/components/ui/Card'
-import { EmptyState } from '@/components/ui/EmptyState'
+import { EmptyState, ErrorState, SkeletonBlock } from '@/components/ui/EmptyState'
 import { Field, Select, TextInput } from '@/components/ui/Field'
 import { Pill, ScoreBadge } from '@/components/ui/Badge'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
-import { discoverJobsRequest, getAnalysisHealth, getLiveJobRequest, type DiscoveredJobResult } from '@/lib/ai/client'
-import { discoveredToJob, formatSalary, listingSource, mergeLiveJob, providerLabel } from '@/lib/discovered-job'
+import { getLiveJobRequest, listLiveJobsRequest, type DiscoveredJobResult } from '@/lib/ai/client'
+import { applyUrl, discoveredToJob, listingSource, mergeLiveJob, providerLabel } from '@/lib/discovered-job'
 import { formatDate } from '@/lib/format'
+
+const US_STATES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
+  'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK',
+  'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC',
+]
+
+const SENIORITY_OPTIONS = ['Entry', 'Mid', 'Senior', 'Lead', 'Manager', 'Director', 'Intern', 'Executive']
+
+function normalizeListedJob(job: DiscoveredJobResult): DiscoveredJobResult {
+  const url = applyUrl(job)
+  return {
+    ...job,
+    jobUrl: url,
+    url,
+    providerJobId: job.providerJobId || job.sourceJobId || null,
+    sourceJobId: job.sourceJobId || job.providerJobId || null,
+    discoveredAt: job.discoveredAt || job.fetchedAt || job.discoveredAt,
+    fetchedAt: job.fetchedAt || job.discoveredAt,
+    matchScore: job.matchScore ?? null,
+    matchedSkills: job.matchedSkills ?? [],
+    demo: false,
+  }
+}
+
+function remoteLabel(job: DiscoveredJobResult): string | null {
+  if (job.workArrangement) return job.workArrangement
+  if (job.remote === true) return 'remote'
+  if (job.remote === false) return 'onsite'
+  return null
+}
 
 export function JobDiscoveryPage() {
   const { user, isDemo } = useAuth()
-  const { profile, preferences, masterResume, matches, jobs, savedJobIds, saveDiscoveredJob } = useWorkspace()
+  const { profile, preferences, matches, jobs, savedJobIds, saveDiscoveredJob } = useWorkspace()
   const { notify } = useToast()
   const navigate = useNavigate()
 
-  const [role, setRole] = useState(profile.targetJobTitles[0] || preferences.targetRoles[0] || 'Java Software Engineer')
-  const [location, setLocation] = useState(profile.location || preferences.targetLocations[0] || 'United States')
+  const [query, setQuery] = useState(profile.targetJobTitles[0] || preferences.targetRoles[0] || 'Java Software Engineer')
+  const [state, setState] = useState('')
   const [remote, setRemote] = useState('any')
   const [employmentType, setEmploymentType] = useState('any')
-  const [datePostedDays, setDatePostedDays] = useState('30')
-  const [minMatch, setMinMatch] = useState(String(preferences.minMatchScore || 0))
-  const [provider, setProvider] = useState('any')
-  const [onlySaved, setOnlySaved] = useState(false)
-  const [onlyAnalyzed, setOnlyAnalyzed] = useState(false)
-  const [page, setPage] = useState(1)
+  const [seniority, setSeniority] = useState('any')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<Awaited<ReturnType<typeof discoverJobsRequest>> | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
+  const [listed, setListed] = useState<DiscoveredJobResult[] | null>(null)
   const [selected, setSelected] = useState<DiscoveredJobResult | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
-  const [providerStatus, setProviderStatus] = useState<
-    Array<{ name: string; label: string; connectionLabel: string }>
-  >([])
+  const [hydratingId, setHydratingId] = useState<string | null>(null)
 
-  const analyzedJobIds = useMemo(() => new Set(matches.map((match) => match.jobId)), [matches])
-  const statusRows = result?.providers ?? providerStatus
+  const analyzedByJobId = useMemo(() => {
+    const map = new Map<string, (typeof matches)[number]>()
+    for (const match of matches) {
+      if (match.analysisStatus === 'complete') map.set(match.jobId, match)
+    }
+    return map
+  }, [matches])
 
-  useEffect(() => {
-    void getAnalysisHealth().then((health) => setProviderStatus(health.jobProviders))
-  }, [])
-
-  async function onSearch(nextPage = 1) {
+  async function onSearch() {
     setLoading(true)
     setError(null)
-    setPage(nextPage)
+    setWarning(null)
     try {
-      const response = await discoverJobsRequest({
-        roles: role.trim() ? [role.trim()] : [],
-        location: location.trim(),
+      const response = await listLiveJobsRequest({
+        q: query.trim() || undefined,
+        country: 'US',
+        state: state || undefined,
         remote,
-        employmentType,
-        datePostedDays: Number(datePostedDays) || 30,
-        page: nextPage,
-        pageSize: 25,
-        minMatchScore: Number(minMatch) || null,
-        providers: provider === 'any' ? [] : [provider],
-        resumeText: masterResume?.parsedText || undefined,
-        userId: isDemo ? undefined : user?.id,
+        employment_type: employmentType,
+        seniority,
+        page: 1,
+        limit: 25,
       })
-      setResult(response)
-      if (!response.jobs.length) setSelected(null)
+      const rows = response.jobs.map(normalizeListedJob)
+      setListed(rows)
+      setWarning(response.warning?.message ?? null)
+      if (!rows.length) setSelected(null)
     } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : 'Job discovery failed.')
+      setListed([])
+      setSelected(null)
+      setError(searchError instanceof Error ? searchError.message : 'Live job source temporarily unavailable.')
     } finally {
       setLoading(false)
     }
   }
 
-  const visibleJobs = useMemo(() => {
-    const items = result?.jobs ?? []
-    return items.filter((job) => {
-      if (onlySaved && !savedJobIds.includes(job.id) && !jobs.some((item) => item.id === job.id && savedJobIds.includes(item.id))) {
-        return false
-      }
-      if (onlyAnalyzed && !analyzedJobIds.has(job.id)) return false
-      return true
-    })
-  }, [analyzedJobIds, jobs, onlyAnalyzed, onlySaved, result?.jobs, savedJobIds])
+  useEffect(() => {
+    void onSearch()
+    // Default US live listings on first visit. Later filter changes wait for Search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function onSave(job: DiscoveredJobResult) {
     if (!user) return
@@ -99,17 +121,16 @@ export function JobDiscoveryPage() {
   async function hydrateJob(job: DiscoveredJobResult): Promise<DiscoveredJobResult> {
     if (!job.providerJobId) return job
     if (job.provider !== 'job-opportunities' && job.description?.trim()) return job
+    setHydratingId(job.id)
     try {
       const fresh = await getLiveJobRequest(job.provider, job.providerJobId)
-      const merged = mergeLiveJob(job, fresh)
-      setResult((current) =>
-        current
-          ? { ...current, jobs: current.jobs.map((item) => (item.id === job.id ? { ...item, description: merged.description } : item)) }
-          : current,
-      )
+      const merged = normalizeListedJob(mergeLiveJob(job, normalizeListedJob(fresh)))
+      setListed((current) => current?.map((item) => (item.id === job.id ? merged : item)) ?? current)
       return merged
     } catch {
       return job
+    } finally {
+      setHydratingId(null)
     }
   }
 
@@ -125,20 +146,22 @@ export function JobDiscoveryPage() {
   }
 
   function goTailor(job: DiscoveredJobResult) {
-    const match = matches.find((item) => item.jobId === job.id && item.analysisStatus === 'complete')
+    const match = analyzedByJobId.get(job.id)
     if (match) {
       navigate(`/matches/${match.id}/tailor`)
       return
     }
-    goAnalyze(job)
+    void goAnalyze(job)
   }
+
+  const saved = (jobId: string) => savedJobIds.includes(jobId) || jobs.some((item) => item.id === jobId && savedJobIds.includes(item.id))
 
   return (
     <div>
       <PageHeader
-        eyebrow="Live search"
-        title="Job Discovery"
-        description="Search live US listings from Job Opportunities API, plus Jooble and USAJOBS when those keys are configured. Match scores use your stored resume and the existing Match Engine — no auto-apply."
+        eyebrow="Live jobs"
+        title="Live Jobs"
+        description="Browse current US listings from Job Opportunities API. Analyze uses your selected resume and the existing Match Engine. Saving a job does not apply for you."
       />
 
       {isDemo && (
@@ -148,12 +171,29 @@ export function JobDiscoveryPage() {
       )}
 
       <Card className="p-6">
-        <form className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" onSubmit={(event) => { event.preventDefault(); void onSearch(1) }}>
-          <Field label="Role">
-            <TextInput value={role} onChange={(event) => setRole(event.target.value)} placeholder="Java Software Engineer" />
+        <form
+          className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void onSearch()
+          }}
+        >
+          <Field label="Search">
+            <TextInput
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Title, company, or keyword"
+            />
           </Field>
-          <Field label="Location">
-            <TextInput value={location} onChange={(event) => setLocation(event.target.value)} placeholder="United States" />
+          <Field label="State">
+            <Select value={state} onChange={(event) => setState(event.target.value)}>
+              <option value="">Any US state</option>
+              {US_STATES.map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Remote">
             <Select value={remote} onChange={(event) => setRemote(event.target.value)}>
@@ -169,124 +209,157 @@ export function JobDiscoveryPage() {
               <option value="full-time">Full-time</option>
               <option value="part-time">Part-time</option>
               <option value="contract">Contract</option>
+              <option value="temporary">Temporary</option>
+              <option value="internship">Internship</option>
             </Select>
           </Field>
-          <Field label="Date posted">
-            <Select value={datePostedDays} onChange={(event) => setDatePostedDays(event.target.value)}>
-              <option value="1">Last 24 hours</option>
-              <option value="7">Last 7 days</option>
-              <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
-              <option value="60">Last 60 days</option>
+          <Field label="Seniority">
+            <Select value={seniority} onChange={(event) => setSeniority(event.target.value)}>
+              <option value="any">Any</option>
+              {SENIORITY_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
             </Select>
           </Field>
-          <Field label="Minimum match">
-            <TextInput type="number" min={0} max={100} value={minMatch} onChange={(event) => setMinMatch(event.target.value)} />
-          </Field>
-          <Field label="Source">
-            <Select value={provider} onChange={(event) => setProvider(event.target.value)}>
-              <option value="any">All live providers</option>
-              <option value="job-opportunities">Job Opportunities API</option>
-              <option value="jooble">Jooble</option>
-              <option value="usajobs">USAJOBS</option>
-            </Select>
-          </Field>
-          <div className="flex items-end gap-4">
-            <label className="flex items-center gap-2 text-sm text-charcoal">
-              <input type="checkbox" checked={onlySaved} onChange={(event) => setOnlySaved(event.target.checked)} />
-              Saved
-            </label>
-            <label className="flex items-center gap-2 text-sm text-charcoal">
-              <input type="checkbox" checked={onlyAnalyzed} onChange={(event) => setOnlyAnalyzed(event.target.checked)} />
-              Analyzed
-            </label>
-          </div>
           <div className="flex items-end">
             <Button type="submit" disabled={loading}>
-              {loading ? 'Finding jobs…' : 'Find Jobs'}
+              {loading ? 'Loading live jobs…' : 'Search live jobs'}
             </Button>
           </div>
         </form>
       </Card>
 
-      {statusRows.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-3 text-sm text-charcoal">
-          {statusRows.map((item) => (
-            <p key={item.name}>
-              <span className="font-semibold">{item.label}</span>
-              {' — '}
-              {item.connectionLabel}
-            </p>
-          ))}
+      {warning && !error && (
+        <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3 text-sm text-muted">{warning}</div>
+      )}
+
+      {error && (
+        <div className="mt-4">
+          <ErrorState title="Live job source temporarily unavailable." description={error} onRetry={() => void onSearch()} />
         </div>
       )}
 
-      {result?.warnings.length ? (
-        <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3 text-sm text-muted">
-          {result.warnings.map((warning) => (
-            <p key={`${warning.provider}-${warning.code}`}>{warning.message}</p>
-          ))}
-        </div>
-      ) : null}
-
-      {error && <p className="mt-4 text-sm text-danger">{error}</p>}
-
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="space-y-4">
-          {!result && !loading ? (
-            <EmptyState
-              icon={<Compass size={18} />}
-              title="Search live listings"
-              description="Choose a role and location, then Find Jobs. Job Opportunities API is keyless. Jooble and USAJOBS run when those keys are configured."
-            />
-          ) : visibleJobs.length === 0 && !loading ? (
-            <EmptyState
-              icon={<Compass size={18} />}
-              title="No live jobs matched your criteria."
-              description="Broaden the role, broaden the location, increase the date range, or lower the match threshold. Counts are not invented."
-            />
-          ) : (
-            visibleJobs.map((job) => (
-              <Card key={job.id} className="p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-charcoal">{job.title}</h2>
-                    <p className="mt-1 text-sm text-muted">
-                      {job.company || 'Unknown company'}
-                      {job.location ? ` · ${job.location}` : ''}
-                      {job.workArrangement ? ` · ${job.workArrangement}` : job.remote ? ' · Remote' : ''}
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <Pill tone="strong">● Live</Pill>
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-                      Source: {providerLabel(job.provider)}
-                      {listingSource(job) ? ` · ${listingSource(job)}` : ''}
-                    </p>
-                    <ScoreBadge score={job.matchScore} emptyLabel="Not analyzed" />
-                  </div>
-                </div>
-                {job.matchedSkills.length > 0 && (
-                  <p className="mt-3 text-sm text-charcoal">
-                    <span className="font-semibold">Top Matches: </span>
-                    {job.matchedSkills.join(' · ')}
-                  </p>
-                )}
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" variant="secondary" onClick={() => void onView(job)}>
-                    View
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={() => void goAnalyze(job)}>
-                    Analyze
-                  </Button>
-                  <Button type="button" onClick={() => void onSave(job)} disabled={savingId === job.id || savedJobIds.includes(job.id)}>
-                    {savedJobIds.includes(job.id) ? 'Saved' : savingId === job.id ? 'Saving…' : 'Save'}
-                  </Button>
-                </div>
-              </Card>
-            ))
+          {loading && (
+            <>
+              <SkeletonBlock className="h-36 rounded-2xl" />
+              <SkeletonBlock className="h-36 rounded-2xl" />
+              <SkeletonBlock className="h-36 rounded-2xl" />
+            </>
           )}
-          {visibleJobs.some((job) => job.provider === 'job-opportunities') && (
+          {!loading && listed && listed.length === 0 && !error && (
+            <EmptyState
+              icon={<Compass size={18} />}
+              title="No live jobs matched your filters."
+              description="Try a broader keyword, clear the state filter, or leave remote and seniority set to Any. Counts are not invented."
+            />
+          )}
+          {!loading &&
+            listed?.map((job) => {
+              const analysis = analyzedByJobId.get(job.id)
+              const url = applyUrl(job)
+              return (
+                <Card key={job.id} className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold text-charcoal">{job.title}</h2>
+                      <p className="mt-1 text-sm text-muted">{job.company || 'Unknown company'}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <Pill tone="strong">● Live</Pill>
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                        Source: {providerLabel(job.provider) || job.source}
+                        {listingSource(job) ? ` · ${listingSource(job)}` : ''}
+                      </p>
+                      <ScoreBadge score={analysis?.overallScore ?? null} emptyLabel="Not analyzed" />
+                    </div>
+                  </div>
+                  <dl className="mt-3 grid gap-1 text-sm text-charcoal sm:grid-cols-2">
+                    {job.location ? (
+                      <div>
+                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Location</dt>
+                        <dd>{job.location}</dd>
+                      </div>
+                    ) : null}
+                    {remoteLabel(job) ? (
+                      <div>
+                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Remote</dt>
+                        <dd>{remoteLabel(job)}</dd>
+                      </div>
+                    ) : null}
+                    {job.employmentType ? (
+                      <div>
+                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Employment type</dt>
+                        <dd>{job.employmentType}</dd>
+                      </div>
+                    ) : null}
+                    {job.seniority ? (
+                      <div>
+                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Seniority</dt>
+                        <dd>{job.seniority}</dd>
+                      </div>
+                    ) : null}
+                    {job.postedAt ? (
+                      <div>
+                        <dt className="text-xs uppercase tracking-[0.12em] text-muted">Posted</dt>
+                        <dd>{formatDate(job.postedAt)}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                  {analysis && (
+                    <div className="mt-3 space-y-1 text-sm text-charcoal">
+                      {analysis.skillsMatched.length > 0 && (
+                        <p>
+                          <span className="font-semibold">Matched skills: </span>
+                          {analysis.skillsMatched.map((item) => item.name).join(' · ')}
+                        </p>
+                      )}
+                      {analysis.skillsMissing.length > 0 && (
+                        <p>
+                          <span className="font-semibold">Missing skills: </span>
+                          {analysis.skillsMissing.map((item) => item.name).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button type="button" variant="secondary" onClick={() => void goAnalyze(job)}>
+                      Analyze Job
+                    </Button>
+                    <Button type="button" onClick={() => void onSave(job)} disabled={savingId === job.id || saved(job.id)}>
+                      {saved(job.id) ? 'Saved' : savingId === job.id ? 'Saving…' : 'Save Job'}
+                    </Button>
+                    {url ? (
+                      <a
+                        className="inline-flex items-center justify-center rounded-xl border border-olive-border bg-white px-4 py-2.5 text-sm font-semibold text-olive transition hover:bg-olive-soft"
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Apply/View Job
+                      </a>
+                    ) : null}
+                    <Button type="button" variant="ghost" onClick={() => void onView(job)}>
+                      Details
+                    </Button>
+                    {analysis ? (
+                      <>
+                        <Link className="inline-flex items-center px-2 text-sm font-semibold text-olive" to={`/matches/${analysis.id}`}>
+                          Match results
+                        </Link>
+                        <Button type="button" variant="secondary" onClick={() => goTailor(job)}>
+                          Tailor Resume
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                </Card>
+              )
+            })}
+          {listed?.some((job) => job.provider === 'job-opportunities' || job.source === 'Job Opportunities API') && (
             <p className="text-xs text-muted">
               Job data provided by{' '}
               <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
@@ -294,80 +367,74 @@ export function JobDiscoveryPage() {
               </a>
             </p>
           )}
-          {result && (result.hasMore || page > 1) && (
-            <div className="flex justify-between">
-              <Button type="button" variant="ghost" disabled={page <= 1 || loading} onClick={() => void onSearch(page - 1)}>
-                Previous
-              </Button>
-              <p className="text-sm text-muted">Page {page}</p>
-              <Button type="button" variant="ghost" disabled={!result.hasMore || loading} onClick={() => void onSearch(page + 1)}>
-                Load more
-              </Button>
-            </div>
-          )}
         </div>
 
         <Card className="p-6">
           {!selected ? (
-            <p className="text-sm text-muted">Select View to read the posting, salary, and original URL.</p>
+            <p className="text-sm text-muted">Open Details to read the posting and employer application URL.</p>
           ) : (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-xl font-semibold text-charcoal">{selected.title}</h2>
-                <div className="flex flex-col items-end gap-2">
-                  <Pill tone="strong">● Live</Pill>
-                </div>
+                <Pill tone="strong">● Live</Pill>
               </div>
               <p className="text-sm text-muted">
                 {selected.company || 'Unknown company'}
                 {selected.location ? ` · ${selected.location}` : ''}
               </p>
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-                Source: {providerLabel(selected.provider)}
+                Source: {providerLabel(selected.provider) || selected.source}
                 {listingSource(selected) ? ` · ${listingSource(selected)}` : ''}
               </p>
-              <ScoreBadge score={selected.matchScore} emptyLabel="Not analyzed" />
-              {selected.workArrangement && <p className="text-sm">Remote: {selected.workArrangement}</p>}
+              <ScoreBadge
+                score={analyzedByJobId.get(selected.id)?.overallScore ?? null}
+                emptyLabel="Not analyzed"
+              />
+              {remoteLabel(selected) && <p className="text-sm">Remote: {remoteLabel(selected)}</p>}
               {selected.employmentType && <p className="text-sm">Employment type: {selected.employmentType}</p>}
-              {formatSalary(selected) && <p className="text-sm">Salary: {formatSalary(selected)}</p>}
+              {selected.seniority && <p className="text-sm">Seniority: {selected.seniority}</p>}
               {selected.postedAt && <p className="text-sm">Posted: {formatDate(selected.postedAt)}</p>}
-              {selected.lastVerifiedAt && (
-                <p className="text-xs text-muted">Last verified: {formatDate(selected.lastVerifiedAt)}</p>
+              {hydratingId === selected.id && !selected.description ? (
+                <p className="text-sm text-muted">Loading the full description when the provider supplies one…</p>
+              ) : (
+                <p className="whitespace-pre-wrap text-sm leading-6 text-charcoal">
+                  {selected.description || 'No description was supplied for this listing.'}
+                </p>
               )}
-              {typeof selected.rawMetadata?.firstSeenAt === 'string' && selected.rawMetadata.firstSeenAt && (
-                <p className="text-xs text-muted">First seen: {formatDate(String(selected.rawMetadata.firstSeenAt))}</p>
-              )}
-              {typeof selected.rawMetadata?.status === 'string' && selected.rawMetadata.status && (
-                <p className="text-xs text-muted">Status: {String(selected.rawMetadata.status)}</p>
-              )}
-              <p className="whitespace-pre-wrap text-sm leading-6 text-charcoal">{selected.description || 'Loading the full description when the provider supplies one…'}</p>
-              {selected.jobUrl && (
-                <a className="inline-flex items-center gap-1 text-sm font-semibold text-olive" href={selected.jobUrl} target="_blank" rel="noreferrer">
-                  Open Original Job <ExternalLink size={14} />
+              {applyUrl(selected) && (
+                <a
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-olive"
+                  href={applyUrl(selected) ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Apply/View Job <ExternalLink size={14} />
                 </a>
               )}
               <div className="flex flex-wrap gap-2 pt-2">
                 <Button type="button" onClick={() => void goAnalyze(selected)}>
-                  Analyze
+                  Analyze Job
                 </Button>
-                <Button type="button" variant="secondary" onClick={() => void onSave(selected)} disabled={savedJobIds.includes(selected.id)}>
-                  Save
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void onSave(selected)}
+                  disabled={saved(selected.id)}
+                >
+                  Save Job
                 </Button>
-                <Button type="button" variant="secondary" onClick={() => goTailor(selected)}>
-                  Tailor Resume
-                </Button>
+                {analyzedByJobId.get(selected.id) ? (
+                  <Button type="button" variant="secondary" onClick={() => goTailor(selected)}>
+                    Tailor Resume
+                  </Button>
+                ) : null}
               </div>
-              {visibleJobs.some((job) => job.provider === 'job-opportunities') || selected.provider === 'job-opportunities' ? (
-                <p className="pt-2 text-xs text-muted">
-                  Job data provided by{' '}
-                  <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
-                    Job Opportunities API
-                  </a>
-                </p>
-              ) : null}
-              <Link className="block text-sm font-semibold text-olive" to="/analyze">
-                Open Job Analysis
-              </Link>
+              <p className="pt-2 text-xs text-muted">
+                Job data provided by{' '}
+                <a className="font-semibold text-olive" href="https://www.jobopportunitiesapi.org" target="_blank" rel="noreferrer">
+                  Job Opportunities API
+                </a>
+              </p>
             </div>
           )}
         </Card>

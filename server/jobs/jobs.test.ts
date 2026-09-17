@@ -7,7 +7,8 @@ import { discoverJobs } from './discover'
 import { fetchProviderJob } from './provider'
 import { deduplicateJobs } from './deduplicate'
 import { fingerprint, identityKey, parseSalary, stableJobId } from './normalize'
-import { parseDiscoverRequest } from './parse'
+import { parseDiscoverRequest, parseLiveJobsQuery } from './parse'
+import { toLiveJob } from './list'
 import { normalizeJoobleJob } from './providers/jooble'
 import {
   buildPublicJobsSearchParams,
@@ -72,6 +73,7 @@ const jobOpportunitiesPayload = {
       region: 'AL',
       remote: 'on_site',
       employment_type: 'Full-time',
+      seniority: 'Senior',
       posted_at: '2026-09-17T04:07:29Z',
       first_seen_at: '2026-09-17T04:10:36Z',
       last_verified_at: '2026-09-17T05:47:03Z',
@@ -151,6 +153,8 @@ describe('normalization and identity', () => {
     expect(job?.source).toBe('Job Opportunities API')
     expect(job?.rawMetadata.listingSource).toBe('workday')
     expect(job?.liveDemoProvider).toBe(false)
+    expect(job?.seniority).toBe('Senior')
+    expect(job?.employmentType).toBe('Full-time')
     expect(normalizeJobOpportunitiesJob({ company: 'Nope' })).toBeNull()
   })
 
@@ -200,6 +204,25 @@ describe('normalization and identity', () => {
     expect(remoteOnly.get('title')).toBe('Software Engineer kubernetes')
     expect(remoteOnly.get('remote')).toBe('remote')
     expect(remoteOnly.has('q')).toBe(false)
+    const catalog = buildPublicJobsSearchParams({
+      keywords: '',
+      q: 'Python Engineer',
+      location: '',
+      country: 'US',
+      state: 'CA',
+      remote: 'any',
+      employmentType: 'any',
+      experienceLevel: 'Senior',
+      datePostedDays: 0,
+      page: 1,
+      pageSize: 25,
+    })
+    expect(catalog.get('q')).toBe('Python Engineer')
+    expect(catalog.get('title')).toBeNull()
+    expect(catalog.get('country')).toBe('US')
+    expect(catalog.get('state')).toBe('CA')
+    expect(catalog.get('seniority')).toBe('Senior')
+    expect(catalog.has('posted_after')).toBe(false)
   })
 
   it('leaves unavailable Job Opportunities fields as null', () => {
@@ -216,6 +239,7 @@ describe('normalization and identity', () => {
     expect(job?.salaryMax).toBeNull()
     expect(job?.salaryCurrency).toBeNull()
     expect(job?.employmentType).toBeNull()
+    expect(job?.seniority).toBeNull()
     expect(job?.source).toBe('Job Opportunities API')
     expect(job?.rawMetadata.listingSource).toBeNull()
     expect(job?.rawMetadata.status).toBeNull()
@@ -709,5 +733,93 @@ describe('discover HTTP API', () => {
     expect(parsed.remote).toBe('any')
     expect(parsed.page).toBe(2)
     expect(parsed.datePostedDays).toBe(30)
+  })
+
+  it('maps GET /api/jobs query filters onto official Job Opportunities parameters', () => {
+    const parsed = parseLiveJobsQuery({
+      q: 'Cybersecurity Analyst',
+      country: 'us',
+      state: 'tx',
+      remote: 'on_site',
+      employment_type: 'Full-time',
+      seniority: 'Mid',
+      limit: 80,
+      page: 1,
+    })
+    expect(parsed.q).toBe('Cybersecurity Analyst')
+    expect(parsed.country).toBe('US')
+    expect(parsed.state).toBe('TX')
+    expect(parsed.remote).toBe('onsite')
+    expect(parsed.employmentType).toBe('full-time')
+    expect(parsed.seniority).toBe('Mid')
+    expect(parsed.limit).toBe(50)
+  })
+})
+
+describe('GET /api/jobs live catalog', () => {
+  it('normalizes live jobs into the internal catalog model', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      expect(url).toContain('api.jobopportunitiesapi.org/public/jobs')
+      expect(url).toContain('country=US')
+      expect(url).toContain('state=TX')
+      expect(url).toContain('q=Java')
+      expect(url).toContain('remote=remote')
+      expect(url).toContain('employment_type=Full-time')
+      expect(url).toContain('seniority=Senior')
+      expect(url).toContain('limit=10')
+      expect(url).not.toContain('api_key')
+      return jsonResponse({
+        data: [jobOpportunitiesPayload.data[0], jobOpportunitiesPayload.data[0]],
+      })
+    })
+    const app = createApp({
+      config: { ...config, joobleEnabled: false, usajobsEnabled: false },
+      fetchImpl,
+    })
+    const response = await request(app).get('/api/jobs').query({
+      q: 'Java Software Engineer',
+      country: 'US',
+      state: 'TX',
+      remote: 'remote',
+      employment_type: 'full-time',
+      seniority: 'Senior',
+      limit: 10,
+    })
+    expect(response.status).toBe(200)
+    expect(response.body.jobs).toHaveLength(1)
+    expect(response.body.jobs[0].title).toBe('Java Software Engineer')
+    expect(response.body.jobs[0].company).toBe('Teledyne FLIR')
+    expect(response.body.jobs[0].url).toContain('myworkdayjobs.com')
+    expect(response.body.jobs[0].jobUrl).toBe(response.body.jobs[0].url)
+    expect(response.body.jobs[0].source).toBe('Job Opportunities API')
+    expect(response.body.jobs[0].sourceJobId).toBe('ffd759ce-b1fa-4ace-a823-bb0d0595e4ae')
+    expect(response.body.jobs[0].fetchedAt).toBeTruthy()
+    expect(response.body.jobs[0].seniority).toBe('Senior')
+    expect(response.body.source).toBe('Job Opportunities API')
+    const catalog = toLiveJob(normalizeJobOpportunitiesJob(jobOpportunitiesPayload.data[0])!)
+    expect(catalog.url).toBe(catalog.jobUrl)
+    expect(catalog.sourceJobId).toBe(catalog.providerJobId)
+  })
+
+  it('returns an empty list when the provider has no matching rows', async () => {
+    const app = createApp({
+      config: { ...config, joobleEnabled: false, usajobsEnabled: false },
+      fetchImpl: vi.fn(async () => jsonResponse({ data: [] })),
+    })
+    const response = await request(app).get('/api/jobs').query({ q: 'no-such-role', country: 'US' })
+    expect(response.status).toBe(200)
+    expect(response.body.jobs).toEqual([])
+    expect(response.body.warning).toBeUndefined()
+  })
+
+  it('returns a provider warning instead of crashing when the live catalog fails', async () => {
+    const app = createApp({
+      config: { ...config, joobleEnabled: false, usajobsEnabled: false },
+      fetchImpl: vi.fn(async () => jsonResponse({ error: 'down' }, 503)),
+    })
+    const response = await request(app).get('/api/jobs').query({ country: 'US' })
+    expect(response.status).toBe(200)
+    expect(response.body.jobs).toEqual([])
+    expect(response.body.warning.message).toBe('Live job source temporarily unavailable.')
   })
 })

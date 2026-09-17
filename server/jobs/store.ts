@@ -16,6 +16,7 @@ export function discoveredJobRow(userId: string, job: NormalizedJob) {
     remote: job.remote,
     work_arrangement: job.workArrangement,
     employment_type: job.employmentType,
+    seniority: job.seniority,
     posted_at: job.postedAt,
     discovered_at: job.discoveredAt,
     last_verified_at: job.lastVerifiedAt,

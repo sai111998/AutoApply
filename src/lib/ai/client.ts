@@ -96,14 +96,18 @@ export interface DiscoveredJobResult {
   remote: boolean | null
   workArrangement: string | null
   employmentType: string | null
+  seniority?: string | null
   description: string | null
   jobUrl: string | null
+  url?: string | null
   postedAt: string | null
   salaryMin: number | null
   salaryMax: number | null
   salaryCurrency: string | null
   source: string
+  sourceJobId?: string | null
   discoveredAt: string
+  fetchedAt?: string
   lastVerifiedAt: string
   identityKey: string
   matchScore: number | null
@@ -144,6 +148,46 @@ export async function discoverJobsRequest(payload: DiscoverJobsRequest): Promise
   return body
 }
 
+export interface LiveJobsQuery {
+  q?: string
+  country?: string
+  state?: string
+  remote?: string
+  employment_type?: string
+  seniority?: string
+  page?: number
+  limit?: number
+}
+
+export interface LiveJobsResponse {
+  jobs: DiscoveredJobResult[]
+  page: number
+  limit: number
+  total: number
+  hasMore: boolean
+  source: string
+  warning?: { provider: string; code: string; message: string }
+}
+
+export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<LiveJobsResponse> {
+  const params = new URLSearchParams()
+  if (query.q?.trim()) params.set('q', query.q.trim())
+  if (query.country?.trim()) params.set('country', query.country.trim())
+  if (query.state?.trim()) params.set('state', query.state.trim())
+  if (query.remote && query.remote !== 'any') params.set('remote', query.remote)
+  if (query.employment_type && query.employment_type !== 'any') params.set('employment_type', query.employment_type)
+  if (query.seniority && query.seniority !== 'any') params.set('seniority', query.seniority)
+  if (query.page) params.set('page', String(query.page))
+  if (query.limit) params.set('limit', String(query.limit))
+  const response = await fetch(apiUrl(`/api/jobs?${params.toString()}`))
+  const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
+  if (!response.ok || !body || !('jobs' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
+  }
+  return body
+}
+
 export async function getLiveJobRequest(provider: string, jobId: string): Promise<DiscoveredJobResult> {
   const response = await fetch(apiUrl(`/api/jobs/live/${encodeURIComponent(provider)}/${encodeURIComponent(jobId)}`))
   const body = (await response.json().catch(() => null)) as DiscoveredJobResult | { error?: string } | null
@@ -170,6 +214,7 @@ export async function saveDiscoveredJobRequest(payload: { userId: string; job: J
         remote: payload.job.remote,
         workArrangement: payload.job.workArrangement,
         employmentType: payload.job.employmentType,
+        seniority: payload.job.seniority,
         description: payload.job.description,
         jobUrl: payload.job.jobUrl,
         postedAt: payload.job.postedAt,

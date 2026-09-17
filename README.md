@@ -21,7 +21,7 @@ Open http://localhost:5173/ to view the public landing page. Click **Get Started
 
 Leave `VITE_API_BASE_URL` unset. The browser always requests same-origin `/api/*`; Vite proxies those calls to the local Express server.
 
-Live job discovery is under **Job Discovery**. The server calls the keyless Job Opportunities API (`GET https://api.jobopportunitiesapi.org/public/jobs?country=US`), plus Jooble and USAJOBS when those keys are set. No Job Opportunities API key is required. Jooble/USAJOBS keys stay server-side and are never sent to the browser. A provider without a key is marked unavailable instead of crashing the app. Live rows are labeled **Live**, with source **Job Opportunities API**.
+Live job discovery is under **Live Jobs**. The browser calls `GET /api/jobs`; the server then calls the keyless Job Opportunities API (`GET https://api.jobopportunitiesapi.org/public/jobs?country=US`). Jooble and USAJOBS remain available through `POST /api/jobs/discover` when those keys are set. No Job Opportunities API key is required. Keys stay server-side and are never sent to the browser. Live rows are labeled **Live**, with source **Job Opportunities API**.
 
 ## Production (Vercel)
 

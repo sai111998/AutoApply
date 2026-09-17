@@ -41,6 +41,8 @@ const SENIORITY_QUERY: Record<string, string> = {
   executive: 'Executive',
 }
 
+const OFFICIAL_SENIORITY = new Set(['Entry', 'Mid', 'Senior', 'Lead', 'Manager', 'Director', 'Intern', 'Executive', 'not_stated'])
+
 export interface LocationQuery {
   country: string
   city?: string
@@ -65,13 +67,18 @@ export function parseJobOpportunitiesLocation(location: string): LocationQuery {
 export function buildPublicJobsSearchParams(params: ProviderSearchParams): URLSearchParams {
   const query = new URLSearchParams()
   const location = parseJobOpportunitiesLocation(params.location)
-  query.set('country', location.country || 'US')
-  if (location.state) query.set('state', location.state)
-  if (location.city) query.set('city', location.city)
-  if (params.keywords.trim()) query.set('title', params.keywords.trim())
+  const country = params.country?.trim().toUpperCase() || location.country || 'US'
+  query.set('country', country)
+  const state = params.state?.trim().toUpperCase() || location.state
+  if (state) query.set('state', state)
+  if (!params.state?.trim() && location.city) query.set('city', location.city)
+  const q = params.q?.trim()
+  if (q) query.set('q', q)
+  else if (params.keywords.trim()) query.set('title', params.keywords.trim())
   if (params.remote !== 'any') query.set('remote', REMOTE_QUERY[params.remote])
   if (params.employmentType !== 'any') query.set('employment_type', EMPLOYMENT_QUERY[params.employmentType])
-  const seniority = SENIORITY_QUERY[params.experienceLevel?.trim().toLowerCase() ?? '']
+  const seniorityRaw = params.experienceLevel?.trim() ?? ''
+  const seniority = SENIORITY_QUERY[seniorityRaw.toLowerCase()] || (OFFICIAL_SENIORITY.has(seniorityRaw) ? seniorityRaw : '')
   if (seniority) query.set('seniority', seniority)
   if (params.datePostedDays > 0) {
     const postedAfter = new Date(Date.now() - params.datePostedDays * 86_400_000).toISOString().slice(0, 10)
@@ -135,6 +142,7 @@ export function normalizeJobOpportunitiesJob(raw: unknown, descriptionOverride?:
       [arrangement ?? '', remoteValue ?? ''],
     ),
     employmentType: cleanText(record.employment_type),
+    seniority: cleanText(record.seniority),
     description: descriptionOverride !== undefined ? cleanText(descriptionOverride) : descriptionFrom(null, record),
     jobUrl: cleanText(record.apply_url),
     postedAt: asIsoDate(record.posted_at),

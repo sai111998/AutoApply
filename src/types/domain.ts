@@ -74,6 +74,7 @@ export interface Job {
   remote?: boolean | null
   workArrangement?: string | null
   employmentType?: string | null
+  seniority?: string | null
   postedAt?: string | null
   discoveredAt?: string | null
   lastVerifiedAt?: string | null
