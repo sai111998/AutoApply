@@ -8,7 +8,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { analyzeJobRequest, extractResumeTextRequest, saveDiscoveredJobRequest } from '@/lib/ai/client'
+import {
+  analyzeJobRequest,
+  extractResumeTextRequest,
+  saveDiscoveredJobRequest,
+  type AutoApplyQueueItem,
+  type DiscoveredJobResult,
+} from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import {
   deleteAnalysisRecords,
@@ -19,6 +25,8 @@ import {
   persistAnalysisRecords,
   persistApplicationSelection,
   persistMatchRecord,
+  persistQueuedApplication,
+  APPLICATION_SAVE_ERROR,
   mergeFetchedMatches,
   removeAnalysisFromSnapshot,
   upsertById,
@@ -45,7 +53,8 @@ import {
   resumeToRow,
   skillToRow,
 } from '@/lib/mappers'
-import { userFacingPersistError } from '@/lib/persist-errors'
+import { persistErrorCode, persistErrorText, userFacingPersistError } from '@/lib/persist-errors'
+import { buildAutoApplyWorkspaceRecords } from '@/lib/auto-apply-application'
 import { supabase } from '@/lib/supabase'
 import { RESUME_BUCKET } from '@/lib/resume-storage'
 import { createSampleWorkspace } from '@/data/sample'
@@ -107,6 +116,10 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   deleteApplications: (ids: string[]) => Promise<number>
   savePreferences: (preferences: UserPreferences) => Promise<void>
   saveDiscoveredJob: (job: Job, extras?: { resumeVersionId?: string | null }) => Promise<Job>
+  syncAutoApplyApplication: (input: {
+    item: AutoApplyQueueItem
+    listedJob?: DiscoveredJobResult | null
+  }) => Promise<Application>
   savedJobIds: string[]
   saveResumeVersion: (version: ResumeVersion) => Promise<void>
   renameResumeVersion: (id: string, versionName: string) => Promise<void>
@@ -637,6 +650,71 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [isDemo, replace, user],
   )
 
+  const syncAutoApplyApplication = useCallback(
+    async (input: { item: AutoApplyQueueItem; listedJob?: DiscoveredJobResult | null }) => {
+      if (!user) throw new Error('Not signed in')
+      const current = snapshotRef.current
+      const built = buildAutoApplyWorkspaceRecords({
+        item: input.item,
+        listedJob: input.listedJob ?? null,
+        userId: user.id,
+        jobs: current.jobs,
+        applications: current.applications,
+        matches: current.matches,
+        resumeVersions: current.resumeVersions ?? [],
+        masterResume: current.resumes.find((resume) => resume.isMaster) ?? current.resumes[0] ?? null,
+      })
+
+      if (!isDemo && supabase) {
+        try {
+          let application = built.application
+          if (built.resumeVersion) {
+            try {
+              await persistResumeVersion(supabase, built.resumeVersion)
+            } catch (versionError) {
+              if (import.meta.env.DEV) {
+                console.info('[auto-apply] resume-version-persist-failed', {
+                  code: persistErrorCode(versionError),
+                  message: persistErrorText(versionError).replace(/bearer\s+\S+|secret\S*|api[_-]?key\S*/gi, '[redacted]'),
+                })
+              }
+              application = { ...application, selectedResumeVersionId: null }
+            }
+          }
+          await persistQueuedApplication(supabase, { job: built.job, application })
+          built.application = application
+        } catch (error) {
+          if (import.meta.env.DEV) {
+            console.info('[auto-apply] persist-failed', {
+              code: persistErrorCode(error),
+              message: persistErrorText(error).replace(/bearer\s+\S+|secret\S*|api[_-]?key\S*/gi, '[redacted]'),
+            })
+          }
+          throw new Error(APPLICATION_SAVE_ERROR)
+        }
+      }
+
+      const persistedVersion =
+        built.resumeVersion && built.application.selectedResumeVersionId === built.resumeVersion.id
+          ? built.resumeVersion
+          : null
+
+      replace((state) => ({
+        ...state,
+        jobs: upsertById(state.jobs, built.job),
+        applications: upsertById(state.applications, built.application),
+        resumeVersions: persistedVersion
+          ? mergeResumeVersion(state.resumeVersions ?? [], persistedVersion)
+          : state.resumeVersions,
+      }))
+
+      return (
+        snapshotRef.current.applications.find((item) => item.id === built.application.id) ?? built.application
+      )
+    },
+    [isDemo, replace, user],
+  )
+
   const deleteAnalysis = useCallback(
     async (matchId: string) => {
       const current = snapshotRef.current
@@ -1026,6 +1104,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       hydrateResumeText,
       analyzeJob,
       saveDiscoveredJob,
+      syncAutoApplyApplication,
       savedJobIds,
       refreshAnalyses,
       deleteAnalysis,
@@ -1043,6 +1122,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       analyzeJob,
       analyzeTailoredVersion,
       saveDiscoveredJob,
+      syncAutoApplyApplication,
       savedJobIds,
       deleteAnalysis,
       deleteApplications,

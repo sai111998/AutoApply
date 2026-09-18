@@ -123,8 +123,18 @@ function ApplyNowLink({ href, className = '' }: { href: string | null; className
 
 export function JobDiscoveryPage() {
   const { user, isDemo } = useAuth()
-  const { profile, preferences, jobs, applications, savedJobIds, saveDiscoveredJob, masterResume, resumes, loading: workspaceLoading } =
-    useWorkspace()
+  const {
+    profile,
+    preferences,
+    jobs,
+    applications,
+    savedJobIds,
+    saveDiscoveredJob,
+    syncAutoApplyApplication,
+    masterResume,
+    resumes,
+    loading: workspaceLoading,
+  } = useWorkspace()
   const { notify } = useToast()
   const navigate = useNavigate()
 
@@ -374,8 +384,22 @@ export function JobDiscoveryPage() {
     }
   }
 
+  function listedForQueueItem(item: AutoApplyQueueItem) {
+    return listed?.find((job) => job.id === item.jobId || job.identityKey === item.identityKey) ?? null
+  }
+
+  async function persistQueueApplication(item: AutoApplyQueueItem) {
+    await syncAutoApplyApplication({ item, listedJob: listedForQueueItem(item) })
+  }
+
   async function onQueueReview(item: AutoApplyQueueItem) {
-    const listedJob = listed?.find((job) => job.id === item.jobId || job.identityKey === item.identityKey)
+    try {
+      await persistQueueApplication(item)
+    } catch (persistError) {
+      notify(persistError instanceof Error ? persistError.message : 'Application could not be saved.', 'error')
+      return
+    }
+    const listedJob = listedForQueueItem(item)
     if (listedJob) {
       await onReview(listedJob)
       return
@@ -386,7 +410,10 @@ export function JobDiscoveryPage() {
   async function onQueueApply(item: AutoApplyQueueItem) {
     setAutoBusyId(item.id)
     try {
-      setAutoResult(await prepareAutoApplyItemRequest(item.runId, item.id, applyProfile(), user?.id))
+      const result = await prepareAutoApplyItemRequest(item.runId, item.id, applyProfile(), user?.id)
+      setAutoResult(result)
+      const prepared = result.items.find((row) => row.id === item.id) ?? result.items[0] ?? item
+      await persistQueueApplication(prepared)
     } catch (applyError) {
       notify(applyError instanceof Error ? applyError.message : 'Could not prepare the application.', 'error')
     } finally {
@@ -397,7 +424,10 @@ export function JobDiscoveryPage() {
   async function onQueueSubmit(item: AutoApplyQueueItem) {
     setAutoBusyId(item.id)
     try {
-      setAutoResult(await submitAutoApplyItemRequest(item.runId, item.id))
+      const result = await submitAutoApplyItemRequest(item.runId, item.id)
+      setAutoResult(result)
+      const submitted = result.items.find((row) => row.id === item.id) ?? result.items[0] ?? item
+      await persistQueueApplication(submitted)
       notify('Application submitted on the employer site.', 'success')
     } catch (submitError) {
       notify(submitError instanceof Error ? submitError.message : 'Could not submit the application.', 'error')

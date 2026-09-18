@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  APPLICATION_SAVE_ERROR,
   isUuid,
   persistApplicationSelection,
+  persistQueuedApplication,
   deleteApplicationRecords,
   filterAnalysisHistory,
   mergeFetchedMatches,
@@ -96,6 +98,99 @@ describe('analysis persistence helpers', () => {
     })
     expect(rows[1]).not.toHaveProperty('selected_resume_version_id')
     expect(rows[1]?.match_id).toBe('match-1')
+  })
+
+  it('persists the auto-apply job and application together', async () => {
+    const tables: string[] = []
+    const rows: Record<string, unknown>[] = []
+    const client = {
+      from: (table: string) => {
+        tables.push(table)
+        return {
+          upsert: async (row: Record<string, unknown>) => {
+            rows.push({ table, ...row })
+            return { error: null }
+          },
+        }
+      },
+    }
+    await persistQueuedApplication(client as never, {
+      job: {
+        id: '3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e60',
+        userId: 'user-a',
+        title: 'Lead Software Engineer',
+        company: 'JPMorgan Chase',
+        location: 'Columbus, OH',
+        jobUrl: 'https://jobs.example.com/jpmorgan',
+        description: '',
+        createdAt: '2026-09-18T12:00:00.000Z',
+      },
+      application: {
+        id: '3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e61',
+        userId: 'user-a',
+        jobId: '3b9f0c2a-7d11-4c3a-9f12-8a1b2c3d4e60',
+        matchId: null,
+        resumeId: 'resume-1',
+        selectedResumeVersionId: 'ver-1',
+        currentMatchId: null,
+        currentMatchScore: 91,
+        status: 'ready',
+        dateAdded: '2026-09-18',
+        dateApplied: null,
+        nextAction: 'Ready to apply',
+        notes: '',
+        updatedAt: '2026-09-18T12:00:00.000Z',
+      },
+    })
+    expect(tables).toEqual(['jobs', 'applications'])
+    expect(rows[0]).toMatchObject({ table: 'jobs', company: 'JPMorgan Chase', job_url: 'https://jobs.example.com/jpmorgan' })
+    expect(rows[1]).toMatchObject({
+      table: 'applications',
+      status: 'ready',
+      selected_resume_version_id: 'ver-1',
+      current_match_score: 91,
+    })
+  })
+
+  it('returns a safe persist error when Supabase cannot save the application', async () => {
+    const client = {
+      from: (table: string) => ({
+        upsert: async () => {
+          if (table === 'jobs') return { error: null }
+          return { error: { code: '42501', message: 'row-level security; bearer secret-token' } }
+        },
+      }),
+    }
+    await expect(
+      persistQueuedApplication(client as never, {
+        job: {
+          id: 'job-1',
+          userId: 'user-a',
+          title: 'Engineer',
+          company: 'Acme',
+          location: '',
+          jobUrl: 'https://jobs.example.com/acme',
+          description: '',
+          createdAt: '2026-09-18T12:00:00.000Z',
+        },
+        application: {
+          id: 'app-1',
+          userId: 'user-a',
+          jobId: 'job-1',
+          matchId: null,
+          resumeId: null,
+          selectedResumeVersionId: null,
+          currentMatchId: null,
+          currentMatchScore: 80,
+          status: 'ready',
+          dateAdded: '2026-09-18',
+          dateApplied: null,
+          nextAction: 'Ready to apply',
+          notes: '',
+          updatedAt: '2026-09-18T12:00:00.000Z',
+        },
+      }),
+    ).rejects.toThrow(APPLICATION_SAVE_ERROR)
   })
 
   it('deletes only the selected applications for the current user and leaves other records', async () => {

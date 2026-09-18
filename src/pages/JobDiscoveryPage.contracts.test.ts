@@ -71,6 +71,16 @@ describe('live jobs contracts', () => {
     expect(page).not.toMatch(/submit application/i)
   })
 
+  it('persists Auto Apply jobs into Applications after Apply, Review, or Submit', () => {
+    expect(page).toMatch(/syncAutoApplyApplication/)
+    expect(page).toMatch(/persistQueueApplication/)
+    expect(page).toMatch(/Application could not be saved/)
+    expect(page).toMatch(/await persistQueueApplication\(prepared\)/)
+    expect(page).toMatch(/await persistQueueApplication\(submitted\)/)
+    expect(page).toMatch(/await persistQueueApplication\(item\)/)
+    expect(page).not.toMatch(/is queued for review[\s\S]*persistQueueApplication/)
+  })
+
   it('pre-fills Job Analysis from a live job when the user explicitly tailors', () => {
     expect(analysis).toMatch(/liveJob/)
     expect(analysis).toMatch(/jobId: liveJobId/)

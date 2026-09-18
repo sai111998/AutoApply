@@ -525,6 +525,9 @@ export interface AutoApplyQueueItem {
   applicationStatus: AutoApplyQueueStatus
   failureReason: string | null
   questions: AutoApplyQuestion[]
+  tailoredResumeText?: string | null
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface AutoApplyCounts {

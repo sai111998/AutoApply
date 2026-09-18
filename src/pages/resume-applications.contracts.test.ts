@@ -147,4 +147,17 @@ describe('application bulk delete contracts', () => {
     expect(applicationsPage).toMatch(/notify\(/)
     expect(applicationsPage).toMatch(/'error'/)
   })
+
+  it('reads applications from workspace state and refreshes persisted rows on visit', () => {
+    expect(applicationsPage).toMatch(/const \{ applications, jobs, matches, resumes, resumeVersions/)
+    expect(applicationsPage).toMatch(/refreshAnalyses/)
+    expect(workspace).toMatch(/syncAutoApplyApplication/)
+    expect(workspace).toMatch(/persistQueuedApplication/)
+    expect(workspace).toMatch(/buildAutoApplyWorkspaceRecords/)
+    expect(workspace).toMatch(/Application could not be saved/)
+    expect(persist).toMatch(/export async function persistQueuedApplication/)
+    expect(persist).toMatch(/from\('jobs'\)/)
+    expect(persist).toMatch(/from\('applications'\)/)
+    expect(persist).toMatch(/Application could not be saved/)
+  })
 })

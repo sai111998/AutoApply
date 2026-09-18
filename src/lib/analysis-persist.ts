@@ -10,8 +10,10 @@ import {
   mapResumeVersion,
   matchToRow,
 } from '@/lib/mappers'
-import { isForeignKeyError, isMissingColumnError, isRlsError, userFacingPersistError } from '@/lib/persist-errors'
+import { isForeignKeyError, isMissingColumnError, isRlsError, persistErrorCode, userFacingPersistError } from '@/lib/persist-errors'
 import type { Application, Job, JobMatch } from '@/types/domain'
+
+export const APPLICATION_SAVE_ERROR = 'Application could not be saved.'
 
 export function isUuid(value: string | undefined | null): value is string {
   return Boolean(
@@ -94,6 +96,57 @@ export async function persistMatchRecord(client: SupabaseClient, match: JobMatch
 
   if (result.error) {
     throw new Error(userFacingPersistError(result.error, 'Could not save the updated match analysis.'))
+  }
+}
+
+export async function persistJobRecord(client: SupabaseClient, job: Job) {
+  let result = await client.from('jobs').upsert(jobToRow(job), { onConflict: 'id', defaultToNull: false })
+  if (result.error && isMissingColumnError(result.error)) {
+    result = await client.from('jobs').upsert(jobCoreRow(job), { onConflict: 'id', defaultToNull: false })
+  }
+  if (result.error) throw result.error
+}
+
+async function upsertApplicationRow(client: SupabaseClient, application: Application) {
+  let result = await client
+    .from('applications')
+    .upsert(applicationToRow(application), { onConflict: 'id', defaultToNull: false })
+  if (result.error && isMissingColumnError(result.error)) {
+    result = await client
+      .from('applications')
+      .upsert(applicationCoreRow(application), { onConflict: 'id', defaultToNull: false })
+  }
+  return result
+}
+
+export async function persistQueuedApplication(
+  client: SupabaseClient,
+  records: { job: Job; application: Application },
+) {
+  try {
+    await persistJobRecord(client, records.job)
+    let result = await upsertApplicationRow(client, records.application)
+    if (result.error && isForeignKeyError(result.error)) {
+      result = await upsertApplicationRow(client, {
+        ...records.application,
+        selectedResumeVersionId: null,
+        currentMatchId: null,
+        matchId: isUuid(records.application.matchId) ? records.application.matchId : null,
+      })
+    }
+    if (result.error) throw result.error
+  } catch (error) {
+    console.info('[auto-apply] persist-failed', {
+      code: persistErrorCode(error),
+      kind: isRlsError(error)
+        ? 'rls'
+        : isForeignKeyError(error)
+          ? 'foreign_key'
+          : isMissingColumnError(error)
+            ? 'schema'
+            : 'error',
+    })
+    throw new Error(APPLICATION_SAVE_ERROR)
   }
 }
 
