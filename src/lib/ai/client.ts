@@ -126,6 +126,13 @@ export interface DiscoveredJobResult {
   demo: boolean
   liveDemoProvider?: boolean
   rawMetadata?: Record<string, unknown>
+  c2cStatus?: 'confirmed' | 'not_allowed' | 'unknown'
+  c2cEvidence?: Array<{
+    matchedPhrase: string
+    sourceField: string
+    confidence: string
+    detectedAt: string
+  }>
 }
 
 export interface DiscoverJobsResponse {
@@ -172,6 +179,7 @@ export interface LiveJobsQuery {
   sort?: 'match' | 'recent' | 'relevance'
   resumeText?: string
   resumeVersionId?: string
+  jobType?: 'all' | 'c2c' | 'contract' | 'w2'
 }
 
 export interface LiveJobsResponse {
@@ -198,6 +206,7 @@ export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<Li
     sort: query.sort || 'match',
     resumeText: query.resumeText?.trim() || undefined,
     resumeVersionId: query.resumeVersionId?.trim() || undefined,
+    jobType: query.jobType && query.jobType !== 'all' ? query.jobType : undefined,
   }
   const params = new URLSearchParams()
   if (payload.q) params.set('q', payload.q)
@@ -210,6 +219,7 @@ export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<Li
   if (payload.page) params.set('page', String(payload.page))
   if (payload.limit) params.set('limit', String(payload.limit))
   if (payload.sort) params.set('sort', payload.sort)
+  if (payload.jobType) params.set('jobType', payload.jobType)
 
   const response = payload.resumeText
     ? await fetch(apiUrl('/api/jobs'), {
@@ -444,4 +454,210 @@ export async function downloadResumePdfRequest(tailored: unknown, contact: { nam
     throw new Error(body?.error || 'Could not generate the PDF.')
   }
   return response.blob()
+}
+
+export type AutoApplyJobType = 'all' | 'c2c' | 'contract' | 'w2'
+export type AutoApplyQueueStatus =
+  | 'queued'
+  | 'preparing'
+  | 'tailoring'
+  | 'ready'
+  | 'opening'
+  | 'filling'
+  | 'needs_user_input'
+  | 'captcha_required'
+  | 'mfa_required'
+  | 'blocked'
+  | 'ready_for_submission'
+  | 'submitted'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+
+export interface AutoApplyConfigPayload {
+  maxJobs: number
+  minimumMatchRate: number
+  autoTailorResume: boolean
+  jobType: AutoApplyJobType
+  remotePreference: string
+  keywords: string[]
+  q?: string
+  country?: string
+  state?: string
+  location?: string
+}
+
+export interface AutoApplyProfilePayload {
+  fullName: string
+  email: string
+  location: string
+  yearsOfExperience: number | null
+  workAuthorization: string | null
+  sponsorshipRequired: boolean
+  preferredWorkArrangement: string | null
+  targetSalaryMin: number | null
+  targetSalaryMax: number | null
+}
+
+export interface AutoApplyQuestion {
+  id: string
+  prompt: string
+  answer: string | null
+  source: 'profile' | 'user'
+}
+
+export interface AutoApplyQueueItem {
+  id: string
+  runId: string
+  jobId: string
+  identityKey: string
+  applicationId: string | null
+  resumeVersionId: string | null
+  resumeVersionName: string
+  title: string
+  company: string
+  applicationUrl: string | null
+  initialMatchScore: number | null
+  finalMatchScore: number | null
+  c2cStatus: 'confirmed' | 'not_allowed' | 'unknown'
+  applicationStatus: AutoApplyQueueStatus
+  failureReason: string | null
+  questions: AutoApplyQuestion[]
+}
+
+export interface AutoApplyCounts {
+  found: number
+  eligible: number
+  tailored: number
+  ready: number
+  needsInput: number
+  submitted: number
+  skipped: number
+  failed: number
+}
+
+export interface AutoApplyRun {
+  id: string
+  userId: string
+  status: 'running' | 'paused' | 'completed' | 'cancelled'
+  config: AutoApplyConfigPayload
+  counts: AutoApplyCounts
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AutoApplyRunResult {
+  run: AutoApplyRun
+  items: AutoApplyQueueItem[]
+}
+
+async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {
+  const body = (await response.json().catch(() => null)) as AutoApplyRunResult | { error?: string } | null
+  if (!response.ok || !body || !('run' in body) || !('items' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : fallback
+    throw new Error(/key|secret|service.role/i.test(message) ? fallback : message)
+  }
+  return body
+}
+
+export async function startAutoApplyRequest(payload: {
+  userId: string
+  resumeId?: string | null
+  resumeVersionId?: string | null
+  resumeText: string
+  masterResumeText?: string
+  profile: AutoApplyProfilePayload
+  config: AutoApplyConfigPayload
+  existingApplications?: Array<{
+    jobId?: string | null
+    identityKey?: string | null
+    applicationUrl?: string | null
+    status?: string | null
+  }>
+  existingQueueIdentities?: string[]
+}): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl('/api/jobs/auto-apply/start'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readAutoApplyResult(response, 'Could not start Auto Apply.')
+}
+
+export async function listAutoApplyRunsRequest(userId: string): Promise<AutoApplyRunResult[]> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply?userId=${encodeURIComponent(userId)}`))
+  const body = (await response.json().catch(() => null)) as { runs?: AutoApplyRunResult[]; error?: string } | null
+  if (!response.ok || !body) {
+    throw new Error(body?.error && !/key|secret|service.role/i.test(body.error) ? body.error : 'Could not load Auto Apply.')
+  }
+  return Array.isArray(body.runs) ? body.runs : []
+}
+
+export async function getAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}`))
+  return readAutoApplyResult(response, 'Could not load Auto Apply.')
+}
+
+export async function prepareAutoApplyItemRequest(
+  runId: string,
+  itemId: string,
+  profile: AutoApplyProfilePayload,
+): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/apply`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile }),
+    },
+  )
+  return readAutoApplyResult(response, 'Could not prepare the application.')
+}
+
+export async function submitAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/submit`),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  )
+  return readAutoApplyResult(response, 'Could not submit the application.')
+}
+
+export async function skipAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/skip`),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  )
+  return readAutoApplyResult(response, 'Could not skip the application.')
+}
+
+export async function cancelAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/cancel`),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  )
+  return readAutoApplyResult(response, 'Could not cancel the application.')
+}
+
+export async function answerAutoApplyItemRequest(
+  runId: string,
+  itemId: string,
+  answers: Array<{ id: string; answer: string }>,
+): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/answer`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    },
+  )
+  return readAutoApplyResult(response, 'Could not save the answer.')
+}
+
+export async function cancelAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/cancel`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return readAutoApplyResult(response, 'Could not cancel Auto Apply.')
 }

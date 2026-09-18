@@ -10,15 +10,28 @@ import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import {
+  answerAutoApplyItemRequest,
+  cancelAutoApplyItemRequest,
   getLiveJobRequest,
+  listAutoApplyRunsRequest,
   listLiveJobsRequest,
+  prepareAutoApplyItemRequest,
   previewLiveJobRequest,
+  skipAutoApplyItemRequest,
+  startAutoApplyRequest,
+  submitAutoApplyItemRequest,
+  type AutoApplyJobType,
+  type AutoApplyProfilePayload,
+  type AutoApplyQueueItem,
+  type AutoApplyRun,
   type DiscoveredJobResult,
   type LiveTailorPreviewResult,
 } from '@/lib/ai/client'
 import { applyUrl, discoveredToJob, mergeLiveJob } from '@/lib/discovered-job'
 import { formatDate } from '@/lib/format'
 import {
+  autoApplyStatusLabel,
+  c2cStatusLabel,
   employerApplyHref,
   jobMetaLine,
   liveMatch,
@@ -35,6 +48,8 @@ const US_STATES = [
 ]
 
 const SENIORITY_OPTIONS = ['Entry', 'Mid', 'Senior', 'Lead', 'Manager', 'Director', 'Intern', 'Executive']
+const MATCH_RATE_OPTIONS = [70, 75, 80, 85, 90, 95]
+const JOB_COUNT_OPTIONS = [5, 10, 15, 20, 25]
 
 function normalizeListedJob(job: DiscoveredJobResult): DiscoveredJobResult {
   const url = applyUrl(job)
@@ -108,7 +123,7 @@ function ApplyNowLink({ href, className = '' }: { href: string | null; className
 
 export function JobDiscoveryPage() {
   const { user, isDemo } = useAuth()
-  const { profile, preferences, jobs, savedJobIds, saveDiscoveredJob, masterResume, resumes, loading: workspaceLoading } =
+  const { profile, preferences, jobs, applications, savedJobIds, saveDiscoveredJob, masterResume, resumes, loading: workspaceLoading } =
     useWorkspace()
   const { notify } = useToast()
   const navigate = useNavigate()
@@ -119,6 +134,7 @@ export function JobDiscoveryPage() {
   const [state, setState] = useState('')
   const [remote, setRemote] = useState('any')
   const [employmentType, setEmploymentType] = useState('any')
+  const [jobType, setJobType] = useState<AutoApplyJobType>('all')
   const [seniority, setSeniority] = useState('any')
   const [sort, setSort] = useState<LiveJobSort>('match')
   const [loading, setLoading] = useState(false)
@@ -132,6 +148,18 @@ export function JobDiscoveryPage() {
   const [preview, setPreview] = useState<LiveTailorPreviewResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [autoApplyOpen, setAutoApplyOpen] = useState(false)
+  const [autoStarting, setAutoStarting] = useState(false)
+  const [autoBusyId, setAutoBusyId] = useState<string | null>(null)
+  const [autoMaxJobs, setAutoMaxJobs] = useState(10)
+  const [autoMinMatch, setAutoMinMatch] = useState(85)
+  const [autoTailor, setAutoTailor] = useState(true)
+  const [autoJobType, setAutoJobType] = useState<AutoApplyJobType>('c2c')
+  const [autoRemote, setAutoRemote] = useState('any')
+  const [autoKeywords, setAutoKeywords] = useState('')
+  const [autoRun, setAutoRun] = useState<AutoApplyRun | null>(null)
+  const [autoItems, setAutoItems] = useState<AutoApplyQueueItem[]>([])
+  const [autoAnswers, setAutoAnswers] = useState<Record<string, string>>({})
 
   const visibleJobs = useMemo(() => (listed ? sortDiscoveredJobs(listed, sort, query) : null), [listed, query, sort])
 
@@ -153,6 +181,7 @@ export function JobDiscoveryPage() {
         sort,
         resumeText: resume?.parsedText || undefined,
         resumeVersionId: resume?.id,
+        jobType,
       })
       const rows = sortDiscoveredJobs(response.jobs.map(normalizeListedJob), sort, query)
       setListed(rows)
@@ -173,6 +202,37 @@ export function JobDiscoveryPage() {
     // Search once workspace (and selected resume) is ready so list scores can be computed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceLoading, resume?.id])
+
+  useEffect(() => {
+    if (!user?.id) return
+    void listAutoApplyRunsRequest(user.id)
+      .then((runs) => {
+        const current = runs.find((item) => item.run.status === 'paused' || item.run.status === 'running') ?? runs[0]
+        if (!current) return
+        setAutoRun(current.run)
+        setAutoItems(current.items)
+      })
+      .catch(() => undefined)
+  }, [user?.id])
+
+  function applyProfile(): AutoApplyProfilePayload {
+    return {
+      fullName: profile.fullName || user?.fullName || '',
+      email: profile.email || user?.email || '',
+      location: profile.location,
+      yearsOfExperience: profile.yearsOfExperience ?? null,
+      workAuthorization: profile.workAuthorization,
+      sponsorshipRequired: profile.sponsorshipRequired,
+      preferredWorkArrangement: profile.preferredWorkArrangement,
+      targetSalaryMin: profile.targetSalaryMin ?? null,
+      targetSalaryMax: profile.targetSalaryMax ?? null,
+    }
+  }
+
+  function setAutoResult(result: { run: AutoApplyRun; items: AutoApplyQueueItem[] }) {
+    setAutoRun(result.run)
+    setAutoItems(result.items)
+  }
 
   async function onSave(job: DiscoveredJobResult) {
     if (!user) return
@@ -261,6 +321,132 @@ export function JobDiscoveryPage() {
     navigate('/analyze', { state: { liveJob: hydrated } })
   }
 
+  async function onStartAutoApply() {
+    if (!user) return
+    const resumeText = resume?.parsedText?.trim() ?? ''
+    if (!resumeText) {
+      notify('Select a master resume before starting Auto Apply.', 'error')
+      return
+    }
+    setAutoStarting(true)
+    try {
+      const result = await startAutoApplyRequest({
+        userId: user.id,
+        resumeId: resume?.id ?? null,
+        resumeVersionId: resume?.id ?? null,
+        resumeText,
+        masterResumeText: resumeText,
+        profile: applyProfile(),
+        config: {
+          maxJobs: autoMaxJobs,
+          minimumMatchRate: autoMinMatch,
+          autoTailorResume: autoTailor,
+          jobType: autoJobType,
+          remotePreference: autoRemote,
+          keywords: autoKeywords.split(',').map((item) => item.trim()).filter(Boolean),
+          q: query,
+          country: 'US',
+          state,
+          location,
+        },
+        existingApplications: applications.map((application) => {
+          const job = jobs.find((item) => item.id === application.jobId)
+          return {
+            jobId: application.jobId,
+            identityKey: job?.identityKey ?? null,
+            applicationUrl: job?.jobUrl ?? null,
+            status: application.status,
+          }
+        }),
+        existingQueueIdentities: autoItems.map((item) => item.identityKey),
+      })
+      setAutoResult(result)
+      notify(
+        result.items.length
+          ? `Auto Apply queued ${result.items.length} job${result.items.length === 1 ? '' : 's'} for review.`
+          : 'No eligible jobs met the Auto Apply threshold.',
+        result.items.length ? 'success' : 'info',
+      )
+    } catch (startError) {
+      notify(startError instanceof Error ? startError.message : 'Could not start Auto Apply.', 'error')
+    } finally {
+      setAutoStarting(false)
+    }
+  }
+
+  async function onQueueReview(item: AutoApplyQueueItem) {
+    const listedJob = listed?.find((job) => job.id === item.jobId || job.identityKey === item.identityKey)
+    if (listedJob) {
+      await onReview(listedJob)
+      return
+    }
+    notify(`${item.title} · ${item.company || 'Unknown company'} is queued for review.`, 'info')
+  }
+
+  async function onQueueApply(item: AutoApplyQueueItem) {
+    setAutoBusyId(item.id)
+    try {
+      setAutoResult(await prepareAutoApplyItemRequest(item.runId, item.id, applyProfile()))
+    } catch (applyError) {
+      notify(applyError instanceof Error ? applyError.message : 'Could not prepare the application.', 'error')
+    } finally {
+      setAutoBusyId(null)
+    }
+  }
+
+  async function onQueueSubmit(item: AutoApplyQueueItem) {
+    setAutoBusyId(item.id)
+    try {
+      setAutoResult(await submitAutoApplyItemRequest(item.runId, item.id))
+      notify('Application submitted on the employer site.', 'success')
+    } catch (submitError) {
+      notify(submitError instanceof Error ? submitError.message : 'Could not submit the application.', 'error')
+    } finally {
+      setAutoBusyId(null)
+    }
+  }
+
+  async function onQueueSkip(item: AutoApplyQueueItem) {
+    setAutoBusyId(item.id)
+    try {
+      setAutoResult(await skipAutoApplyItemRequest(item.runId, item.id))
+    } catch (skipError) {
+      notify(skipError instanceof Error ? skipError.message : 'Could not skip the application.', 'error')
+    } finally {
+      setAutoBusyId(null)
+    }
+  }
+
+  async function onQueueCancel(item: AutoApplyQueueItem) {
+    setAutoBusyId(item.id)
+    try {
+      setAutoResult(await cancelAutoApplyItemRequest(item.runId, item.id))
+    } catch (cancelError) {
+      notify(cancelError instanceof Error ? cancelError.message : 'Could not cancel the application.', 'error')
+    } finally {
+      setAutoBusyId(null)
+    }
+  }
+
+  async function onQueueAnswer(item: AutoApplyQueueItem) {
+    const answers = item.questions
+      .filter((question) => !question.answer)
+      .map((question) => ({ id: question.id, answer: autoAnswers[`${item.id}:${question.id}`]?.trim() ?? '' }))
+      .filter((question) => question.answer)
+    if (!answers.length) {
+      notify('Enter an answer from your profile or notes. JobPilot will not invent one.', 'error')
+      return
+    }
+    setAutoBusyId(item.id)
+    try {
+      setAutoResult(await answerAutoApplyItemRequest(item.runId, item.id, answers))
+    } catch (answerError) {
+      notify(answerError instanceof Error ? answerError.message : 'Could not save the answer.', 'error')
+    } finally {
+      setAutoBusyId(null)
+    }
+  }
+
   const saved = (jobId: string) => savedJobIds.includes(jobId) || jobs.some((item) => item.id === jobId && savedJobIds.includes(item.id))
 
   return (
@@ -327,6 +513,21 @@ export function JobDiscoveryPage() {
               <option value="internship">Internship</option>
             </Select>
           </Field>
+          <Field label="Job type">
+            <Select
+              value={jobType}
+              onChange={(event) => {
+                const next = event.target.value as AutoApplyJobType
+                setJobType(next)
+                setAutoJobType(next)
+              }}
+            >
+              <option value="all">All</option>
+              <option value="c2c">C2C</option>
+              <option value="contract">Contract</option>
+              <option value="w2">W2</option>
+            </Select>
+          </Field>
           <Field label="Seniority">
             <Select value={seniority} onChange={(event) => setSeniority(event.target.value)}>
               <option value="any">Any</option>
@@ -337,13 +538,171 @@ export function JobDiscoveryPage() {
               ))}
             </Select>
           </Field>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
             <Button type="submit" disabled={loading}>
               {loading ? 'Loading live jobs…' : 'Search live jobs'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setAutoApplyOpen((open) => !open)
+                setAutoJobType(jobType === 'all' ? 'c2c' : jobType)
+                setAutoRemote(remote)
+              }}
+            >
+              Auto Apply
             </Button>
           </div>
         </form>
       </Card>
+
+      {autoApplyOpen && (
+        <Card className="mt-4 p-5">
+          <h2 className="text-lg font-semibold text-charcoal">Auto Apply</h2>
+          <form
+            className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void onStartAutoApply()
+            }}
+          >
+            <Field label="Number of jobs">
+              <Select value={String(autoMaxJobs)} onChange={(event) => setAutoMaxJobs(Number(event.target.value))}>
+                {JOB_COUNT_OPTIONS.map((count) => (
+                  <option key={count} value={count}>
+                    {count}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Minimum match">
+              <Select value={String(autoMinMatch)} onChange={(event) => setAutoMinMatch(Number(event.target.value))}>
+                {MATCH_RATE_OPTIONS.map((rate) => (
+                  <option key={rate} value={rate}>
+                    {rate}%
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Auto-update resume">
+              <Select value={autoTailor ? 'on' : 'off'} onChange={(event) => setAutoTailor(event.target.value === 'on')}>
+                <option value="on">ON</option>
+                <option value="off">OFF</option>
+              </Select>
+            </Field>
+            <Field label="Job type">
+              <Select value={autoJobType} onChange={(event) => setAutoJobType(event.target.value as AutoApplyJobType)}>
+                <option value="all">All</option>
+                <option value="c2c">C2C</option>
+                <option value="contract">Contract</option>
+                <option value="w2">W2</option>
+              </Select>
+            </Field>
+            <Field label="Remote">
+              <Select value={autoRemote} onChange={(event) => setAutoRemote(event.target.value)}>
+                <option value="any">Any</option>
+                <option value="remote">Remote</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="onsite">On-site</option>
+              </Select>
+            </Field>
+            <Field label="Keywords">
+              <TextInput
+                value={autoKeywords}
+                onChange={(event) => setAutoKeywords(event.target.value)}
+                placeholder="Optional, comma-separated"
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit" disabled={autoStarting || !resume?.parsedText?.trim()}>
+                {autoStarting ? 'Starting Auto Apply…' : 'Start Auto Apply'}
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {autoRun && (
+        <Card className="mt-4 p-5">
+          <h2 className="text-lg font-semibold text-charcoal">Auto Apply Run</h2>
+          <p className="mt-2 text-sm text-charcoal">
+            Requested: {autoRun.config.maxJobs} jobs · Minimum Match: {autoRun.config.minimumMatchRate}% · Auto Tailor:{' '}
+            {autoRun.config.autoTailorResume ? 'ON' : 'OFF'} · C2C: {autoRun.config.jobType === 'c2c' ? 'YES' : 'NO'}
+          </p>
+          <p className="mt-2 text-sm text-muted">
+            Found {autoRun.counts.found} · Eligible {autoRun.counts.eligible} · Tailored {autoRun.counts.tailored} · Ready{' '}
+            {autoRun.counts.ready} · Needs Input {autoRun.counts.needsInput} · Submitted {autoRun.counts.submitted} · Skipped{' '}
+            {autoRun.counts.skipped} · Failed {autoRun.counts.failed}
+          </p>
+          <div className="mt-4 space-y-3">
+            {autoItems.map((item) => {
+              const terminal = ['submitted', 'skipped', 'cancelled', 'failed', 'blocked'].includes(item.applicationStatus)
+              return (
+                <div key={item.id} className="rounded-2xl border border-line bg-canvas px-4 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-charcoal">{item.title}</h3>
+                      <p className="mt-1 text-sm text-muted">{item.company || 'Unknown company'}</p>
+                    </div>
+                    <p className="text-sm font-semibold text-charcoal">{autoApplyStatusLabel(item.applicationStatus)}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-charcoal">
+                    Current Match: {item.initialMatchScore == null ? '—' : `${item.initialMatchScore}%`} · Tailored Match:{' '}
+                    {item.finalMatchScore == null ? '—' : `${item.finalMatchScore}%`} · C2C: {c2cStatusLabel(item.c2cStatus)} · Resume:{' '}
+                    {item.resumeVersionName} · Status: {autoApplyStatusLabel(item.applicationStatus)}
+                  </p>
+                  {item.failureReason ? <p className="mt-2 text-sm text-danger">{item.failureReason}</p> : null}
+                  {item.applicationStatus === 'needs_user_input' &&
+                    item.questions
+                      .filter((question) => !question.answer)
+                      .map((question) => (
+                        <Field key={question.id} label={question.prompt}>
+                          <TextInput
+                            value={autoAnswers[`${item.id}:${question.id}`] ?? ''}
+                            onChange={(event) =>
+                              setAutoAnswers((current) => ({ ...current, [`${item.id}:${question.id}`]: event.target.value }))
+                            }
+                            placeholder="Enter a known answer only"
+                          />
+                        </Field>
+                      ))}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="secondary" onClick={() => void onQueueReview(item)}>
+                      Review
+                    </Button>
+                    {item.applicationStatus === 'ready' && (
+                      <Button type="button" onClick={() => void onQueueApply(item)} disabled={autoBusyId === item.id}>
+                        {autoBusyId === item.id ? 'Preparing…' : 'Apply'}
+                      </Button>
+                    )}
+                    {item.applicationStatus === 'ready_for_submission' && (
+                      <Button type="button" onClick={() => void onQueueSubmit(item)} disabled={autoBusyId === item.id}>
+                        {autoBusyId === item.id ? 'Submitting…' : 'Submit'}
+                      </Button>
+                    )}
+                    {item.applicationStatus === 'needs_user_input' && (
+                      <Button type="button" variant="secondary" onClick={() => void onQueueAnswer(item)} disabled={autoBusyId === item.id}>
+                        Save answers
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button type="button" variant="secondary" onClick={() => void onQueueSkip(item)} disabled={autoBusyId === item.id}>
+                        Skip
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button type="button" variant="ghost" onClick={() => void onQueueCancel(item)} disabled={autoBusyId === item.id}>
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
 
       {warning && !error && (
         <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3 text-sm text-muted">{warning}</div>

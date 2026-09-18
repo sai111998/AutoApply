@@ -1,4 +1,5 @@
 import type { ServerConfig } from '../config'
+import { classifyC2c, matchesJobTypeFilter, type C2cClassification, type JobTypeFilter } from './c2c'
 import { deduplicateJobs } from './deduplicate'
 import type { FetchLike } from './http'
 import { createJobProviders } from './provider'
@@ -7,6 +8,7 @@ import type {
   EmploymentFilter,
   NormalizedJob,
   ProviderSearchParams,
+  ProviderSearchResult,
   ProviderWarning,
   RemoteFilter,
 } from './types'
@@ -40,6 +42,8 @@ export interface LiveJob {
   matchScore: number | null
   matchedSkills: string[]
   missingSkills: string[]
+  c2cStatus: C2cClassification['status']
+  c2cEvidence: C2cClassification['evidence']
 }
 
 export interface LiveJobsRequest {
@@ -55,6 +59,7 @@ export interface LiveJobsRequest {
   resumeText?: string
   resumeVersionId?: string
   sort?: 'match' | 'recent' | 'relevance'
+  jobType?: JobTypeFilter
 }
 
 export interface LiveJobsResponse {
@@ -68,6 +73,12 @@ export interface LiveJobsResponse {
 }
 
 export function toLiveJob(job: NormalizedJob, match: LiveJobMatch = emptyLiveMatch()): LiveJob {
+  const c2c = classifyC2c({
+    title: job.title,
+    description: job.description,
+    employmentType: job.employmentType,
+    company: job.company,
+  })
   return {
     id: job.id,
     title: job.title,
@@ -97,6 +108,8 @@ export function toLiveJob(job: NormalizedJob, match: LiveJobMatch = emptyLiveMat
     matchScore: match.score,
     matchedSkills: match.matchedSkills,
     missingSkills: match.missingSkills,
+    c2cStatus: c2c.status,
+    c2cEvidence: c2c.evidence,
   }
 }
 
@@ -107,7 +120,10 @@ function composedLocation(request: LiveJobsRequest): string {
   return location || state
 }
 
-function providerParams(request: LiveJobsRequest): ProviderSearchParams {
+function providerParams(request: LiveJobsRequest, overrides: Partial<ProviderSearchParams> = {}): ProviderSearchParams {
+  const jobType = request.jobType || 'all'
+  const employmentType =
+    jobType === 'c2c' && request.employmentType === 'any' ? 'contract' : request.employmentType
   return {
     keywords: '',
     q: request.q,
@@ -115,11 +131,36 @@ function providerParams(request: LiveJobsRequest): ProviderSearchParams {
     country: request.country || 'US',
     state: '',
     remote: request.remote,
-    employmentType: request.employmentType,
+    employmentType,
     experienceLevel: request.seniority,
     datePostedDays: 0,
     page: request.page,
     pageSize: request.limit,
+    ...overrides,
+  }
+}
+
+async function searchLiveJobs(
+  provider: { search(params: ProviderSearchParams): Promise<ProviderSearchResult> },
+  request: LiveJobsRequest,
+): Promise<ProviderSearchResult> {
+  if (request.jobType !== 'c2c') {
+    return provider.search(providerParams(request))
+  }
+  const role = request.q.trim() || 'software engineer'
+  const searches = [`${role} C2C`, `${role} corp to corp`]
+  const results: ProviderSearchResult[] = []
+  for (const q of searches) {
+    results.push(await provider.search(providerParams(request, { q })))
+  }
+  return {
+    provider: 'job-opportunities',
+    jobs: deduplicateJobs(results.flatMap((item) => item.jobs)),
+    total: results.reduce((sum, item) => sum + (item.total ?? item.jobs.length), 0),
+    page: request.page,
+    pageSize: request.limit,
+    hasMore: results.some((item) => item.hasMore),
+    warning: results.find((item) => item.warning)?.warning,
   }
 }
 
@@ -168,15 +209,24 @@ export async function listLiveJobs(
     }
   }
 
-  const result = await provider.search(providerParams(request))
+  const result = await searchLiveJobs(provider, request)
   const resumeText = request.resumeText?.trim() ?? ''
+  const jobType = request.jobType || 'all'
   const jobs = sortLiveJobs(
-    deduplicateJobs(result.jobs).map((job) => {
-      const match = resumeText
-        ? scoreJobAgainstResume(job, resumeText, request.resumeVersionId)
-        : emptyLiveMatch(request.resumeVersionId ?? null)
-      return toLiveJob(job, match)
-    }),
+    deduplicateJobs(result.jobs)
+      .map((job) => {
+        const match = resumeText
+          ? scoreJobAgainstResume(job, resumeText, request.resumeVersionId)
+          : emptyLiveMatch(request.resumeVersionId ?? null)
+        return toLiveJob(job, match)
+      })
+      .filter((job) =>
+        matchesJobTypeFilter(
+          job,
+          { status: job.c2cStatus, evidence: job.c2cEvidence },
+          jobType,
+        ),
+      ),
     request,
   )
   return {

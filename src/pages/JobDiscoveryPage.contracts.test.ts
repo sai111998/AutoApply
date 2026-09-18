@@ -56,6 +56,21 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/function onTailorResume/)
   })
 
+  it('adds a C2C filter and compact Auto Apply controls without replacing Apply Now', () => {
+    expect(page).toMatch(/Job type/)
+    expect(page).toMatch(/C2C/)
+    expect(page).toMatch(/Auto Apply/)
+    expect(page).toMatch(/Start Auto Apply/)
+    expect(page).toMatch(/Minimum match/)
+    expect(page).toMatch(/Number of jobs/)
+    expect(page).toMatch(/Auto-update resume/)
+    expect(page).toMatch(/startAutoApplyRequest/)
+    expect(page).toMatch(/jobType/)
+    expect(client).toMatch(/\/api\/jobs\/auto-apply\/start/)
+    expect(page).toMatch(/Apply Now/)
+    expect(page).not.toMatch(/submit application/i)
+  })
+
   it('pre-fills Job Analysis from a live job when the user explicitly tailors', () => {
     expect(analysis).toMatch(/liveJob/)
     expect(analysis).toMatch(/jobId: liveJobId/)

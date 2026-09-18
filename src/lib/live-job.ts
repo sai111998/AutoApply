@@ -102,3 +102,30 @@ function relevanceRank(job: DiscoveredJobResult, tokens: string[], query: string
 export function employerApplyHref(job: Pick<DiscoveredJobResult, 'jobUrl' | 'url'>): string | null {
   return applyUrl(job)
 }
+
+export function c2cStatusLabel(status?: string | null): string {
+  if (status === 'confirmed') return 'Confirmed'
+  if (status === 'not_allowed') return 'Not allowed'
+  return 'Unknown'
+}
+
+export function autoApplyStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    queued: 'Queued',
+    preparing: 'Preparing',
+    tailoring: 'Tailoring',
+    ready: 'Ready',
+    opening: 'Opening',
+    filling: 'Filling',
+    needs_user_input: 'Needs input',
+    captcha_required: 'CAPTCHA required',
+    mfa_required: 'MFA required',
+    blocked: 'Blocked',
+    ready_for_submission: 'Ready',
+    submitted: 'Submitted',
+    failed: 'Failed',
+    skipped: 'Skipped',
+    cancelled: 'Cancelled',
+  }
+  return labels[status] ?? status
+}

@@ -3,10 +3,12 @@ import type { DiscoverRequest, EmploymentFilter, JobProviderName, NormalizedJob,
 import { emptyNormalizedJob } from './normalize'
 import type { LiveJobsRequest } from './list'
 import type { LiveJobMatch } from './score'
+import type { JobTypeFilter } from './c2c'
 
 const REMOTE: RemoteFilter[] = ['any', 'remote', 'onsite', 'hybrid']
 const EMPLOYMENT: EmploymentFilter[] = ['any', 'full-time', 'part-time', 'contract', 'temporary', 'internship']
 const SORTS = ['match', 'recent', 'relevance'] as const
+const JOB_TYPES: JobTypeFilter[] = ['all', 'c2c', 'contract', 'w2']
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -39,6 +41,11 @@ function asSort(value: unknown): LiveJobsRequest['sort'] {
   return (SORTS as readonly string[]).includes(text) ? (text as LiveJobsRequest['sort']) : 'match'
 }
 
+function asJobType(value: unknown): JobTypeFilter {
+  const text = asString(value).toLowerCase()
+  return JOB_TYPES.includes(text as JobTypeFilter) ? (text as JobTypeFilter) : 'all'
+}
+
 function hasOwn(record: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key) && record[key] != null && record[key] !== ''
 }
@@ -65,6 +72,7 @@ export function parseLiveJobsQuery(query: unknown): LiveJobsRequest {
     resumeText: queryString(record.resumeText) || undefined,
     resumeVersionId: queryString(record.resumeVersionId) || undefined,
     sort: asSort(record.sort),
+    jobType: asJobType(record.jobType ?? record.job_type),
   }
 }
 
@@ -89,6 +97,7 @@ export function parseLiveJobsRequest(query: unknown, body?: unknown): LiveJobsRe
     resumeText: fromBody.resumeText || fromQuery.resumeText,
     resumeVersionId: fromBody.resumeVersionId || fromQuery.resumeVersionId,
     sort: hasOwn(record, 'sort') ? fromBody.sort : fromQuery.sort,
+    jobType: hasOwn(record, 'jobType') || hasOwn(record, 'job_type') ? fromBody.jobType : fromQuery.jobType,
   }
 }
 

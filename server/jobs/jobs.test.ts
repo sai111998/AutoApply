@@ -758,6 +758,8 @@ describe('discover HTTP API', () => {
     expect(parsed.seniority).toBe('Mid')
     expect(parsed.limit).toBe(50)
     expect(parsed.sort).toBe('match')
+    expect(parsed.jobType).toBe('all')
+    expect(parseLiveJobsQuery({ jobType: 'c2c' }).jobType).toBe('c2c')
   })
 })
 
@@ -916,5 +918,51 @@ describe('GET /api/jobs live catalog', () => {
     expect(parsed.rawMetadata.matchScore).toBe(82)
     expect(parsed.rawMetadata.resumeVersionId).toBe('resume-1')
     expect(parsed.rawMetadata.createdAt).toBe('2026-09-17T00:00:00.000Z')
+  })
+
+  it('classifies C2C locally and returns only confirmed jobs for the C2C filter', async () => {
+    const confirmed = {
+      ...jobOpportunitiesPayload.data[0],
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      title: 'Java Engineer C2C',
+      description: 'Corp to Corp Java Spring Boot. Rate is $60/hr on C2C.',
+      employment_type: 'Contract',
+      apply_url: 'https://jobs.example.com/c2c-java',
+    }
+    const blocked = {
+      ...jobOpportunitiesPayload.data[0],
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      title: 'Java Engineer W2',
+      description: 'No C2C. W2 only.',
+      apply_url: 'https://jobs.example.com/w2-java',
+    }
+    const generic = {
+      ...jobOpportunitiesPayload.data[0],
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      title: 'Java Contract',
+      description: '1099 contract position.',
+      employment_type: 'Contract',
+      apply_url: 'https://jobs.example.com/1099-java',
+    }
+    const fetchImpl = vi.fn(async (url: string) => {
+      expect(url).toMatch(/C2C|corp\+to\+corp|corp%20to%20corp/i)
+      expect(url).toContain('employment_type=Contract')
+      return jsonResponse({ data: [confirmed, blocked, generic] })
+    })
+    const app = createApp({
+      config: { ...config, joobleEnabled: false, usajobsEnabled: false },
+      fetchImpl,
+    })
+    const response = await request(app).get('/api/jobs').query({
+      q: 'Java',
+      country: 'US',
+      jobType: 'c2c',
+    })
+    expect(response.status).toBe(200)
+    expect(fetchImpl.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(response.body.jobs).toHaveLength(1)
+    expect(response.body.jobs[0].title).toBe('Java Engineer C2C')
+    expect(response.body.jobs[0].c2cStatus).toBe('confirmed')
+    expect(response.body.jobs[0].c2cEvidence.length).toBeGreaterThan(0)
   })
 })
