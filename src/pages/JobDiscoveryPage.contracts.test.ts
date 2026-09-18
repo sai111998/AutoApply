@@ -78,7 +78,7 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/await persistQueueApplication\(prepared\)/)
     expect(page).toMatch(/await persistQueueApplication\(submitted\)/)
     expect(page).toMatch(/await persistQueueApplication\(item\)/)
-    expect(page).not.toMatch(/is queued for review[\s\S]*persistQueueApplication/)
+    expect(page).toMatch(/persistError instanceof Error \? persistError\.message : 'Application could not be saved\.'/)
   })
 
   it('pre-fills Job Analysis from a live job when the user explicitly tailors', () => {

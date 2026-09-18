@@ -154,7 +154,7 @@ describe('application bulk delete contracts', () => {
     expect(workspace).toMatch(/syncAutoApplyApplication/)
     expect(workspace).toMatch(/persistQueuedApplication/)
     expect(workspace).toMatch(/buildAutoApplyWorkspaceRecords/)
-    expect(workspace).toMatch(/Application could not be saved/)
+    expect(workspace).toMatch(/APPLICATION_SAVE_ERROR/)
     expect(persist).toMatch(/export async function persistQueuedApplication/)
     expect(persist).toMatch(/from\('jobs'\)/)
     expect(persist).toMatch(/from\('applications'\)/)
