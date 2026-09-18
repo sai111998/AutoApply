@@ -149,7 +149,7 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
       if (session.page) {
         const html = await session.page.content()
         const inspection = inspectApplicationPage(html)
-        if (inspection.status === 'captcha_required' || inspection.status === 'mfa_required' || inspection.status === 'blocked') {
+        if (inspection.status === 'captcha_required' || inspection.status === 'mfa_required' || inspection.status === 'blocked' || inspection.status === 'login_required' || inspection.status === 'automation_blocked') {
           return { status: inspection.status, failureReason: inspection.failureReason }
         }
         try {
@@ -182,7 +182,7 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
 
   private fromHtml(input: BrowserPrepareInput, html: string): BrowserPrepareResult {
     const inspection = inspectApplicationPage(html)
-    if (inspection.status === 'captcha_required' || inspection.status === 'mfa_required' || inspection.status === 'blocked') {
+    if (inspection.status === 'captcha_required' || inspection.status === 'mfa_required' || inspection.status === 'blocked' || inspection.status === 'login_required' || inspection.status === 'automation_blocked') {
       return {
         status: inspection.status,
         questions: [],

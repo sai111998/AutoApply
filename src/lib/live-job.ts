@@ -120,10 +120,12 @@ export function autoApplyStatusLabel(status: string): string {
     needs_user_input: 'Needs input',
     captcha_required: 'CAPTCHA required',
     mfa_required: 'MFA required',
+    login_required: 'Login required',
     blocked: 'Blocked',
+    automation_blocked: 'Blocked',
     ready_for_submission: 'Ready',
     submitted: 'Submitted',
-    failed: 'Failed',
+    failed: 'Preparation Failed',
     skipped: 'Skipped',
     cancelled: 'Cancelled',
   }

@@ -28,12 +28,30 @@ import {
   submitQueueItem,
 } from './apply/engine'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
+import { applyErrorBody, isApplyError } from './apply/errors'
+import { logApplyEvent } from './apply/log'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
 import { tailorResume, validateSubmittedResume } from './tailor/engine'
 import { parseTailoredResume } from './tailor/parse'
 import { renderResumePdf } from './tailor/pdf'
 import { HttpError } from './types'
+
+function sendApplyError(res: Response, error: unknown, fallback: string) {
+  if (isApplyError(error)) {
+    logApplyEvent('apply-error', { code: error.code, error, ...error.details })
+    res.status(error.status).json(applyErrorBody(error))
+    return
+  }
+  const status = error instanceof HttpError ? error.status : 500
+  const message = error instanceof Error ? error.message : fallback
+  logApplyEvent('apply-error', { code: status === 500 ? 'DATABASE_ERROR' : null, error })
+  res.status(status).json({
+    success: false,
+    error: /key|secret|service.role/i.test(message) ? fallback : message,
+    message: /key|secret|service.role/i.test(message) ? fallback : message,
+  })
+}
 
 function routeParam(value: string | string[] | undefined): string {
   return typeof value === 'string' ? value : Array.isArray(value) ? value[0] ?? '' : ''
@@ -120,27 +138,23 @@ export function createApp(options: AppOptions): Express {
     try {
       const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
       if (!userId) throw new HttpError(400, 'userId is required')
-      res.json({ runs: await listAutoApplyRuns(userId) })
+      res.json({ runs: await listAutoApplyRuns(userId, {}, options.config) })
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not load Auto Apply.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not load Auto Apply.')
     }
   })
 
   app.get('/api/jobs/auto-apply/:runId', async (req: Request, res: Response) => {
     try {
       const runId = routeParam(req.params.runId)
-      const current = await getAutoApplyRun(runId)
+      const current = await getAutoApplyRun(runId, {}, options.config)
       if (!current) {
-        res.status(404).json({ error: 'Auto Apply run was not found.' })
+        res.status(404).json({ success: false, code: 'APPLICATION_NOT_FOUND', error: 'Auto Apply run was not found.', message: 'Auto Apply run was not found.' })
         return
       }
       res.json(current)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not load Auto Apply.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not load Auto Apply.')
     }
   })
 
@@ -153,64 +167,53 @@ export function createApp(options: AppOptions): Express {
         {
           profile: parseAutoApplyProfile(body.profile),
           html: typeof body.html === 'string' ? body.html : undefined,
+          userId: typeof body.userId === 'string' ? body.userId : null,
         },
         {},
         options.config,
       )
-      if (!result) {
-        res.status(404).json({ error: 'Queue item was not found.' })
-        return
-      }
+      logApplyEvent('prepare-http', {
+        runId: result.run.id,
+        userId: result.run.userId,
+        jobId: result.item.jobId,
+        applicationId: result.item.applicationId,
+        itemId: result.item.id,
+        resumeVersionId: result.item.resumeVersionId,
+        applicationUrl: result.item.applicationUrl,
+        identityKey: result.item.identityKey,
+        matchScore: result.item.finalMatchScore,
+        applicationStatus: result.item.applicationStatus,
+      })
       res.json(result)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not prepare the application.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not prepare the application.')
     }
   })
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/submit', async (req: Request, res: Response) => {
     try {
       const result = await submitQueueItem(routeParam(req.params.runId), routeParam(req.params.itemId), {}, options.config)
-      if (!result) {
-        res.status(404).json({ error: 'Queue item was not found.' })
-        return
-      }
       res.json(result)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not submit the application.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not submit the application.')
     }
   })
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/skip', async (req: Request, res: Response) => {
     try {
       const result = await skipQueueItem(routeParam(req.params.runId), routeParam(req.params.itemId), {}, options.config)
-      if (!result) {
-        res.status(404).json({ error: 'Queue item was not found.' })
-        return
-      }
       res.json(result)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not skip the application.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not skip the application.')
     }
   })
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/cancel', async (req: Request, res: Response) => {
     try {
       const result = await cancelQueueItem(routeParam(req.params.runId), routeParam(req.params.itemId), {}, options.config)
-      if (!result) {
-        res.status(404).json({ error: 'Queue item was not found.' })
-        return
-      }
       res.json(result)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not cancel the application.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not cancel the application.')
     }
   })
 
@@ -228,30 +231,18 @@ export function createApp(options: AppOptions): Express {
         {},
         options.config,
       )
-      if (!result) {
-        res.status(404).json({ error: 'Queue item was not found.' })
-        return
-      }
       res.json(result)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not save the answer.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not save the answer.')
     }
   })
 
   app.post('/api/jobs/auto-apply/:runId/cancel', async (req: Request, res: Response) => {
     try {
       const result = await cancelRun(routeParam(req.params.runId), {}, options.config)
-      if (!result) {
-        res.status(404).json({ error: 'Auto Apply run was not found.' })
-        return
-      }
       res.json(result)
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not cancel Auto Apply.'
-      res.status(status).json({ error: message })
+      sendApplyError(res, error, 'Could not cancel Auto Apply.')
     }
   })
 

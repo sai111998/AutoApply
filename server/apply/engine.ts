@@ -19,7 +19,17 @@ import type {
   AutoApplyStartInput,
   ListedAutoApplyJob,
 } from './types'
-import { memoryStore, persistRun, type AutoApplyStore } from './store'
+import { ApplyError } from './errors'
+import { logQueueItem } from './log'
+import {
+  loadRunFromDatabase,
+  loadRunsFromDatabase,
+  memoryStore,
+  persistRun,
+  type AutoApplyStore,
+  type StoredRun,
+} from './store'
+import { assertCanPrepareItem } from './validate'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -71,13 +81,15 @@ export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
     if (
       item.applicationStatus === 'needs_user_input' ||
       item.applicationStatus === 'captcha_required' ||
-      item.applicationStatus === 'mfa_required'
+      item.applicationStatus === 'mfa_required' ||
+      item.applicationStatus === 'login_required' ||
+      item.applicationStatus === 'automation_blocked'
     ) {
       counts.needsInput += 1
     }
     if (item.applicationStatus === 'submitted') counts.submitted += 1
     if (item.applicationStatus === 'skipped') counts.skipped += 1
-    if (item.applicationStatus === 'failed' || item.applicationStatus === 'blocked') counts.failed += 1
+    if (item.applicationStatus === 'failed' || item.applicationStatus === 'blocked' || item.applicationStatus === 'automation_blocked') counts.failed += 1
   }
   return counts
 }
@@ -235,51 +247,87 @@ export async function startAutoApply(
   return { run, items }
 }
 
+function toResult(current: StoredRun, item: AutoApplyQueueItem) {
+  return { success: true as const, run: current.run, items: current.items, item }
+}
+
+async function loadCurrent(runId: string, store: AutoApplyStore, config?: ServerConfig): Promise<StoredRun | null> {
+  return (await store.get(runId)) ?? loadRunFromDatabase(runId, config)
+}
+
+const PAUSED_PREPARE_STATUSES = new Set([
+  'ready_for_submission',
+  'needs_user_input',
+  'captcha_required',
+  'mfa_required',
+  'login_required',
+  'blocked',
+  'automation_blocked',
+])
+
 export async function prepareQueueItem(
   runId: string,
   itemId: string,
-  input: { profile: AutoApplyStartInput['profile']; html?: string },
+  input: { profile: AutoApplyStartInput['profile']; html?: string; userId?: string | null },
   deps: AutoApplyEngineDeps = {},
   config?: ServerConfig,
-): Promise<{ run: AutoApplyRun; item: AutoApplyQueueItem } | null> {
+) {
   return withApplyLock(() => prepareQueueItemLocked(runId, itemId, input, deps, config))
 }
 
 async function prepareQueueItemLocked(
   runId: string,
   itemId: string,
-  input: { profile: AutoApplyStartInput['profile']; html?: string },
+  input: { profile: AutoApplyStartInput['profile']; html?: string; userId?: string | null },
   deps: AutoApplyEngineDeps = {},
   config?: ServerConfig,
-): Promise<{ run: AutoApplyRun; item: AutoApplyQueueItem } | null> {
+) {
   const store = deps.store ?? memoryStore
-  const current = await store.get(runId)
-  if (!current) return null
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   const item = current.items.find((entry) => entry.id === itemId)
-  if (!item) return null
-  if (item.applicationStatus === 'submitted' || item.applicationStatus === 'cancelled') {
-    return { run: current.run, item }
-  }
-  item.applicationStatus = 'opening'
+  if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
+  logQueueItem('prepare-start', item, { userId: input.userId ?? current.run.userId })
+  if (item.applicationStatus === 'submitted') return toResult(current, item)
+  if (PAUSED_PREPARE_STATUSES.has(item.applicationStatus)) return toResult(current, item)
+  assertCanPrepareItem(item, { userId: input.userId, runUserId: current.run.userId })
+  item.applicationStatus = 'preparing'
   item.updatedAt = nowIso()
   const browser = deps.browser ?? createApplyBrowser()
   if (deps.delayMs ?? DEFAULT_DELAY_MS) await delay(deps.delayMs ?? DEFAULT_DELAY_MS)
   item.applicationStatus = 'filling'
-  const prepared = await browser.prepare({
-    url: item.applicationUrl || '',
-    profile: input.profile,
-    resumeText: item.tailoredResumeText,
-    html: input.html,
-  })
-  item.applicationStatus = prepared.status
-  item.questions = prepared.questions
-  item.failureReason = prepared.failureReason
-  item.sessionId = prepared.sessionId
+  try {
+    const prepared = await browser.prepare({
+      url: item.applicationUrl || '',
+      profile: input.profile,
+      resumeText: item.tailoredResumeText,
+      html: input.html,
+    })
+    item.applicationStatus = prepared.status === 'submitted' ? 'ready_for_submission' : prepared.status
+    item.questions = prepared.questions
+    item.failureReason = prepared.failureReason
+    item.sessionId = prepared.sessionId
+  } catch (error) {
+    logQueueItem('prepare-browser-error', item, { code: 'BROWSER_AUTOMATION_ERROR', error })
+    item.applicationStatus = 'failed'
+    item.failureReason = error instanceof Error ? error.message : 'Could not open the employer application.'
+    item.sessionId = null
+    item.updatedAt = nowIso()
+    current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+    current.run.updatedAt = nowIso()
+    await persistRun(store, current.run, current.items, config)
+    throw new ApplyError(500, 'BROWSER_AUTOMATION_ERROR', item.failureReason ?? undefined, {
+      runId,
+      itemId,
+      jobId: item.jobId,
+    })
+  }
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   current.run.updatedAt = nowIso()
   await persistRun(store, current.run, current.items, config)
-  return { run: current.run, item }
+  logQueueItem('prepare-complete', item, { userId: current.run.userId })
+  return toResult(current, item)
 }
 
 export async function submitQueueItem(
@@ -296,14 +344,14 @@ async function submitQueueItemLocked(
   itemId: string,
   deps: AutoApplyEngineDeps = {},
   config?: ServerConfig,
-): Promise<{ run: AutoApplyRun; item: AutoApplyQueueItem } | null> {
+) {
   const store = deps.store ?? memoryStore
-  const current = await store.get(runId)
-  if (!current) return null
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   const item = current.items.find((entry) => entry.id === itemId)
-  if (!item) return null
+  if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   if (item.applicationStatus !== 'ready_for_submission') {
-    return { run: current.run, item }
+    return toResult(current, item)
   }
   const browser = deps.browser ?? createApplyBrowser()
   const sessionId = item.sessionId || (item.applicationUrl ? `filled:${item.applicationUrl}` : `open:${item.applicationUrl}`)
@@ -314,11 +362,12 @@ async function submitQueueItemLocked(
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   current.run.updatedAt = nowIso()
-  if (current.items.every((entry) => ['submitted', 'skipped', 'cancelled', 'failed', 'blocked'].includes(entry.applicationStatus))) {
+  if (current.items.every((entry) => ['submitted', 'skipped', 'cancelled', 'failed', 'blocked', 'automation_blocked'].includes(entry.applicationStatus))) {
     current.run.status = 'completed'
   }
   await persistRun(store, current.run, current.items, config)
-  return { run: current.run, item }
+  logQueueItem('submit-complete', item, { userId: current.run.userId })
+  return toResult(current, item)
 }
 
 export async function skipQueueItem(
@@ -345,8 +394,8 @@ export async function cancelRun(
   config?: ServerConfig,
 ) {
   const store = deps.store ?? memoryStore
-  const current = await store.get(runId)
-  if (!current) return null
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   for (const item of current.items) {
     if (!['submitted', 'skipped', 'cancelled', 'failed'].includes(item.applicationStatus)) {
       item.applicationStatus = 'cancelled'
@@ -368,10 +417,10 @@ export async function answerQueueItem(
   config?: ServerConfig,
 ) {
   const store = deps.store ?? memoryStore
-  const current = await store.get(runId)
-  if (!current) return null
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   const item = current.items.find((entry) => entry.id === itemId)
-  if (!item) return null
+  if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   item.questions = item.questions.map((question) => {
     const next = answers.find((answer) => answer.id === question.id)
     return next ? { ...question, answer: next.answer, source: 'user' as const } : question
@@ -382,7 +431,7 @@ export async function answerQueueItem(
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   await persistRun(store, current.run, current.items, config)
-  return { run: current.run, item }
+  return toResult(current, item)
 }
 
 async function setItemStatus(
@@ -393,10 +442,10 @@ async function setItemStatus(
   config?: ServerConfig,
 ) {
   const store = deps.store ?? memoryStore
-  const current = await store.get(runId)
-  if (!current) return null
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   const item = current.items.find((entry) => entry.id === itemId)
-  if (!item) return null
+  if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
   if (item.sessionId) await (deps.browser ?? createApplyBrowser()).close?.(item.sessionId)
   item.applicationStatus = status
   item.sessionId = null
@@ -404,17 +453,19 @@ async function setItemStatus(
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   current.run.updatedAt = nowIso()
   await persistRun(store, current.run, current.items, config)
-  return { run: current.run, item }
+  return toResult(current, item)
 }
 
-export async function getAutoApplyRun(runId: string, deps: AutoApplyEngineDeps = {}) {
+export async function getAutoApplyRun(runId: string, deps: AutoApplyEngineDeps = {}, config?: ServerConfig) {
   const store = deps.store ?? memoryStore
-  return store.get(runId)
+  return loadCurrent(runId, store, config)
 }
 
-export async function listAutoApplyRuns(userId: string, deps: AutoApplyEngineDeps = {}) {
+export async function listAutoApplyRuns(userId: string, deps: AutoApplyEngineDeps = {}, config?: ServerConfig) {
   const store = deps.store ?? memoryStore
-  return store.list(userId)
+  const memory = await store.list(userId)
+  if (memory.length) return memory
+  return loadRunsFromDatabase(userId, config)
 }
 
 export function defaultAutoApplyConfig(partial: Partial<AutoApplyConfig> = {}): AutoApplyConfig {

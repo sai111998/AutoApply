@@ -3,7 +3,7 @@ import type { AutoApplyQueueStatus } from './types'
 export interface PageInspection {
   status: Extract<
     AutoApplyQueueStatus,
-    'captcha_required' | 'mfa_required' | 'blocked' | 'filling' | 'needs_user_input'
+    'captcha_required' | 'mfa_required' | 'login_required' | 'blocked' | 'automation_blocked' | 'filling' | 'needs_user_input'
   >
   questions: string[]
   hasFileInput: boolean
@@ -60,14 +60,24 @@ export function inspectApplicationPage(html: string): PageInspection {
       failureReason: 'Multi-factor authentication was detected. JobPilot will not bypass it.',
     }
   }
-  if ((LOGIN_RE.test(text) && PASSWORD_INPUT_RE.test(html)) || /type=["']password["']/.test(html) && /sign in|log in/i.test(text)) {
+  if ((LOGIN_RE.test(text) && PASSWORD_INPUT_RE.test(html)) || (/type=["']password["']/.test(html) && /sign in|log in/i.test(text))) {
     return {
-      status: 'blocked',
+      status: 'login_required',
       questions: [],
       hasFileInput: FILE_INPUT_RE.test(html),
       hasSubmit: SUBMIT_RE.test(html),
       mappedFields: [],
       failureReason: 'The employer site requires login. JobPilot does not store employer passwords or bypass authentication.',
+    }
+  }
+  if (/cf-challenge|attention required|enable javascript and cookies to continue|access denied|bot detection/i.test(text)) {
+    return {
+      status: 'automation_blocked',
+      questions: [],
+      hasFileInput: FILE_INPUT_RE.test(html),
+      hasSubmit: SUBMIT_RE.test(html),
+      mappedFields: [],
+      failureReason: 'The employer site blocked automated interaction. JobPilot will not bypass that protection.',
     }
   }
   const questions = extractQuestionPrompts(html)

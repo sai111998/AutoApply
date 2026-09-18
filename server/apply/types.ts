@@ -12,7 +12,9 @@ export type AutoApplyQueueStatus =
   | 'needs_user_input'
   | 'captcha_required'
   | 'mfa_required'
+  | 'login_required'
   | 'blocked'
+  | 'automation_blocked'
   | 'ready_for_submission'
   | 'submitted'
   | 'failed'
@@ -126,6 +128,13 @@ export interface BrowserPrepareInput {
   html?: string
 }
 
+export interface AutoApplyMutationResult {
+  success: true
+  run: AutoApplyRun
+  items: AutoApplyQueueItem[]
+  item: AutoApplyQueueItem
+}
+
 export interface BrowserPrepareResult {
   status: AutoApplyQueueStatus
   questions: AutoApplyQuestion[]
@@ -134,7 +143,7 @@ export interface BrowserPrepareResult {
 }
 
 export interface BrowserSubmitResult {
-  status: 'submitted' | 'needs_user_input' | 'captcha_required' | 'mfa_required' | 'blocked' | 'failed'
+  status: 'submitted' | 'needs_user_input' | 'captcha_required' | 'mfa_required' | 'login_required' | 'blocked' | 'automation_blocked' | 'failed'
   failureReason: string | null
 }
 

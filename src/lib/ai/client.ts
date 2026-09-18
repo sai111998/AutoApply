@@ -467,7 +467,9 @@ export type AutoApplyQueueStatus =
   | 'needs_user_input'
   | 'captcha_required'
   | 'mfa_required'
+  | 'login_required'
   | 'blocked'
+  | 'automation_blocked'
   | 'ready_for_submission'
   | 'submitted'
   | 'failed'
@@ -551,13 +553,51 @@ export interface AutoApplyRunResult {
   items: AutoApplyQueueItem[]
 }
 
-async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {
-  const body = (await response.json().catch(() => null)) as AutoApplyRunResult | { error?: string } | null
-  if (!response.ok || !body || !('run' in body) || !('items' in body)) {
-    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : fallback
-    throw new Error(/key|secret|service.role/i.test(message) ? fallback : message)
+export const PREPARE_ERROR_MESSAGES: Record<string, string> = {
+  JOB_NOT_FOUND: 'This job is no longer available.',
+  APPLICATION_NOT_FOUND: 'This Auto Apply job is no longer in the queue.',
+  APPLICATION_URL_MISSING: 'This listing does not include a valid application URL.',
+  RESUME_VERSION_NOT_FOUND: 'The selected resume version could not be found.',
+  RESUME_VERSION_NOT_READY: 'Resume is still being prepared. Please wait until the version is ready.',
+  RESUME_FILE_MISSING: 'The selected resume is missing text for this application.',
+  INVALID_APPLICATION_URL: 'This listing does not include a valid application URL.',
+  UNSUPPORTED_PROVIDER: 'This job source cannot be prepared automatically.',
+  DATABASE_ERROR: 'Could not prepare the application.',
+  BROWSER_AUTOMATION_ERROR: 'Could not open the employer application.',
+  APPLICATION_AUTOMATION_UNSUPPORTED: 'This employer site cannot be prepared automatically.',
+  AUTHENTICATION_FAILURE: 'Sign in to prepare this application.',
+}
+
+export function normalizeAutoApplyResult(body: unknown): AutoApplyRunResult | null {
+  if (!body || typeof body !== 'object') return null
+  const record = body as Record<string, unknown>
+  if (!record.run || typeof record.run !== 'object') return null
+  if (Array.isArray(record.items)) {
+    return { run: record.run as AutoApplyRun, items: record.items as AutoApplyQueueItem[] }
   }
-  return body
+  if (record.item && typeof record.item === 'object') {
+    return { run: record.run as AutoApplyRun, items: [record.item as AutoApplyQueueItem] }
+  }
+  return null
+}
+
+export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare the application.'): string {
+  if (!body || typeof body !== 'object') return fallback
+  const record = body as { code?: unknown; message?: unknown; error?: unknown }
+  if (typeof record.code === 'string' && PREPARE_ERROR_MESSAGES[record.code]) {
+    return PREPARE_ERROR_MESSAGES[record.code]
+  }
+  const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
+  if (raw && !/key|secret|service.role/i.test(raw)) return raw
+  return fallback
+}
+
+async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  const normalized = normalizeAutoApplyResult(body)
+  if (normalized && response.ok) return normalized
+  const message = prepareErrorMessage(body, fallback)
+  throw new Error(/key|secret|service.role/i.test(message) ? fallback : message)
 }
 
 export async function startAutoApplyRequest(payload: {
@@ -602,13 +642,14 @@ export async function prepareAutoApplyItemRequest(
   runId: string,
   itemId: string,
   profile: AutoApplyProfilePayload,
+  userId?: string | null,
 ): Promise<AutoApplyRunResult> {
   const response = await fetch(
     apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/apply`),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile }),
+      body: JSON.stringify({ profile, userId: userId ?? null }),
     },
   )
   return readAutoApplyResult(response, 'Could not prepare the application.')

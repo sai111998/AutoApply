@@ -386,7 +386,7 @@ export function JobDiscoveryPage() {
   async function onQueueApply(item: AutoApplyQueueItem) {
     setAutoBusyId(item.id)
     try {
-      setAutoResult(await prepareAutoApplyItemRequest(item.runId, item.id, applyProfile()))
+      setAutoResult(await prepareAutoApplyItemRequest(item.runId, item.id, applyProfile(), user?.id))
     } catch (applyError) {
       notify(applyError instanceof Error ? applyError.message : 'Could not prepare the application.', 'error')
     } finally {
