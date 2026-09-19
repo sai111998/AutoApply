@@ -471,6 +471,8 @@ export type AutoApplyQueueStatus =
   | 'blocked'
   | 'automation_blocked'
   | 'ready_for_submission'
+  | 'submitting'
+  | 'needs_user_confirmation'
   | 'submitted'
   | 'failed'
   | 'skipped'

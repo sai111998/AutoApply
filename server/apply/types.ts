@@ -16,6 +16,8 @@ export type AutoApplyQueueStatus =
   | 'blocked'
   | 'automation_blocked'
   | 'ready_for_submission'
+  | 'submitting'
+  | 'needs_user_confirmation'
   | 'submitted'
   | 'failed'
   | 'skipped'
@@ -143,13 +145,30 @@ export interface BrowserPrepareResult {
 }
 
 export interface BrowserSubmitResult {
-  status: 'submitted' | 'needs_user_input' | 'captcha_required' | 'mfa_required' | 'login_required' | 'blocked' | 'automation_blocked' | 'failed'
+  status:
+    | 'submitted'
+    | 'needs_user_input'
+    | 'needs_user_confirmation'
+    | 'captcha_required'
+    | 'mfa_required'
+    | 'login_required'
+    | 'blocked'
+    | 'automation_blocked'
+    | 'failed'
   failureReason: string | null
+  success?: boolean
+  confirmationDetected?: boolean
+  confirmationNumber?: string
+  confirmationText?: string
+  resultingUrl?: string
+  pageTitle?: string
+  finalActionCompleted?: boolean
+  reason?: string
 }
 
 export interface ApplyBrowser {
   prepare(input: BrowserPrepareInput): Promise<BrowserPrepareResult>
-  submit(sessionId: string): Promise<BrowserSubmitResult>
+  submit(sessionId: string, context?: import('./confirm').BrowserSubmitContext): Promise<BrowserSubmitResult>
   close?(sessionId: string): Promise<void>
 }
 

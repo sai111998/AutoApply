@@ -77,6 +77,7 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/Application could not be saved/)
     expect(page).toMatch(/await persistQueueApplication\(prepared\)/)
     expect(page).toMatch(/await persistQueueApplication\(submitted\)/)
+    expect(page).toMatch(/submitted\.applicationStatus === 'submitted'/)
     expect(page).toMatch(/await persistQueueApplication\(item\)/)
     expect(page).toMatch(/persistError instanceof Error \? persistError\.message : 'Application could not be saved\.'/)
   })

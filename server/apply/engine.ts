@@ -80,6 +80,7 @@ export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
     if (item.applicationStatus === 'ready' || item.applicationStatus === 'ready_for_submission') counts.ready += 1
     if (
       item.applicationStatus === 'needs_user_input' ||
+      item.applicationStatus === 'needs_user_confirmation' ||
       item.applicationStatus === 'captcha_required' ||
       item.applicationStatus === 'mfa_required' ||
       item.applicationStatus === 'login_required' ||
@@ -257,7 +258,9 @@ async function loadCurrent(runId: string, store: AutoApplyStore, config?: Server
 
 const PAUSED_PREPARE_STATUSES = new Set([
   'ready_for_submission',
+  'submitting',
   'needs_user_input',
+  'needs_user_confirmation',
   'captcha_required',
   'mfa_required',
   'login_required',
@@ -303,7 +306,10 @@ async function prepareQueueItemLocked(
       resumeText: item.tailoredResumeText,
       html: input.html,
     })
-    item.applicationStatus = prepared.status === 'submitted' ? 'ready_for_submission' : prepared.status
+    item.applicationStatus =
+      prepared.status === 'submitted' || prepared.status === 'submitting'
+        ? 'ready_for_submission'
+        : prepared.status
     item.questions = prepared.questions
     item.failureReason = prepared.failureReason
     item.sessionId = prepared.sessionId
@@ -355,7 +361,14 @@ async function submitQueueItemLocked(
   }
   const browser = deps.browser ?? createApplyBrowser()
   const sessionId = item.sessionId || (item.applicationUrl ? `filled:${item.applicationUrl}` : `open:${item.applicationUrl}`)
-  const submitted = await browser.submit(sessionId)
+  item.applicationStatus = 'submitting'
+  item.updatedAt = nowIso()
+  const submitted = await browser.submit(sessionId, {
+    jobId: item.jobId,
+    applicationId: item.applicationId,
+    identityKey: item.identityKey,
+    applicationUrl: item.applicationUrl,
+  })
   item.applicationStatus = submitted.status === 'submitted' ? 'submitted' : submitted.status
   item.failureReason = submitted.failureReason
   item.sessionId = null

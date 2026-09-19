@@ -302,6 +302,8 @@ describe('auto apply application sync', () => {
     expect(applicationStatusFromQueue('ready')).toBe('ready')
     expect(applicationStatusFromQueue('ready_for_submission')).toBe('ready')
     expect(applicationStatusFromQueue('needs_user_input')).toBe('ready')
+    expect(applicationStatusFromQueue('needs_user_confirmation')).toBe('ready')
+    expect(applicationStatusFromQueue('submitting')).toBe('ready')
     expect(applicationStatusFromQueue('captcha_required')).toBe('ready')
     expect(applicationStatusFromQueue('opening')).toBe('ready')
     expect(applicationStatusFromQueue('submitted')).toBe('applied')

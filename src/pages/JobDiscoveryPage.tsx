@@ -428,7 +428,14 @@ export function JobDiscoveryPage() {
       setAutoResult(result)
       const submitted = result.items.find((row) => row.id === item.id) ?? result.items[0] ?? item
       await persistQueueApplication(submitted)
-      notify('Application submitted on the employer site.', 'success')
+      if (submitted.applicationStatus === 'submitted') {
+        notify('Application submitted on the employer site.', 'success')
+      } else {
+        notify(
+          submitted.failureReason || 'Submission could not be confirmed on the employer site.',
+          'error',
+        )
+      }
     } catch (submitError) {
       notify(submitError instanceof Error ? submitError.message : 'Could not submit the application.', 'error')
     } finally {

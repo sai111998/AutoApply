@@ -321,9 +321,16 @@ describe('POST /api/jobs/auto-apply item apply', () => {
     expect(prepared.body.items).toEqual(expect.any(Array))
     expect(prepared.body.items[0].applicationStatus).not.toBe('applied')
     expect(prepared.body.items[0].applicationStatus).not.toBe('submitted')
-    expect(['ready_for_submission', 'needs_user_input', 'captcha_required', 'mfa_required', 'login_required', 'failed']).toContain(
-      prepared.body.items[0].applicationStatus,
-    )
+    expect([
+      'ready_for_submission',
+      'needs_user_input',
+      'needs_user_confirmation',
+      'captcha_required',
+      'mfa_required',
+      'login_required',
+      'automation_blocked',
+      'failed',
+    ]).toContain(prepared.body.items[0].applicationStatus)
 
     const missing = await request(app).post('/api/jobs/auto-apply/missing/items/missing/apply').send({ profile })
     expect(missing.status).toBe(404)

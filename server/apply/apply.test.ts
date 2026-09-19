@@ -329,6 +329,47 @@ describe('auto apply engine', () => {
     const submitted = await submitQueueItem(started.run.id, started.items[0].id, { browser: fakeBrowser, delayMs: 0 })
     expect(submitted?.item.applicationStatus).toBe('submitted')
 
+    const unconfirmedBrowser: ApplyBrowser = {
+      async prepare() {
+        return { status: 'ready_for_submission', questions: [], failureReason: null, sessionId: 'filled:unconfirmed' }
+      },
+      async submit() {
+        return {
+          status: 'needs_user_confirmation',
+          failureReason: 'Submission could not be confirmed on the employer site.',
+          success: false,
+          confirmationDetected: false,
+          finalActionCompleted: true,
+          resultingUrl: 'https://jobs.example.com/thank-you',
+        }
+      },
+    }
+    const unconfirmedStart = await startAutoApply(
+      config,
+      {
+        userId: 'user-1',
+        resumeId: 'resume-1',
+        resumeVersionId: 'resume-1',
+        resumeText: JAVA_RESUME_TEXT,
+        masterResumeText: JAVA_RESUME_TEXT,
+        profile,
+        config: defaultAutoApplyConfig({ autoTailorResume: false, minimumMatchRate: 70 }),
+      },
+      undefined,
+      {
+        listJobs: async () => ({ jobs: [job({ id: 'unconfirmed', title: 'Unconfirmed', matchScore: 90 })] }),
+        browser: unconfirmedBrowser,
+        delayMs: 0,
+      },
+    )
+    await prepareQueueItem(unconfirmedStart.run.id, unconfirmedStart.items[0].id, { profile }, { browser: unconfirmedBrowser, delayMs: 0 })
+    const unconfirmed = await submitQueueItem(unconfirmedStart.run.id, unconfirmedStart.items[0].id, {
+      browser: unconfirmedBrowser,
+      delayMs: 0,
+    })
+    expect(unconfirmed?.item.applicationStatus).toBe('needs_user_confirmation')
+    expect(unconfirmed?.item.applicationStatus).not.toBe('submitted')
+
     const second = await startAutoApply(
       config,
       {

@@ -124,6 +124,8 @@ export function autoApplyStatusLabel(status: string): string {
     blocked: 'Blocked',
     automation_blocked: 'Blocked',
     ready_for_submission: 'Ready',
+    submitting: 'Submitting',
+    needs_user_confirmation: 'Needs confirmation',
     submitted: 'Submitted',
     failed: 'Preparation Failed',
     skipped: 'Skipped',

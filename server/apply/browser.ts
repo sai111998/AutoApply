@@ -1,20 +1,38 @@
+import {
+  detectSubmissionConfirmation,
+  inspectPostSubmitPage,
+  isFinalSubmitLabel,
+  logExternalSubmit,
+  safeEmployerHost,
+  type BrowserSubmitContext,
+  type ExternalSubmissionResult,
+} from './confirm'
 import { inspectApplicationPage } from './detect'
 import { resolveApplicationQuestions } from './questions'
 import type { ApplyBrowser, BrowserPrepareInput, BrowserPrepareResult, BrowserSubmitResult } from './types'
 
-type PlaywrightPage = {
+type PlaywrightLocatorHandle = {
+  count?: () => Promise<number>
+  fill?: (value: string) => Promise<unknown>
+  click?: (options?: { timeout?: number }) => Promise<unknown>
+  setInputFiles?: (files: unknown) => Promise<unknown>
+  innerText?: () => Promise<string>
+  getAttribute?: (name: string) => Promise<string | null>
+}
+
+type PlaywrightLocator = PlaywrightLocatorHandle & {
+  first: () => PlaywrightLocatorHandle
+}
+
+export type PlaywrightPage = {
   goto: (url: string, options?: { waitUntil?: string; timeout?: number }) => Promise<unknown>
   content: () => Promise<string>
+  url?: (() => string) | string
+  title?: () => Promise<string>
+  waitForLoadState?: (state?: string, options?: { timeout?: number }) => Promise<unknown>
   fill?: (selector: string, value: string) => Promise<unknown>
   click?: (selector: string) => Promise<unknown>
-  locator?: (selector: string) => {
-    first: () => {
-      count?: () => Promise<number>
-      fill?: (value: string) => Promise<unknown>
-      click?: (options?: { timeout?: number }) => Promise<unknown>
-      setInputFiles?: (files: unknown) => Promise<unknown>
-    }
-  }
+  locator?: (selector: string) => PlaywrightLocator
 }
 
 type PlaywrightBrowser = {
@@ -28,7 +46,7 @@ type PlaywrightLike = {
   }
 }
 
-type LiveSession = {
+export type LiveSession = {
   url: string
   filled: boolean
   browser?: PlaywrightBrowser
@@ -36,6 +54,14 @@ type LiveSession = {
 }
 
 const sessions = new Map<string, LiveSession>()
+
+const FINAL_SUBMIT_SELECTORS = [
+  'button[type="submit"]',
+  'input[type="submit"]',
+  'button',
+  'input[type="button"]',
+  '[role="button"]',
+]
 
 async function loadPlaywright(): Promise<PlaywrightLike | null> {
   try {
@@ -99,19 +125,187 @@ async function closeSession(session: LiveSession | undefined) {
   }
 }
 
+function pageUrl(page: PlaywrightPage | undefined, fallback: string): string {
+  if (!page?.url) return fallback
+  return typeof page.url === 'function' ? page.url() : page.url
+}
+
+async function pageTitle(page: PlaywrightPage | undefined): Promise<string> {
+  try {
+    return (await page?.title?.()) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+async function waitForPage(page: PlaywrightPage | undefined) {
+  try {
+    await page?.waitForLoadState?.('domcontentloaded', { timeout: 8_000 })
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 800))
+  }
+}
+
+function resultFromInspection(
+  status: BrowserSubmitResult['status'],
+  failureReason: string | null,
+  extras: Partial<ExternalSubmissionResult> = {},
+): BrowserSubmitResult {
+  return {
+    status,
+    failureReason,
+    success: false,
+    confirmationDetected: false,
+    finalActionCompleted: extras.finalActionCompleted ?? false,
+    resultingUrl: extras.resultingUrl,
+    pageTitle: extras.pageTitle,
+    confirmationNumber: extras.confirmationNumber,
+    confirmationText: extras.confirmationText,
+    reason: extras.reason ?? failureReason ?? undefined,
+  }
+}
+
+async function readLocatorLabel(locator: PlaywrightLocatorHandle, selector: string): Promise<string> {
+  try {
+    const text = (await locator.innerText?.()) ?? ''
+    if (text.trim()) return text
+  } catch {
+    // Fall through to attributes.
+  }
+  try {
+    const value = (await locator.getAttribute?.('value')) ?? ''
+    if (value.trim()) return value
+  } catch {
+    // Ignore missing attributes.
+  }
+  return selector
+}
+
+export async function clickFinalSubmit(page: PlaywrightPage): Promise<{ clicked: boolean; reason: string }> {
+  for (const selector of FINAL_SUBMIT_SELECTORS) {
+    try {
+      const locator = page.locator?.(selector).first()
+      if (!locator) continue
+      if (locator.count && (await locator.count()) === 0) continue
+      const label = await readLocatorLabel(locator, selector)
+      const isSubmitType = selector.includes('[type="submit"]')
+      if (!isSubmitType && !isFinalSubmitLabel(label)) continue
+      await locator.click?.({ timeout: 5_000 })
+      return { clicked: true, reason: `Clicked ${label || selector}` }
+    } catch {
+      // Try the next known final control.
+    }
+  }
+  if (!page.click) {
+    return {
+      clicked: false,
+      reason: 'The employer submit control could not be used. Complete submission on the employer site.',
+    }
+  }
+  try {
+    await page.click('button[type="submit"]')
+    return { clicked: true, reason: 'Clicked button[type="submit"]' }
+  } catch {
+    return {
+      clicked: false,
+      reason: 'The employer submit control could not be used. Complete submission on the employer site.',
+    }
+  }
+}
+
+export async function evaluateExternalSubmission(
+  page: PlaywrightPage,
+  context: BrowserSubmitContext = {},
+): Promise<BrowserSubmitResult> {
+  const currentUrl = pageUrl(page, context.applicationUrl ?? '')
+  const htmlBefore = await page.content()
+  const inspection = inspectApplicationPage(htmlBefore)
+  if (
+    inspection.status === 'captcha_required' ||
+    inspection.status === 'mfa_required' ||
+    inspection.status === 'login_required' ||
+    inspection.status === 'blocked' ||
+    inspection.status === 'automation_blocked'
+  ) {
+    return resultFromInspection(inspection.status, inspection.failureReason, { resultingUrl: currentUrl })
+  }
+
+  logExternalSubmit('Preparing external submission')
+  logExternalSubmit(`Job: ${context.identityKey || context.jobId || 'unknown'}`)
+  logExternalSubmit(`Application ID: ${context.applicationId || 'unknown'}`)
+  logExternalSubmit(`Employer hostname: ${safeEmployerHost(currentUrl) || 'unknown'}`)
+
+  const clicked = await clickFinalSubmit(page)
+  if (!clicked.clicked) {
+    return resultFromInspection('needs_user_input', clicked.reason, { resultingUrl: currentUrl, reason: clicked.reason })
+  }
+
+  logExternalSubmit('Final submit action completed')
+  await waitForPage(page)
+
+  const resultingUrl = pageUrl(page, currentUrl)
+  const title = await pageTitle(page)
+  const html = await page.content()
+  const blocked = inspectPostSubmitPage(html)
+  if (blocked) {
+    logExternalSubmit(`Post-submit pause: ${blocked.status}`)
+    return resultFromInspection(blocked.status, blocked.failureReason, {
+      finalActionCompleted: true,
+      resultingUrl,
+      pageTitle: title,
+      reason: blocked.failureReason ?? undefined,
+    })
+  }
+
+  const confirmation = detectSubmissionConfirmation({ html, url: resultingUrl, title })
+  logExternalSubmit(`Resulting URL: ${safeEmployerHost(resultingUrl) || resultingUrl || 'unknown'}`)
+  logExternalSubmit(`Page title: ${title || 'unknown'}`)
+  logExternalSubmit(`Confirmation detected: ${confirmation.detected ? 'yes' : 'no'}`)
+  if (confirmation.confirmationNumber) {
+    logExternalSubmit(`Confirmation number: ${confirmation.confirmationNumber}`)
+  }
+  if (confirmation.confirmationText) {
+    logExternalSubmit(`Confirmation text: ${confirmation.confirmationText}`)
+  }
+
+  if (!confirmation.detected) {
+    return resultFromInspection(
+      'needs_user_confirmation',
+      'Submission could not be confirmed on the employer site. Complete or verify it there.',
+      {
+        finalActionCompleted: true,
+        resultingUrl,
+        pageTitle: title,
+        reason: 'No reliable employer confirmation was detected after the final submit action.',
+      },
+    )
+  }
+
+  return {
+    status: 'submitted',
+    failureReason: null,
+    success: true,
+    confirmationDetected: true,
+    confirmationNumber: confirmation.confirmationNumber,
+    confirmationText: confirmation.confirmationText,
+    resultingUrl,
+    pageTitle: title,
+    finalActionCompleted: true,
+  }
+}
+
 export class PlaywrightApplyBrowser implements ApplyBrowser {
   async prepare(input: BrowserPrepareInput): Promise<BrowserPrepareResult> {
     if (input.html) return this.fromHtml(input, input.html)
 
     const playwright = await loadPlaywright()
     if (!playwright) {
-      const sessionId = `open:${input.url}`
-      sessions.set(sessionId, { url: input.url, filled: false })
       return {
-        status: 'ready_for_submission',
+        status: 'automation_blocked',
         questions: [],
-        failureReason: null,
-        sessionId,
+        failureReason:
+          'Browser automation is not available. JobPilot cannot open the employer application in this environment.',
+        sessionId: null,
       }
     }
 
@@ -140,37 +334,35 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
     }
   }
 
-  async submit(sessionId: string): Promise<BrowserSubmitResult> {
+  async submit(sessionId: string, context: BrowserSubmitContext = {}): Promise<BrowserSubmitResult> {
     const session = sessions.get(sessionId)
     if (!session) {
-      return { status: 'failed', failureReason: 'The browser session is no longer available.' }
+      return resultFromInspection('failed', 'The browser session is no longer available.')
     }
     try {
-      if (session.page) {
-        const html = await session.page.content()
-        const inspection = inspectApplicationPage(html)
-        if (inspection.status === 'captcha_required' || inspection.status === 'mfa_required' || inspection.status === 'blocked' || inspection.status === 'login_required' || inspection.status === 'automation_blocked') {
-          return { status: inspection.status, failureReason: inspection.failureReason }
-        }
-        try {
-          await session.page.click?.('button[type="submit"], input[type="submit"]')
-        } catch {
-          return {
-            status: 'needs_user_input',
-            failureReason: 'The employer submit control could not be used. Complete submission on the employer site.',
-          }
-        }
+      if (!session.page) {
+        sessions.delete(sessionId)
+        await closeSession(session)
+        return resultFromInspection(
+          'needs_user_confirmation',
+          'The employer application was not opened in a browser session. Complete submission on the employer site.',
+          { resultingUrl: session.url, reason: 'No live browser page was available for the final submit action.' },
+        )
       }
+      const result = await evaluateExternalSubmission(session.page, {
+        ...context,
+        applicationUrl: context.applicationUrl ?? session.url,
+      })
       sessions.delete(sessionId)
       await closeSession(session)
-      return { status: 'submitted', failureReason: null }
+      return result
     } catch (error) {
       sessions.delete(sessionId)
       await closeSession(session)
-      return {
-        status: 'failed',
-        failureReason: error instanceof Error ? error.message : 'Could not submit the application.',
-      }
+      return resultFromInspection(
+        'failed',
+        error instanceof Error ? error.message : 'Could not submit the application.',
+      )
     }
   }
 
@@ -212,4 +404,12 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
 
 export function createApplyBrowser(): ApplyBrowser {
   return new PlaywrightApplyBrowser()
+}
+
+export function setBrowserSessionForTests(sessionId: string, session: LiveSession) {
+  sessions.set(sessionId, session)
+}
+
+export function clearBrowserSessionsForTests() {
+  sessions.clear()
 }
