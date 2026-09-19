@@ -30,6 +30,35 @@ function isAnalysisResult(value: unknown): value is AnalyzeJobApiResult {
   )
 }
 
+export async function getAutomationHealth(): Promise<{
+  available: boolean
+  browser: 'chromium' | null
+  playwright: boolean
+  runtime?: string
+  reason?: string
+}> {
+  try {
+    const response = await fetch(apiUrl('/api/automation/health'))
+    if (!response.ok) return { available: false, browser: null, playwright: false, reason: 'Automation health is unavailable.' }
+    const body = (await response.json()) as {
+      available?: boolean
+      browser?: 'chromium' | null
+      playwright?: boolean
+      runtime?: string
+      reason?: string
+    }
+    return {
+      available: Boolean(body.available),
+      browser: body.browser === 'chromium' ? 'chromium' : null,
+      playwright: Boolean(body.playwright),
+      runtime: body.runtime,
+      reason: body.reason,
+    }
+  } catch {
+    return { available: false, browser: null, playwright: false, reason: 'Automation health is unavailable.' }
+  }
+}
+
 export async function getAnalysisHealth(): Promise<{
   ok: boolean
   llmConfigured: boolean

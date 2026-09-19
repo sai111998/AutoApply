@@ -251,7 +251,10 @@ describe('external submit automation', () => {
 describe('playwright availability', () => {
   it('does not mark a job submitted when browser automation cannot open the employer site', async () => {
     const spy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    const browser = new PlaywrightApplyBrowser()
+    const browser = new PlaywrightApplyBrowser({
+      loadPlaywright: async () => null,
+      health: async () => ({ available: false, reason: 'Playwright is not installed' }),
+    })
     const prepared = await browser.prepare({
       url: 'https://jobs.example.com/apply',
       resumeText: 'Java resume',
@@ -269,6 +272,7 @@ describe('playwright availability', () => {
     })
     expect(prepared.status).not.toBe('submitted')
     expect(prepared.status).toBe('automation_blocked')
+    expect(prepared.failureReason).toMatch(/Playwright is not installed/)
     spy.mockRestore()
   })
 })

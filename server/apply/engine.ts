@@ -20,7 +20,8 @@ import type {
   ListedAutoApplyJob,
 } from './types'
 import { ApplyError } from './errors'
-import { logQueueItem } from './log'
+import { getAutomationHealth } from './health'
+import { logApplyEvent, logQueueItem } from './log'
 import {
   loadRunFromDatabase,
   loadRunsFromDatabase,
@@ -133,6 +134,11 @@ export async function startAutoApply(
   deps: AutoApplyEngineDeps = {},
 ): Promise<{ run: AutoApplyRun; items: AutoApplyQueueItem[] }> {
   const store = deps.store ?? memoryStore
+  const automation = await getAutomationHealth({ probe: false })
+  logApplyEvent('automation-health', {
+    code: automation.available ? 'OK' : 'BROWSER_AUTOMATION_ERROR',
+    error: automation.available ? undefined : automation.reason,
+  })
   const createdAt = nowIso()
   const run: AutoApplyRun = {
     id: randomUUID(),
@@ -294,6 +300,22 @@ async function prepareQueueItemLocked(
   if (item.applicationStatus === 'submitted') return toResult(current, item)
   if (PAUSED_PREPARE_STATUSES.has(item.applicationStatus)) return toResult(current, item)
   assertCanPrepareItem(item, { userId: input.userId, runUserId: current.run.userId })
+  if (!deps.browser) {
+    const automation = await getAutomationHealth({ probe: false })
+    if (!automation.available) {
+      item.applicationStatus = 'automation_blocked'
+      item.failureReason =
+        automation.reason ??
+        'Browser automation is not available. JobPilot cannot open the employer application in this environment.'
+      item.sessionId = null
+      item.updatedAt = nowIso()
+      current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+      current.run.updatedAt = nowIso()
+      await persistRun(store, current.run, current.items, config)
+      logQueueItem('prepare-automation-unavailable', item, { code: 'BROWSER_AUTOMATION_ERROR' })
+      return toResult(current, item)
+    }
+  }
   item.applicationStatus = 'preparing'
   item.updatedAt = nowIso()
   const browser = deps.browser ?? createApplyBrowser()

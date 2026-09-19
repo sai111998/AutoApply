@@ -342,6 +342,51 @@ Java, Spring Boot, PostgreSQL
   })
 })
 
+describe('GET /api/automation/health', () => {
+  it('reports browser availability without exposing secrets or filesystem paths', async () => {
+    const app = createApp({
+      config,
+      automationHealth: async () => ({
+        available: false,
+        playwright: true,
+        browser: null,
+        runtime: 'node-server',
+        reason: 'Chromium executable not found',
+      }),
+    })
+    const response = await request(app).get('/api/automation/health')
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({
+      available: false,
+      browser: null,
+      playwright: true,
+      runtime: 'node-server',
+      reason: 'Chromium executable not found',
+    })
+    expect(JSON.stringify(response.body)).not.toContain('test-key')
+    expect(JSON.stringify(response.body)).not.toMatch(/\/home\/|\/root\/|SECRET|bearer/i)
+  })
+
+  it('reports a successful Chromium probe', async () => {
+    const app = createApp({
+      config,
+      automationHealth: async () => ({
+        available: true,
+        playwright: true,
+        browser: 'chromium',
+        runtime: 'node-server',
+      }),
+    })
+    const response = await request(app).get('/api/automation/health')
+    expect(response.body).toEqual({
+      available: true,
+      browser: 'chromium',
+      playwright: true,
+      runtime: 'node-server',
+    })
+  })
+})
+
 describe('GET /api/health', () => {
   it('reports whether the LLM key is present without returning it', async () => {
     const app = createApp({ config })

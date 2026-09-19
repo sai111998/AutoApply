@@ -13,7 +13,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:apply": "tsx scripts/apply-schema.ts",
-    "db:auth-flow": "tsx scripts/test-auth-flow.ts"
+    "db:auth-flow": "tsx scripts/test-auth-flow.ts",
+    "playwright:install": "playwright install chromium",
+    "automation:health": "tsx scripts/automation-health.ts",
+    "postinstall": "playwright install chromium || echo Playwright Chromium install skipped"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -23,6 +26,7 @@
     "lucide-react": "^0.542.0",
     "mammoth": "^1.12.1",
     "pdfkit": "^0.20.1",
+    "playwright": "^1.55.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.8.2",

@@ -19,6 +19,8 @@ describe('job analysis API routing', () => {
     expect(client).toMatch(/normalizeAutoApplyResult/)
     expect(client).toMatch(/\/api\/jobs\/auto-apply\/start/)
     expect(app).toMatch(/app\.post\('\/api\/jobs\/auto-apply\/start'/)
+    expect(client).toMatch(/\/api\/automation\/health/)
+    expect(app).toMatch(/app\.get\('\/api\/automation\/health'/)
     expect(client).not.toMatch(/api\.jobopportunitiesapi\.org/)
   })
 

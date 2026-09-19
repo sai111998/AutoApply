@@ -8,6 +8,15 @@ import {
   type ExternalSubmissionResult,
 } from './confirm'
 import { inspectApplicationPage } from './detect'
+import {
+  chromiumLaunchOptions,
+  detectAutomationRuntime,
+  getAutomationHealth,
+  importPlaywright,
+  serverlessAutomationReason,
+  userFacingBrowserError,
+  type PlaywrightLoader,
+} from './health'
 import { resolveApplicationQuestions } from './questions'
 import type { ApplyBrowser, BrowserPrepareInput, BrowserPrepareResult, BrowserSubmitResult } from './types'
 
@@ -42,8 +51,13 @@ type PlaywrightBrowser = {
 
 type PlaywrightLike = {
   chromium: {
-    launch: (options?: { headless?: boolean }) => Promise<PlaywrightBrowser>
+    launch: (options?: { headless?: boolean; args?: string[] }) => Promise<PlaywrightBrowser>
   }
+}
+
+export interface BrowserRuntimeDeps {
+  loadPlaywright?: PlaywrightLoader
+  health?: () => Promise<{ available: boolean; reason?: string; runtime?: string }>
 }
 
 export type LiveSession = {
@@ -63,13 +77,8 @@ const FINAL_SUBMIT_SELECTORS = [
   '[role="button"]',
 ]
 
-async function loadPlaywright(): Promise<PlaywrightLike | null> {
-  try {
-    const loader = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<PlaywrightLike>
-    return await loader('playwright')
-  } catch {
-    return null
-  }
+async function loadPlaywright(loader?: PlaywrightLoader): Promise<PlaywrightLike | null> {
+  return (loader ?? importPlaywright)() as Promise<PlaywrightLike | null>
 }
 
 async function tryFill(page: PlaywrightPage | undefined, selectors: string[], value: string) {
@@ -295,22 +304,43 @@ export async function evaluateExternalSubmission(
 }
 
 export class PlaywrightApplyBrowser implements ApplyBrowser {
+  constructor(private readonly deps: BrowserRuntimeDeps = {}) {}
+
   async prepare(input: BrowserPrepareInput): Promise<BrowserPrepareResult> {
     if (input.html) return this.fromHtml(input, input.html)
 
-    const playwright = await loadPlaywright()
-    if (!playwright) {
+    const health = this.deps.health
+      ? await this.deps.health()
+      : await getAutomationHealth({
+          loadPlaywright: this.deps.loadPlaywright,
+          probe: false,
+        })
+    if (!health.available) {
       return {
         status: 'automation_blocked',
         questions: [],
         failureReason:
-          'Browser automation is not available. JobPilot cannot open the employer application in this environment.',
+          health.reason ||
+          (health.runtime === 'serverless'
+            ? serverlessAutomationReason()
+            : 'Browser automation is not available. JobPilot cannot open the employer application in this environment.'),
         sessionId: null,
       }
     }
 
-    const browser = await playwright.chromium.launch({ headless: true })
+    const playwright = await loadPlaywright(this.deps.loadPlaywright)
+    if (!playwright) {
+      return {
+        status: 'automation_blocked',
+        questions: [],
+        failureReason: 'Playwright is not installed',
+        sessionId: null,
+      }
+    }
+
+    let browser: PlaywrightBrowser | undefined
     try {
+      browser = await playwright.chromium.launch(chromiumLaunchOptions())
       const page = await browser.newPage()
       await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 20_000 })
       const pageHtml = await page.content()
@@ -326,9 +356,9 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
     } catch (error) {
       await closeSession({ url: input.url, filled: false, browser })
       return {
-        status: 'failed',
+        status: detectAutomationRuntime() === 'serverless' ? 'automation_blocked' : 'failed',
         questions: [],
-        failureReason: error instanceof Error ? error.message : 'Could not open the employer application.',
+        failureReason: userFacingBrowserError(error),
         sessionId: null,
       }
     }
@@ -402,8 +432,8 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
   }
 }
 
-export function createApplyBrowser(): ApplyBrowser {
-  return new PlaywrightApplyBrowser()
+export function createApplyBrowser(deps: BrowserRuntimeDeps = {}): ApplyBrowser {
+  return new PlaywrightApplyBrowser(deps)
 }
 
 export function setBrowserSessionForTests(sessionId: string, session: LiveSession) {

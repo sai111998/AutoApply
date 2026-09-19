@@ -29,6 +29,7 @@ import {
 } from './apply/engine'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
+import { getAutomationHealth, publicAutomationHealth, type AutomationHealth } from './apply/health'
 import { logApplyEvent } from './apply/log'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
@@ -62,6 +63,7 @@ export interface AppOptions {
   llm?: LlmClient
   persist?: PersistFn
   fetchImpl?: FetchLike
+  automationHealth?: () => Promise<AutomationHealth>
 }
 
 export function createApp(options: AppOptions): Express {
@@ -78,6 +80,19 @@ export function createApp(options: AppOptions): Express {
       llmConfigured: Boolean(options.config.llmApiKey),
       databaseConfigured: Boolean(options.config.supabaseUrl && options.config.supabaseServiceRoleKey),
       jobProviders: providerStatuses(createJobProviders(options.config, options.fetchImpl)),
+    })
+  })
+
+  app.get('/api/automation/health', async (_req, res) => {
+    const health = publicAutomationHealth(
+      await (options.automationHealth ?? (() => getAutomationHealth({ probe: true })))(),
+    )
+    res.json({
+      available: health.available,
+      browser: health.browser,
+      playwright: health.playwright,
+      runtime: health.runtime,
+      ...(health.reason ? { reason: health.reason } : {}),
     })
   })
 
