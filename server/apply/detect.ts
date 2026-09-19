@@ -86,7 +86,9 @@ export function inspectApplicationPage(html: string): PageInspection {
     questions,
     hasFileInput: FILE_INPUT_RE.test(html),
     hasSubmit: SUBMIT_RE.test(html),
-    mappedFields: ['name', 'email', 'location'].filter((field) => new RegExp(field, 'i').test(html)),
+    mappedFields: ['name', 'email', 'location'].filter((field) =>
+      new RegExp(`<(input|textarea|select)[^>]*(name|id|autocomplete)=['"][^'"]*${field}`, 'i').test(html),
+    ),
     failureReason: null,
   }
 }

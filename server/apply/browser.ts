@@ -437,6 +437,16 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
         )
       }
       logAutoApplyStep(9, 'Employer page loaded')
+      try {
+        await bounded(
+          Promise.resolve(page.waitForLoadState?.('domcontentloaded', { timeout: this.timeouts.selectorMs })),
+          this.timeouts.selectorMs,
+          'BROWSER_SELECTOR_TIMEOUT',
+          'The application form did not respond within the allowed time.',
+        )
+      } catch {
+        // Navigation already committed. Continue with the HTML that is available.
+      }
       const pageHtml = await bounded(
         page.content(),
         this.timeouts.selectorMs,

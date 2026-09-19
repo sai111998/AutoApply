@@ -9,6 +9,7 @@ import {
   resetAutoApplyEngineForTests,
   startAutoApply,
 } from './engine'
+import { inspectApplicationPage } from './detect'
 import { clearAutoApplyMemory, memoryStore } from './store'
 import type { ApplyBrowser, AutoApplyProfile, AutoApplyQueueItem, ListedAutoApplyJob } from './types'
 import type { ServerConfig } from '../config'
@@ -309,6 +310,14 @@ describe('auto apply preparation hang recovery', () => {
     )
     expect(prepared.item.applicationStatus).toBe('automation_blocked')
     expect(prepared.item.applicationStatus).not.toBe('preparing')
+  })
+
+  it('does not treat a page that only mentions the word name as an application form', () => {
+    const inspection = inspectApplicationPage(
+      '<html><body><h1>Example Domain</h1><p>This domain is for use in illustrative examples in documents.</p></body></html>',
+    )
+    expect(inspection.mappedFields).toEqual([])
+    expect(inspection.hasSubmit).toBe(false)
   })
 
   it('returns APPLICATION_FORM_NOT_FOUND when the employer page has no form', async () => {
