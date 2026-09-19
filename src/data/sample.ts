@@ -14,6 +14,7 @@ export const DEMO_USER_ID = '11111111-1111-4111-8111-111111111111'
 const resumeMaster = '22222222-2222-4222-8222-222222222221'
 const resumeTailored = '22222222-2222-4222-8222-222222222222'
 const resumeEarlier = '22222222-2222-4222-8222-222222222223'
+const resumeJava = '22222222-2222-4222-8222-222222222224'
 
 const jobs = {
   stripe: '33333333-3333-4333-8333-333333333331',
@@ -24,6 +25,7 @@ const jobs = {
   datadog: '33333333-3333-4333-8333-333333333336',
   atlas: '33333333-3333-4333-8333-333333333337',
   northwind: '33333333-3333-4333-8333-333333333338',
+  java: '33333333-3333-4333-8333-333333333339',
 }
 
 const matches = {
@@ -35,6 +37,7 @@ const matches = {
   datadog: '44444444-4444-4444-8444-444444444446',
   atlas: '44444444-4444-4444-8444-444444444447',
   northwind: '44444444-4444-4444-8444-444444444448',
+  java: '44444444-4444-4444-8444-444444444449',
 }
 
 export const sampleProfile: Profile = {
@@ -128,6 +131,47 @@ export const sampleResumes: Resume[] = [
     parsedText: '',
     createdAt: '2026-05-18T09:05:00.000Z',
   },
+  {
+    id: resumeJava,
+    userId: DEMO_USER_ID,
+    fileName: 'Jordan_Hale_Java_Resume.txt',
+    fileType: 'text/plain',
+    versionLabel: 'Java / Spring Boot — Northwind',
+    isMaster: false,
+    fileSize: 1680,
+    storagePath: null,
+    parsedText: `Jordan Hale
+Austin, TX
+jordan.hale@example.com
+
+Summary
+Software Engineer with experience in Java development.
+
+Experience
+Backend Engineer, Northwind — 2021 to present
+- Developed Java and Spring Boot applications for payments APIs.
+- Owned PostgreSQL schema changes for billing.
+- Worked with Docker in CI.
+- Reduced checkout errors by adding contract tests.
+
+Backend Engineer, Harbor Software — 2018 to 2021
+- Built REST APIs in Java.
+- Supported AWS-based services.
+
+Skills
+Java, Python, React, AWS, Docker, Spring Boot, PostgreSQL
+
+Education
+B.S., Computer Science, State University
+
+Certifications
+AWS Certified Developer
+
+Projects
+Billing API
+`,
+    createdAt: '2026-08-20T10:00:00.000Z',
+  },
 ]
 
 export const sampleJobs: Job[] = [
@@ -218,6 +262,17 @@ export const sampleJobs: Job[] = [
     description:
       'People-management role owning a 24-person engineering org in a HIPAA environment. Requires prior director experience and healthcare compliance background.',
     createdAt: '2026-08-02T08:15:00.000Z',
+  },
+  {
+    id: jobs.java,
+    userId: DEMO_USER_ID,
+    title: 'Senior Java Software Engineer',
+    company: 'Northwind Payments',
+    location: 'Remote (US)',
+    jobUrl: 'https://northwind.example/jobs/senior-java',
+    description:
+      'Senior Java Software Engineer to build payment APIs with Java, Spring Boot, and PostgreSQL. Docker experience is preferred. Kubernetes is required for deployment automation. Terraform experience is a plus.',
+    createdAt: '2026-08-21T09:00:00.000Z',
   },
 ]
 
@@ -435,6 +490,96 @@ export const sampleMatches: JobMatch[] = [
     createdAt: '2026-08-02T08:20:00.000Z',
     analyzedAt: '2026-08-02T08:20:00.000Z',
   },
+  {
+    id: matches.java,
+    userId: DEMO_USER_ID,
+    jobId: jobs.java,
+    resumeId: resumeJava,
+    overallScore: 91,
+    skillsMatched: [
+      { name: 'Java', note: 'Northwind payment APIs' },
+      { name: 'Spring Boot', note: 'Backend services' },
+      { name: 'REST APIs', note: 'Harbor Software and Northwind' },
+      { name: 'PostgreSQL', note: 'Billing schema ownership' },
+      { name: 'AWS', note: 'Harbor Software services' },
+      { name: 'Docker', note: 'CI usage' },
+    ],
+    skillsPartial: [{ name: 'microservices', note: 'Service work is evidenced; explicit microservice framing is lighter' }],
+    skillsMissing: [
+      { name: 'Kubernetes', note: 'Required for deployment automation; not on the resume' },
+      { name: 'Terraform', note: 'Listed as a plus; not on the resume' },
+    ],
+    experienceMatch: {
+      score: 90,
+      summary: 'Backend Engineer roles at Northwind and Harbor Software align with a senior Java posting.',
+    },
+    educationMatch: { score: 88, summary: 'B.S. in Computer Science matches the typical degree ask.' },
+    locationMatch: { score: 96, summary: 'Remote US is compatible with Austin.' },
+    workAuthorizationNotes: 'Compatible.',
+    strengths: ['Java and Spring Boot payment APIs', 'PostgreSQL ownership', 'AWS and Docker evidence'],
+    concerns: ['Kubernetes is required and not evidenced', 'Terraform is absent'],
+    recommendation: 'APPLY',
+    analysisStatus: 'complete',
+    analysisSource: 'sample',
+    provider: 'sample-preview',
+    errorMessage: null,
+    summary:
+      'Jordan Hale’s Java, Spring Boot, REST, PostgreSQL, and AWS experience aligns closely with this senior backend role. Kubernetes and Terraform remain gaps and must not be added to the resume.',
+    createdAt: '2026-08-19T09:00:00.000Z',
+    analyzedAt: '2026-08-19T09:00:00.000Z',
+    confidence: 'HIGH',
+    report: {
+      matchScore: 91,
+      recommendation: 'APPLY',
+      confidence: 'HIGH',
+      requiredSkills: {
+        matched: [
+          { name: 'Java', classification: 'strong', source: 'required', evidence: 'Developed Java and Spring Boot applications for payments APIs.' },
+          { name: 'Spring Boot', classification: 'strong', source: 'required', evidence: 'Developed Java and Spring Boot applications for payments APIs.' },
+          { name: 'PostgreSQL', classification: 'strong', source: 'required', evidence: 'Owned PostgreSQL schema changes for billing.' },
+          { name: 'REST APIs', classification: 'strong', source: 'required', evidence: 'Built REST APIs in Java.' },
+        ],
+        partial: [],
+        missing: [{ name: 'Kubernetes', classification: 'missing', source: 'required', evidence: '' }],
+      },
+      preferredSkills: {
+        matched: [
+          { name: 'Docker', classification: 'strong', source: 'preferred', evidence: 'Worked with Docker in CI.' },
+          { name: 'AWS', classification: 'strong', source: 'preferred', evidence: 'Supported AWS-based services.' },
+        ],
+        partial: [{ name: 'microservices', classification: 'partial', source: 'preferred', evidence: 'Service-oriented backend work' }],
+        missing: [{ name: 'Terraform', classification: 'missing', source: 'preferred', evidence: '' }],
+      },
+      experience: {
+        status: 'match',
+        jobRequirement: 'Senior Java backend experience',
+        candidateEvidence: 'Backend Engineer at Northwind and Harbor Software, 2018 to present',
+        gap: '',
+      },
+      responsibilities: {
+        strongMatches: [
+          { name: 'Backend development', classification: 'strong', source: 'required', evidence: 'Java and Spring Boot applications' },
+          { name: 'REST API development', classification: 'strong', source: 'required', evidence: 'Built REST APIs in Java.' },
+          { name: 'Cloud deployment', classification: 'strong', source: 'preferred', evidence: 'Supported AWS-based services.' },
+        ],
+        partialMatches: [],
+        gaps: [{ name: 'Kubernetes', classification: 'missing', source: 'required', evidence: '' }],
+      },
+      education: { status: 'match', details: 'B.S., Computer Science, State University' },
+      certifications: {
+        matched: [
+          { name: 'AWS Certified Developer', classification: 'strong', source: 'preferred', evidence: 'AWS Certified Developer' },
+        ],
+        missing: [],
+      },
+      location: { status: 'match', details: 'Remote US' },
+      strengths: ['Java and Spring Boot payment APIs', 'PostgreSQL ownership', 'AWS and Docker evidence'],
+      concerns: ['Kubernetes is required and not evidenced'],
+      missingEvidence: ['Kubernetes', 'Terraform'],
+      summary:
+        'Strong Java/Spring Boot overlap. Do not add Kubernetes or Terraform; they are absent from the master resume.',
+    },
+  },
 ]
 
 export const sampleApplications: Application[] = [
@@ -444,6 +589,9 @@ export const sampleApplications: Application[] = [
     jobId: jobs.stripe,
     matchId: matches.stripe,
     resumeId: resumeMaster,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.stripe,
+    currentMatchScore: 91,
     status: 'ready',
     dateAdded: '2026-08-18',
     dateApplied: null,
@@ -457,6 +605,9 @@ export const sampleApplications: Application[] = [
     jobId: jobs.linear,
     matchId: matches.linear,
     resumeId: resumeMaster,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.linear,
+    currentMatchScore: 88,
     status: 'applied',
     dateAdded: '2026-08-13',
     dateApplied: '2026-08-14',
@@ -470,6 +621,9 @@ export const sampleApplications: Application[] = [
     jobId: jobs.figma,
     matchId: matches.figma,
     resumeId: resumeTailored,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.figma,
+    currentMatchScore: 84,
     status: 'interview',
     dateAdded: '2026-08-14',
     dateApplied: '2026-08-15',
@@ -483,6 +637,9 @@ export const sampleApplications: Application[] = [
     jobId: jobs.notion,
     matchId: matches.notion,
     resumeId: resumeMaster,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.notion,
+    currentMatchScore: 76,
     status: 'ready',
     dateAdded: '2026-08-16',
     dateApplied: null,
@@ -496,6 +653,9 @@ export const sampleApplications: Application[] = [
     jobId: jobs.datadog,
     matchId: matches.datadog,
     resumeId: resumeMaster,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.datadog,
+    currentMatchScore: 71,
     status: 'applied',
     dateAdded: '2026-08-08',
     dateApplied: '2026-08-09',
@@ -509,12 +669,31 @@ export const sampleApplications: Application[] = [
     jobId: jobs.airbnb,
     matchId: matches.airbnb,
     resumeId: resumeMaster,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.airbnb,
+    currentMatchScore: 64,
     status: 'withdrawn',
     dateAdded: '2026-08-10',
     dateApplied: null,
     nextAction: 'No action',
     notes: 'Paused due to relocation.',
     updatedAt: '2026-08-12T09:00:00.000Z',
+  },
+  {
+    id: '55555555-5555-4555-8555-555555555557',
+    userId: DEMO_USER_ID,
+    jobId: jobs.java,
+    matchId: matches.java,
+    resumeId: resumeJava,
+    selectedResumeVersionId: null,
+    currentMatchId: matches.java,
+    currentMatchScore: 91,
+    status: 'ready',
+    dateAdded: '2026-08-21',
+    dateApplied: null,
+    nextAction: 'Ready to apply',
+    notes: 'Java/Spring Boot sample used for resume tailoring checks.',
+    updatedAt: '2026-08-21T09:30:00.000Z',
   },
 ]
 
@@ -539,5 +718,6 @@ export function createSampleWorkspace(): WorkspaceSnapshot {
     matches: structuredClone(sampleMatches),
     applications: structuredClone(sampleApplications),
     preferences: structuredClone(samplePreferences),
+    resumeVersions: [],
   }
 }

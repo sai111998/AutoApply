@@ -10,12 +10,12 @@ export function Pill({
   tone?: 'neutral' | 'strong' | 'review' | 'skip' | 'pending' | 'info'
 }) {
   const tones: Record<typeof tone, string> = {
-    neutral: 'bg-fog text-ink',
-    strong: 'bg-emerald-50 text-pine',
-    review: 'bg-amber-50 text-amber-800',
-    skip: 'bg-rose-50 text-clay',
-    pending: 'bg-sky-50 text-sky',
-    info: 'bg-[#e8f2f8] text-sky',
+    neutral: 'bg-fog text-charcoal',
+    strong: 'bg-olive-soft text-olive-dark',
+    review: 'bg-[#f7f1e3] text-warning',
+    skip: 'bg-[#f7ece8] text-danger',
+    pending: 'bg-[#e8eef1] text-info',
+    info: 'bg-[#e8eef1] text-info',
   }
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${tones[tone]}`}>
@@ -42,8 +42,14 @@ export function RecommendationBadge({ value }: { value: Recommendation | null })
   return <Pill tone={tone}>{value}</Pill>
 }
 
-export function ScoreBadge({ score }: { score: number | null }) {
-  if (score == null) return <Pill tone="pending">Queued</Pill>
+export function ScoreBadge({
+  score,
+  emptyLabel = 'Queued',
+}: {
+  score: number | null
+  emptyLabel?: string
+}) {
+  if (score == null) return <Pill tone="pending">{emptyLabel}</Pill>
   const tone = score >= 80 ? 'strong' : score >= 60 ? 'review' : 'skip'
   return <Pill tone={tone}>{score}</Pill>
 }

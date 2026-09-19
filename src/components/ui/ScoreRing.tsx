@@ -7,7 +7,7 @@ export function ScoreRing({ score, size = 132 }: { score: number | null; size?: 
   const progress = score == null ? 0 : Math.max(0, Math.min(100, score)) / 100
   const tone = scoreTone(score)
   const color =
-    tone === 'strong' ? '#1c6b4a' : tone === 'review' ? '#c4a056' : tone === 'skip' ? '#c45c3e' : '#3a7ca5'
+    tone === 'strong' ? '#556338' : tone === 'review' ? '#a4843c' : tone === 'skip' ? '#9a4f3e' : '#4d6a78'
 
   return (
     <div className="relative grid place-items-center" style={{ width: size, height: size }}>
@@ -17,7 +17,7 @@ export function ScoreRing({ score, size = 132 }: { score: number | null; size?: 
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#e8e1d4"
+          stroke="#e2dfd6"
           strokeWidth={stroke}
         />
         <circle
@@ -30,11 +30,12 @@ export function ScoreRing({ score, size = 132 }: { score: number | null; size?: 
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={circumference * (1 - progress)}
+          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
         />
       </svg>
       <div className="absolute text-center">
-        <p className="font-display text-4xl leading-none text-navy">{score ?? '—'}</p>
-        <p className="mt-1 text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-slate-ink">
+        <p className="text-4xl font-semibold leading-none tracking-tight text-charcoal">{score ?? '—'}</p>
+        <p className="mt-1 text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted">
           {score == null ? 'Queued' : 'Match'}
         </p>
       </div>

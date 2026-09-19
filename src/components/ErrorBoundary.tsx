@@ -24,11 +24,11 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="grid min-h-screen place-items-center bg-paper px-6 text-center">
           <div className="max-w-md">
-            <h1 className="font-display text-3xl text-navy">JobPilot hit a snag</h1>
-            <p className="mt-3 text-slate-ink">{this.state.message}</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-charcoal">JobPilot hit a snag</h1>
+            <p className="mt-3 text-muted">{this.state.message}</p>
             <button
               type="button"
-              className="mt-6 rounded-xl bg-pine px-4 py-2.5 text-sm font-semibold text-white"
+              className="mt-6 rounded-xl bg-olive px-4 py-2.5 text-sm font-semibold text-white"
               onClick={() => this.setState({ message: null })}
             >
               Try again
