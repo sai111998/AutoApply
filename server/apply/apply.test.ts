@@ -8,6 +8,7 @@ import {
   cancelRun,
   defaultAutoApplyConfig,
   prepareQueueItem,
+  resetAutoApplyEngineForTests,
   skipQueueItem,
   startAutoApply,
   submitQueueItem,
@@ -87,6 +88,7 @@ const fakeBrowser: ApplyBrowser = {
 
 afterEach(() => {
   clearAutoApplyMemory()
+  resetAutoApplyEngineForTests()
 })
 
 describe('auto apply eligibility', () => {

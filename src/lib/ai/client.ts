@@ -587,6 +587,9 @@ export interface AutoApplyRunResult {
   items: AutoApplyQueueItem[]
 }
 
+export const PREPARE_REQUEST_TIMEOUT_MS = 50_000
+export const PREPARE_PERSIST_TIMEOUT_MS = 8_000
+
 export const PREPARE_ERROR_MESSAGES: Record<string, string> = {
   JOB_NOT_FOUND: 'This job is no longer available.',
   APPLICATION_NOT_FOUND: 'This Auto Apply job is no longer in the queue.',
@@ -597,9 +600,52 @@ export const PREPARE_ERROR_MESSAGES: Record<string, string> = {
   INVALID_APPLICATION_URL: 'This listing does not include a valid application URL.',
   UNSUPPORTED_PROVIDER: 'This job source cannot be prepared automatically.',
   DATABASE_ERROR: 'Could not prepare the application.',
+  DATABASE_TIMEOUT: 'Saving the application timed out.',
   BROWSER_AUTOMATION_ERROR: 'Could not open the employer application.',
+  BROWSER_AUTOMATION_UNAVAILABLE:
+    'Browser automation is not available. JobPilot cannot open the employer application in this environment.',
+  BROWSER_LAUNCH_TIMEOUT: 'The browser did not start within the allowed time.',
+  BROWSER_NAVIGATION_TIMEOUT: 'The employer application page did not load within the allowed time.',
+  BROWSER_SELECTOR_TIMEOUT: 'The application form did not respond within the allowed time.',
+  APPLICATION_FORM_NOT_FOUND: 'The employer application form could not be found.',
+  PREPARE_TIMEOUT: 'Application preparation timed out.',
   APPLICATION_AUTOMATION_UNSUPPORTED: 'This employer site cannot be prepared automatically.',
   AUTHENTICATION_FAILURE: 'Sign in to prepare this application.',
+}
+
+export async function withClientTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = PREPARE_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  try {
+    return await withClientTimeout(
+      fetch(input, { ...init, signal: controller.signal }),
+      timeoutMs,
+      PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT,
+    )
+  } catch (error) {
+    controller.abort()
+    if (error instanceof Error && (error.name === 'AbortError' || error.message === PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)) {
+      throw new Error(PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)
+    }
+    throw error
+  }
 }
 
 export function normalizeAutoApplyResult(body: unknown): AutoApplyRunResult | null {
@@ -629,7 +675,7 @@ export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare
 async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
   const normalized = normalizeAutoApplyResult(body)
-  if (normalized && response.ok) return normalized
+  if (normalized) return normalized
   const message = prepareErrorMessage(body, fallback)
   throw new Error(/key|secret|service.role/i.test(message) ? fallback : message)
 }
@@ -677,16 +723,36 @@ export async function prepareAutoApplyItemRequest(
   itemId: string,
   profile: AutoApplyProfilePayload,
   userId?: string | null,
+  options: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<AutoApplyRunResult> {
-  const response = await fetch(
-    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/apply`),
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile, userId: userId ?? null }),
-    },
-  )
-  return readAutoApplyResult(response, 'Could not prepare the application.')
+  const timeoutMs = options.timeoutMs ?? PREPARE_REQUEST_TIMEOUT_MS
+  const fetchImpl = options.fetchImpl ?? fetch
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await withClientTimeout(
+      fetchImpl(
+        apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/apply`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile, userId: userId ?? null }),
+          signal: controller.signal,
+        },
+      ),
+      timeoutMs,
+      PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT,
+    )
+    return await readAutoApplyResult(response, 'Could not prepare the application.')
+  } catch (error) {
+    controller.abort()
+    if (error instanceof Error && (error.name === 'AbortError' || error.message === PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)) {
+      throw new Error(PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function submitAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {

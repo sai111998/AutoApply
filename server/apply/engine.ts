@@ -14,14 +14,15 @@ import type {
   ApplyBrowser,
   AutoApplyConfig,
   AutoApplyCounts,
+  AutoApplyMutationResult,
   AutoApplyQueueItem,
   AutoApplyRun,
   AutoApplyStartInput,
   ListedAutoApplyJob,
 } from './types'
-import { ApplyError } from './errors'
+import { ApplyError, isApplyError } from './errors'
 import { getAutomationHealth } from './health'
-import { logApplyEvent, logQueueItem } from './log'
+import { logApplyEvent, logAutoApplyStep, logQueueItem } from './log'
 import {
   loadRunFromDatabase,
   loadRunsFromDatabase,
@@ -30,17 +31,35 @@ import {
   type AutoApplyStore,
   type StoredRun,
 } from './store'
+import {
+  mergeApplyTimeouts,
+  withTimeout,
+  type ApplyTimeouts,
+} from './timeouts'
 import { assertCanPrepareItem } from './validate'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
 
 let applyChain: Promise<unknown> = Promise.resolve()
+const inFlightPrepares = new Map<string, Promise<AutoApplyMutationResult>>()
 
-function withApplyLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = applyChain.then(fn, fn)
+function prepareKey(runId: string, itemId: string) {
+  return `${runId}:${itemId}`
+}
+
+function withApplyLock<T>(fn: () => Promise<T>, lockMs: number): Promise<T> {
+  const next = applyChain.then(
+    () => withTimeout(fn(), lockMs, 'PREPARE_TIMEOUT', 'Application preparation timed out.'),
+    () => withTimeout(fn(), lockMs, 'PREPARE_TIMEOUT', 'Application preparation timed out.'),
+  )
   applyChain = next.then(() => undefined, () => undefined)
   return next
+}
+
+export function resetAutoApplyEngineForTests() {
+  applyChain = Promise.resolve()
+  inFlightPrepares.clear()
 }
 
 export function normalizeMinimumMatchRate(value: number): number {
@@ -125,6 +144,7 @@ export interface AutoApplyEngineDeps {
   browser?: ApplyBrowser
   store?: AutoApplyStore
   delayMs?: number
+  timeouts?: Partial<ApplyTimeouts>
 }
 
 export async function startAutoApply(
@@ -254,7 +274,7 @@ export async function startAutoApply(
   return { run, items }
 }
 
-function toResult(current: StoredRun, item: AutoApplyQueueItem) {
+function toResult(current: StoredRun, item: AutoApplyQueueItem): AutoApplyMutationResult {
   return { success: true as const, run: current.run, items: current.items, item }
 }
 
@@ -273,6 +293,87 @@ const PAUSED_PREPARE_STATUSES = new Set([
   'blocked',
 ])
 
+const IN_PROGRESS_PREPARE_STATUSES = new Set(['preparing', 'filling', 'opening', 'tailoring'])
+
+function isStuckPreparation(item: AutoApplyQueueItem, stuckMs: number, now = Date.now()) {
+  if (!IN_PROGRESS_PREPARE_STATUSES.has(item.applicationStatus)) return false
+  if (inFlightPrepares.has(prepareKey(item.runId, item.id))) return false
+  const updated = Date.parse(item.updatedAt)
+  if (!Number.isFinite(updated)) return true
+  return now - updated > stuckMs
+}
+
+async function persistPrepared(
+  store: AutoApplyStore,
+  current: StoredRun,
+  item: AutoApplyQueueItem,
+  config: ServerConfig | undefined,
+  timeouts: ApplyTimeouts,
+  logSteps = false,
+) {
+  item.updatedAt = nowIso()
+  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  current.run.updatedAt = nowIso()
+  if (logSteps) logAutoApplyStep(13, 'Saving application state', { itemId: item.id, applicationStatus: item.applicationStatus })
+  try {
+    await withTimeout(
+      persistRun(store, current.run, current.items, config),
+      timeouts.databaseMs,
+      'DATABASE_TIMEOUT',
+      'Saving the application timed out.',
+    )
+  } catch (error) {
+    logQueueItem('prepare-persist-error', item, { code: 'DATABASE_ERROR', error })
+    if (!(isApplyError(error) && error.code === 'DATABASE_TIMEOUT')) {
+      try {
+        await withTimeout(
+          store.save(current.run, current.items),
+          timeouts.databaseMs,
+          'DATABASE_TIMEOUT',
+          'Saving the application timed out.',
+        )
+      } catch (memoryError) {
+        logQueueItem('prepare-memory-persist-error', item, { code: 'DATABASE_ERROR', error: memoryError })
+      }
+    }
+    if (isApplyError(error)) throw error
+    throw new ApplyError(500, 'DATABASE_ERROR', undefined, { runId: current.run.id, itemId: item.id })
+  }
+  if (logSteps) logAutoApplyStep(14, 'Application state saved', { itemId: item.id, applicationStatus: item.applicationStatus })
+}
+
+function failItem(item: AutoApplyQueueItem, reason: string) {
+  item.applicationStatus = 'failed'
+  item.failureReason = reason
+  item.sessionId = null
+  item.updatedAt = nowIso()
+}
+
+function applyErrorFromUnknown(error: unknown): ApplyError {
+  if (isApplyError(error)) return error
+  const message = error instanceof Error ? error.message : 'Could not open the employer application.'
+  if (/navigation|goto|net::|timeout/i.test(message) && /page|url|load|goto/i.test(message)) {
+    return new ApplyError(504, 'BROWSER_NAVIGATION_TIMEOUT', 'The employer application page did not load within the allowed time.')
+  }
+  if (/launch|browser/i.test(message) && /timeout|timed out/i.test(message)) {
+    return new ApplyError(504, 'BROWSER_LAUNCH_TIMEOUT', 'The browser did not start within the allowed time.')
+  }
+  return new ApplyError(500, 'BROWSER_AUTOMATION_ERROR', message)
+}
+
+export function failStuckPreparations(
+  items: AutoApplyQueueItem[],
+  stuckMs: number,
+  now = Date.now(),
+): AutoApplyQueueItem[] {
+  for (const item of items) {
+    if (isStuckPreparation(item, stuckMs, now)) {
+      failItem(item, 'Application preparation timed out.')
+    }
+  }
+  return items
+}
+
 export async function prepareQueueItem(
   runId: string,
   itemId: string,
@@ -280,81 +381,148 @@ export async function prepareQueueItem(
   deps: AutoApplyEngineDeps = {},
   config?: ServerConfig,
 ) {
-  return withApplyLock(() => prepareQueueItemLocked(runId, itemId, input, deps, config))
+  const timeouts = mergeApplyTimeouts(deps.timeouts)
+  const key = prepareKey(runId, itemId)
+  const existing = inFlightPrepares.get(key)
+  if (existing) {
+    logAutoApplyStep(1, 'Apply request received', { runId, itemId, reused: true })
+    return existing
+  }
+  const promise = withApplyLock(
+    () => prepareQueueItemLocked(runId, itemId, input, deps, config, timeouts),
+    timeouts.lockMs,
+  ).finally(() => {
+    if (inFlightPrepares.get(key) === promise) inFlightPrepares.delete(key)
+  })
+  inFlightPrepares.set(key, promise)
+  return promise
 }
 
 async function prepareQueueItemLocked(
   runId: string,
   itemId: string,
   input: { profile: AutoApplyStartInput['profile']; html?: string; userId?: string | null },
-  deps: AutoApplyEngineDeps = {},
-  config?: ServerConfig,
+  deps: AutoApplyEngineDeps,
+  config: ServerConfig | undefined,
+  timeouts: ApplyTimeouts,
 ) {
+  logAutoApplyStep(1, 'Apply request received', { runId, itemId })
   const store = deps.store ?? memoryStore
-  const current = await loadCurrent(runId, store, config)
-  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
-  const item = current.items.find((entry) => entry.id === itemId)
-  if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
-  logQueueItem('prepare-start', item, { userId: input.userId ?? current.run.userId })
-  if (item.applicationStatus === 'submitted') return toResult(current, item)
-  if (PAUSED_PREPARE_STATUSES.has(item.applicationStatus)) return toResult(current, item)
-  assertCanPrepareItem(item, { userId: input.userId, runUserId: current.run.userId })
-  if (!deps.browser) {
-    const automation = await getAutomationHealth({ probe: false })
-    if (!automation.available) {
-      item.applicationStatus = 'automation_blocked'
-      item.failureReason =
-        automation.reason ??
-        'Browser automation is not available. JobPilot cannot open the employer application in this environment.'
-      item.sessionId = null
-      item.updatedAt = nowIso()
-      current.run.counts = { ...recount(current.items), found: current.run.counts.found }
-      current.run.updatedAt = nowIso()
-      await persistRun(store, current.run, current.items, config)
-      logQueueItem('prepare-automation-unavailable', item, { code: 'BROWSER_AUTOMATION_ERROR' })
+  let current: StoredRun | null = null
+  let item: AutoApplyQueueItem | undefined
+  try {
+    current = await withTimeout(
+      loadCurrent(runId, store, config),
+      timeouts.databaseMs,
+      'DATABASE_TIMEOUT',
+      'Saving the application timed out.',
+    )
+    if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
+    item = current.items.find((entry) => entry.id === itemId)
+    if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
+    failStuckPreparations(current.items, timeouts.stuckMs)
+    item = current.items.find((entry) => entry.id === itemId)
+    if (!item) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
+    logAutoApplyStep(2, 'Application loaded', { itemId: item.id, applicationStatus: item.applicationStatus })
+    logAutoApplyStep(3, 'Resume version loaded', {
+      itemId: item.id,
+      resumeVersionName: item.resumeVersionName,
+      reusedTailoredResume: /tailored/i.test(item.resumeVersionName) && Boolean(item.tailoredResumeText?.trim()),
+    })
+    logAutoApplyStep(4, 'Job loaded', { itemId: item.id, jobId: item.jobId })
+    logQueueItem('prepare-start', item, { userId: input.userId ?? current.run.userId })
+    if (item.applicationStatus === 'submitted') {
+      logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
       return toResult(current, item)
     }
-  }
-  item.applicationStatus = 'preparing'
-  item.updatedAt = nowIso()
-  const browser = deps.browser ?? createApplyBrowser()
-  if (deps.delayMs ?? DEFAULT_DELAY_MS) await delay(deps.delayMs ?? DEFAULT_DELAY_MS)
-  item.applicationStatus = 'filling'
-  try {
-    const prepared = await browser.prepare({
-      url: item.applicationUrl || '',
-      profile: input.profile,
-      resumeText: item.tailoredResumeText,
-      html: input.html,
-    })
+    if (PAUSED_PREPARE_STATUSES.has(item.applicationStatus)) {
+      logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
+      return toResult(current, item)
+    }
+    assertCanPrepareItem(item, { userId: input.userId, runUserId: current.run.userId })
+    if (!deps.browser) {
+      const automation = await getAutomationHealth({ probe: false })
+      if (!automation.available) {
+        item.applicationStatus = 'automation_blocked'
+        item.failureReason =
+          automation.reason ??
+          'Browser automation is not available. JobPilot cannot open the employer application in this environment.'
+        item.sessionId = null
+        await persistPrepared(store, current, item, config, timeouts)
+        logQueueItem('prepare-automation-unavailable', item, { code: 'BROWSER_AUTOMATION_UNAVAILABLE' })
+        logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
+        return toResult(current, item)
+      }
+    }
+    item.applicationStatus = 'preparing'
+    item.failureReason = null
+    await persistPrepared(store, current, item, config, timeouts)
+    logAutoApplyStep(5, 'Application preparation started', { itemId: item.id })
+    const browser = deps.browser ?? createApplyBrowser({ timeouts })
+    if (deps.delayMs ?? DEFAULT_DELAY_MS) await delay(deps.delayMs ?? DEFAULT_DELAY_MS)
+    item.applicationStatus = 'filling'
+    const prepared = await withTimeout(
+      browser.prepare({
+        url: item.applicationUrl || '',
+        profile: input.profile,
+        resumeText: item.tailoredResumeText,
+        html: input.html,
+      }),
+      timeouts.prepareMs,
+      'PREPARE_TIMEOUT',
+      'Application preparation timed out.',
+    )
     item.applicationStatus =
       prepared.status === 'submitted' || prepared.status === 'submitting'
         ? 'ready_for_submission'
-        : prepared.status
+        : prepared.status === 'preparing' || prepared.status === 'filling' || prepared.status === 'opening'
+          ? 'failed'
+          : prepared.status
+    if (item.applicationStatus === 'failed' && !prepared.failureReason) {
+      item.failureReason = 'Application preparation timed out.'
+    } else {
+      item.failureReason = prepared.failureReason
+    }
     item.questions = prepared.questions
-    item.failureReason = prepared.failureReason
     item.sessionId = prepared.sessionId
+    logAutoApplyStep(12, 'Preparation completed', { itemId: item.id, applicationStatus: item.applicationStatus })
+    await persistPrepared(store, current, item, config, timeouts, true)
+    logQueueItem('prepare-complete', item, { userId: current.run.userId })
+    logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
+    return toResult(current, item)
   } catch (error) {
-    logQueueItem('prepare-browser-error', item, { code: 'BROWSER_AUTOMATION_ERROR', error })
-    item.applicationStatus = 'failed'
-    item.failureReason = error instanceof Error ? error.message : 'Could not open the employer application.'
-    item.sessionId = null
-    item.updatedAt = nowIso()
-    current.run.counts = { ...recount(current.items), found: current.run.counts.found }
-    current.run.updatedAt = nowIso()
-    await persistRun(store, current.run, current.items, config)
-    throw new ApplyError(500, 'BROWSER_AUTOMATION_ERROR', item.failureReason ?? undefined, {
-      runId,
-      itemId,
-      jobId: item.jobId,
+    const applyError = applyErrorFromUnknown(error)
+    if (current && item) {
+      if (IN_PROGRESS_PREPARE_STATUSES.has(item.applicationStatus) || item.applicationStatus === 'ready') {
+        failItem(item, applyError.message)
+      }
+      try {
+        await persistPrepared(store, current, item, config, timeouts)
+      } catch (persistError) {
+        failItem(item, applyError.message)
+        try {
+          await store.save(current.run, current.items)
+        } catch {
+          // Memory fallback is best-effort after a persist timeout.
+        }
+        logQueueItem('prepare-fail-persist-error', item, { code: 'DATABASE_ERROR', error: persistError })
+      }
+      applyError.details = {
+        ...applyError.details,
+        run: current.run,
+        items: current.items,
+        item,
+        runId,
+        itemId,
+        jobId: item.jobId,
+      }
+    }
+    logQueueItem('prepare-browser-error', item ?? { id: itemId, runId } as AutoApplyQueueItem, {
+      code: applyError.code,
+      error: applyError,
     })
+    throw applyError
   }
-  item.updatedAt = nowIso()
-  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
-  current.run.updatedAt = nowIso()
-  await persistRun(store, current.run, current.items, config)
-  logQueueItem('prepare-complete', item, { userId: current.run.userId })
-  return toResult(current, item)
 }
 
 export async function submitQueueItem(
@@ -363,7 +531,8 @@ export async function submitQueueItem(
   deps: AutoApplyEngineDeps = {},
   config?: ServerConfig,
 ): Promise<{ run: AutoApplyRun; item: AutoApplyQueueItem } | null> {
-  return withApplyLock(() => submitQueueItemLocked(runId, itemId, deps, config))
+  const timeouts = mergeApplyTimeouts(deps.timeouts)
+  return withApplyLock(() => submitQueueItemLocked(runId, itemId, deps, config), timeouts.lockMs)
 }
 
 async function submitQueueItemLocked(
@@ -492,7 +661,18 @@ async function setItemStatus(
 
 export async function getAutoApplyRun(runId: string, deps: AutoApplyEngineDeps = {}, config?: ServerConfig) {
   const store = deps.store ?? memoryStore
-  return loadCurrent(runId, store, config)
+  const current = await loadCurrent(runId, store, config)
+  if (!current) return null
+  const timeouts = mergeApplyTimeouts(deps.timeouts)
+  const before = current.items.map((item) => item.applicationStatus).join('|')
+  failStuckPreparations(current.items, timeouts.stuckMs)
+  const after = current.items.map((item) => item.applicationStatus).join('|')
+  if (before !== after) {
+    current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+    current.run.updatedAt = nowIso()
+    await persistRun(store, current.run, current.items, config)
+  }
+  return current
 }
 
 export async function listAutoApplyRuns(userId: string, deps: AutoApplyEngineDeps = {}, config?: ServerConfig) {

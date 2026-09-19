@@ -15,8 +15,10 @@ import {
   getLiveJobRequest,
   listAutoApplyRunsRequest,
   listLiveJobsRequest,
+  PREPARE_PERSIST_TIMEOUT_MS,
   prepareAutoApplyItemRequest,
   previewLiveJobRequest,
+  withClientTimeout,
   skipAutoApplyItemRequest,
   startAutoApplyRequest,
   submitAutoApplyItemRequest,
@@ -389,7 +391,11 @@ export function JobDiscoveryPage() {
   }
 
   async function persistQueueApplication(item: AutoApplyQueueItem) {
-    await syncAutoApplyApplication({ item, listedJob: listedForQueueItem(item) })
+    await withClientTimeout(
+      syncAutoApplyApplication({ item, listedJob: listedForQueueItem(item) }),
+      PREPARE_PERSIST_TIMEOUT_MS,
+      'Application could not be saved.',
+    )
   }
 
   async function onQueueReview(item: AutoApplyQueueItem) {

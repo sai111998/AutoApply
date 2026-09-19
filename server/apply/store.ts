@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import type { ServerConfig } from '../config'
 import { logApplyEvent } from './log'
+import { DATABASE_TIMEOUT_MS, withTimeout } from './timeouts'
 import type { AutoApplyCounts, AutoApplyQueueItem, AutoApplyRun } from './types'
 
 export interface StoredRun {
@@ -129,63 +130,91 @@ export async function persistRun(
   items: AutoApplyQueueItem[],
   config?: ServerConfig,
 ) {
-  await store.save(run, items)
+  await withTimeout(
+    store.save(run, items),
+    DATABASE_TIMEOUT_MS,
+    'DATABASE_TIMEOUT',
+    'Saving the application timed out.',
+  )
   const supabase = database(config)
   if (!supabase) return
-  const runResult = await supabase.from('auto_apply_runs').upsert(
-    {
-      id: run.id,
-      user_id: run.userId,
-      status: run.status,
-      config: run.config,
-      counts: run.counts,
-      created_at: run.createdAt,
-      updated_at: run.updatedAt,
-    },
-    { onConflict: 'id', defaultToNull: false },
-  )
-  if (runResult.error) {
-    logApplyEvent('database-persist-run', {
+  try {
+    const runResult = await withTimeout(
+      Promise.resolve(
+        supabase.from('auto_apply_runs').upsert(
+          {
+            id: run.id,
+            user_id: run.userId,
+            status: run.status,
+            config: run.config,
+            counts: run.counts,
+            created_at: run.createdAt,
+            updated_at: run.updatedAt,
+          },
+          { onConflict: 'id', defaultToNull: false },
+        ),
+      ),
+      DATABASE_TIMEOUT_MS,
+      'DATABASE_TIMEOUT',
+      'Saving the application timed out.',
+    )
+    if (runResult.error) {
+      logApplyEvent('database-persist-run', {
+        runId: run.id,
+        userId: run.userId,
+        code: 'DATABASE_ERROR',
+        error: runResult.error.message,
+      })
+    }
+    if (!items.length) return
+    const queueResult = await withTimeout(
+      Promise.resolve(
+        supabase.from('auto_apply_queue').upsert(
+          items.map((item) => ({
+            id: item.id,
+            run_id: item.runId,
+            user_id: run.userId,
+            job_id: item.jobId,
+            application_id: item.applicationId,
+            resume_version_id: item.resumeVersionId,
+            identity_key: item.identityKey,
+            title: item.title,
+            company: item.company,
+            application_url: item.applicationUrl,
+            initial_match_score: item.initialMatchScore,
+            final_match_score: item.finalMatchScore,
+            c2c_status: item.c2cStatus,
+            c2c_evidence: item.c2cEvidence,
+            application_status: item.applicationStatus,
+            failure_reason: item.failureReason,
+            questions: item.questions,
+            resume_version_name: item.resumeVersionName,
+            tailored_resume_text: item.tailoredResumeText,
+            session_id: item.sessionId,
+            created_at: item.createdAt,
+            updated_at: item.updatedAt,
+          })),
+          { onConflict: 'id', defaultToNull: false },
+        ),
+      ),
+      DATABASE_TIMEOUT_MS,
+      'DATABASE_TIMEOUT',
+      'Saving the application timed out.',
+    )
+    if (queueResult.error) {
+      logApplyEvent('database-persist-queue', {
+        runId: run.id,
+        userId: run.userId,
+        code: 'DATABASE_ERROR',
+        error: queueResult.error.message,
+      })
+    }
+  } catch (error) {
+    logApplyEvent('database-persist-timeout', {
       runId: run.id,
       userId: run.userId,
-      code: 'DATABASE_ERROR',
-      error: runResult.error.message,
-    })
-  }
-  if (!items.length) return
-  const queueResult = await supabase.from('auto_apply_queue').upsert(
-    items.map((item) => ({
-      id: item.id,
-      run_id: item.runId,
-      user_id: run.userId,
-      job_id: item.jobId,
-      application_id: item.applicationId,
-      resume_version_id: item.resumeVersionId,
-      identity_key: item.identityKey,
-      title: item.title,
-      company: item.company,
-      application_url: item.applicationUrl,
-      initial_match_score: item.initialMatchScore,
-      final_match_score: item.finalMatchScore,
-      c2c_status: item.c2cStatus,
-      c2c_evidence: item.c2cEvidence,
-      application_status: item.applicationStatus,
-      failure_reason: item.failureReason,
-      questions: item.questions,
-      resume_version_name: item.resumeVersionName,
-      tailored_resume_text: item.tailoredResumeText,
-      session_id: item.sessionId,
-      created_at: item.createdAt,
-      updated_at: item.updatedAt,
-    })),
-    { onConflict: 'id', defaultToNull: false },
-  )
-  if (queueResult.error) {
-    logApplyEvent('database-persist-queue', {
-      runId: run.id,
-      userId: run.userId,
-      code: 'DATABASE_ERROR',
-      error: queueResult.error.message,
+      code: 'DATABASE_TIMEOUT',
+      error,
     })
   }
 }

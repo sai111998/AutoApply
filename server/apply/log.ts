@@ -54,6 +54,25 @@ export function logApplyEvent(
   else console.info('[auto-apply]', payload)
 }
 
+const SENSITIVE_KEY = /password|token|authorization|secret|api[_-]?key|service\.role/i
+
+export function logAutoApplyStep(step: number, message: string, extra: Record<string, unknown> = {}) {
+  const safeExtra: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(extra)) {
+    if (SENSITIVE_KEY.test(key)) continue
+    if (typeof value === 'string' && SECRET_RE.test(value)) {
+      safeExtra[key] = '[redacted]'
+      continue
+    }
+    safeExtra[key] = value ?? null
+  }
+  if (Object.keys(safeExtra).length) {
+    console.info(`[AutoApply] ${step} ${message}`, safeExtra)
+    return
+  }
+  console.info(`[AutoApply] ${step} ${message}`)
+}
+
 export function logQueueItem(event: string, item: AutoApplyQueueItem, extra: Record<string, unknown> = {}) {
   logApplyEvent(event, {
     runId: item.runId,

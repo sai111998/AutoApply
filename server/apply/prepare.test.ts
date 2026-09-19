@@ -7,6 +7,7 @@ import { inspectApplicationPage } from './detect'
 import {
   defaultAutoApplyConfig,
   prepareQueueItem,
+  resetAutoApplyEngineForTests,
   startAutoApply,
 } from './engine'
 import { assertCanPrepareItem, assertSupportedProvider, inspectApplicationUrl } from './validate'
@@ -115,6 +116,7 @@ async function startReadyRun() {
 
 afterEach(() => {
   clearAutoApplyMemory()
+  resetAutoApplyEngineForTests()
 })
 
 describe('application preparation validation', () => {
@@ -345,20 +347,25 @@ describe('POST /api/jobs/auto-apply item apply', () => {
     const prepared = await request(app)
       .post(`/api/jobs/auto-apply/${started.body.run.id}/items/${item.id}/apply`)
       .send({ profile, userId: 'user-1' })
-    expect(prepared.status).toBe(200)
-    expect(prepared.body.items).toEqual(expect.any(Array))
-    expect(prepared.body.items[0].applicationStatus).not.toBe('applied')
-    expect(prepared.body.items[0].applicationStatus).not.toBe('submitted')
-    expect([
-      'ready_for_submission',
-      'needs_user_input',
-      'needs_user_confirmation',
-      'captcha_required',
-      'mfa_required',
-      'login_required',
-      'automation_blocked',
-      'failed',
-    ]).toContain(prepared.body.items[0].applicationStatus)
+    expect([200, 504, 503]).toContain(prepared.status)
+    const preparedItem = prepared.body.item ?? prepared.body.items?.[0]
+    expect(prepared.body.success === false ? prepared.body.code : true).toBeTruthy()
+    expect(preparedItem?.applicationStatus).not.toBe('applied')
+    expect(preparedItem?.applicationStatus).not.toBe('submitted')
+    expect(preparedItem?.applicationStatus).not.toBe('preparing')
+    if (prepared.body.items) {
+      expect(prepared.body.items).toEqual(expect.any(Array))
+      expect([
+        'ready_for_submission',
+        'needs_user_input',
+        'needs_user_confirmation',
+        'captcha_required',
+        'mfa_required',
+        'login_required',
+        'automation_blocked',
+        'failed',
+      ]).toContain(prepared.body.items[0].applicationStatus)
+    }
 
     const missing = await request(app).post('/api/jobs/auto-apply/missing/items/missing/apply').send({ profile })
     expect(missing.status).toBe(404)

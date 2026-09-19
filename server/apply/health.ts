@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { BROWSER_LAUNCH_TIMEOUT_MS, PAGE_NAVIGATION_TIMEOUT_MS, withTimeout } from './timeouts'
 import { inspectApplicationUrl } from './validate'
 
 export type AutomationRuntime = 'node-server' | 'serverless'
@@ -199,11 +200,26 @@ export async function probeChromium(playwright: PlaywrightLike): Promise<{
   if (!inspected.ok) {
     return { ok: false, closed: true, reason: 'The browser health page is not a valid URL.' }
   }
-  const browser = await playwright.chromium.launch(chromiumLaunchOptions())
+  const browser = await withTimeout(
+    playwright.chromium.launch(chromiumLaunchOptions()),
+    BROWSER_LAUNCH_TIMEOUT_MS,
+    'BROWSER_LAUNCH_TIMEOUT',
+    'The browser did not start within the allowed time.',
+  )
   let closed = false
   try {
-    const page = await browser.newPage()
-    await page.goto(HEALTH_PAGE, { waitUntil: 'domcontentloaded', timeout: 20_000 })
+    const page = await withTimeout(
+      browser.newPage(),
+      BROWSER_LAUNCH_TIMEOUT_MS,
+      'BROWSER_LAUNCH_TIMEOUT',
+      'The browser did not start within the allowed time.',
+    )
+    await withTimeout(
+      page.goto(HEALTH_PAGE, { waitUntil: 'domcontentloaded', timeout: PAGE_NAVIGATION_TIMEOUT_MS }),
+      PAGE_NAVIGATION_TIMEOUT_MS,
+      'BROWSER_NAVIGATION_TIMEOUT',
+      'The employer application page did not load within the allowed time.',
+    )
     const title = (await page.title?.()) ?? ''
     await page.close?.()
     await browser.close()
