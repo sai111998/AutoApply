@@ -708,7 +708,9 @@ export function JobDiscoveryPage() {
                     <Button type="button" variant="secondary" onClick={() => void onQueueReview(item)}>
                       Review
                     </Button>
-                    {item.applicationStatus === 'ready' && (
+                    {(item.applicationStatus === 'ready' ||
+                      item.applicationStatus === 'failed' ||
+                      item.applicationStatus === 'automation_blocked') && (
                       <Button type="button" onClick={() => void onQueueApply(item)} disabled={autoBusyId === item.id}>
                         {autoBusyId === item.id ? 'Preparing…' : 'Apply'}
                       </Button>

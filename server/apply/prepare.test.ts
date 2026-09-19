@@ -180,6 +180,34 @@ describe('application preparation flow', () => {
     expect(prepared.item.tailoredResumeText).toContain('Java')
   })
 
+  it('retries Apply after a previous Playwright install failure', async () => {
+    const started = await startReadyRun()
+    const stored = await memoryStore.get(started.run.id)
+    if (!stored) throw new Error('run missing')
+    stored.items[0].applicationStatus = 'automation_blocked'
+    stored.items[0].failureReason = 'Playwright is not installed'
+    await memoryStore.save(stored.run, stored.items)
+    const prepared = await prepareQueueItem(
+      started.run.id,
+      stored.items[0].id,
+      { profile, html: '<form><label>Full name</label><input name="name"><button type="submit">Submit</button></form>' },
+      {
+        delayMs: 0,
+        browser: {
+          async prepare() {
+            return { status: 'ready_for_submission', questions: [], failureReason: null, sessionId: 'filled:retry' }
+          },
+          async submit() {
+            return { status: 'needs_user_confirmation', failureReason: null }
+          },
+        },
+      },
+    )
+    expect(prepared.item.applicationStatus).toBe('ready_for_submission')
+    expect(prepared.item.applicationStatus).not.toBe('submitted')
+    expect(prepared.item.failureReason).toBeNull()
+  })
+
   it('returns APPLICATION_NOT_FOUND for a missing queue item', async () => {
     await expect(prepareQueueItem('missing-run', 'missing-item', { profile }, { delayMs: 0 })).rejects.toMatchObject({
       code: 'APPLICATION_NOT_FOUND',

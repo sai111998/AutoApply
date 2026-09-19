@@ -13,6 +13,7 @@ import {
   detectAutomationRuntime,
   getAutomationHealth,
   importPlaywright,
+  PLAYWRIGHT_MISSING_REASON,
   serverlessAutomationReason,
   userFacingBrowserError,
   type PlaywrightLoader,
@@ -333,7 +334,7 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
       return {
         status: 'automation_blocked',
         questions: [],
-        failureReason: 'Playwright is not installed',
+        failureReason: PLAYWRIGHT_MISSING_REASON,
         sessionId: null,
       }
     }

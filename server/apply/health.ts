@@ -36,6 +36,9 @@ export function detectAutomationRuntime(
 ): AutomationRuntime {
   if (
     env.VERCEL ||
+    env.VERCEL_ENV ||
+    env.VERCEL_URL ||
+    env.NOW_REGION ||
     env.AWS_LAMBDA_FUNCTION_NAME ||
     env.FUNCTION_TARGET ||
     env.FUNCTIONS_WORKER_RUNTIME ||
@@ -69,11 +72,27 @@ export function chromiumLaunchOptions(env: NodeJS.ProcessEnv = process.env): {
   }
 }
 
+export const PLAYWRIGHT_MISSING_REASON =
+  'Playwright is not installed. Run npm install && npm run playwright:install, then restart npm run dev.'
+
 export async function importPlaywright(): Promise<PlaywrightLike | null> {
   try {
     return (await import('playwright')) as PlaywrightLike
-  } catch {
-    return null
+  } catch (first) {
+    try {
+      const { createRequire } = await import('node:module')
+      const require = createRequire(`${process.cwd()}/package.json`)
+      const resolved = require.resolve('playwright')
+      return (await import(resolved)) as PlaywrightLike
+    } catch {
+      if (process.env.NODE_ENV !== 'production') {
+        const message = first instanceof Error ? first.message : String(first)
+        console.info('[AutoApply] playwright-import-failed', {
+          message: /secret|token|key|bearer/i.test(message) ? '[redacted]' : message.slice(0, 180),
+        })
+      }
+      return null
+    }
   }
 }
 
@@ -129,7 +148,7 @@ export async function getAutomationHealth(
       playwright: false,
       browser: null,
       runtime,
-      reason: 'Playwright is not installed',
+      reason: PLAYWRIGHT_MISSING_REASON,
     }
     cachedHealth = { at: now, value: health }
     return health

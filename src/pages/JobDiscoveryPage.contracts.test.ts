@@ -75,6 +75,7 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/syncAutoApplyApplication/)
     expect(page).toMatch(/persistQueueApplication/)
     expect(page).toMatch(/Application could not be saved/)
+    expect(page).toMatch(/applicationStatus === 'automation_blocked'/)
     expect(page).toMatch(/await persistQueueApplication\(prepared\)/)
     expect(page).toMatch(/await persistQueueApplication\(submitted\)/)
     expect(page).toMatch(/submitted\.applicationStatus === 'submitted'/)

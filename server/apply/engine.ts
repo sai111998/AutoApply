@@ -271,7 +271,6 @@ const PAUSED_PREPARE_STATUSES = new Set([
   'mfa_required',
   'login_required',
   'blocked',
-  'automation_blocked',
 ])
 
 export async function prepareQueueItem(

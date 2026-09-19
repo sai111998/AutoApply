@@ -53,6 +53,7 @@ afterEach(() => {
 describe('automation health', () => {
   it('reports serverless runtimes as unsupported without launching a browser', async () => {
     expect(detectAutomationRuntime({ VERCEL: '1' })).toBe('serverless')
+    expect(detectAutomationRuntime({ VERCEL_ENV: 'production' })).toBe('serverless')
     const health = await getAutomationHealth({
       runtime: 'serverless',
       loadPlaywright: async () => {
@@ -74,7 +75,7 @@ describe('automation health', () => {
       available: false,
       playwright: false,
       browser: null,
-      reason: 'Playwright is not installed',
+      reason: 'Playwright is not installed. Run npm install && npm run playwright:install, then restart npm run dev.',
     })
   })
 
