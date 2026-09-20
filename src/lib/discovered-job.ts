@@ -34,6 +34,9 @@ export function providerLabel(provider: string | null | undefined): string {
   if (provider === 'job-opportunities') return 'Job Opportunities API'
   if (provider === 'jooble') return 'Jooble'
   if (provider === 'usajobs') return 'USAJOBS'
+  if (provider === 'greenhouse') return 'Greenhouse'
+  if (provider === 'lever') return 'Lever'
+  if (provider === 'ashby') return 'Ashby'
   return provider
 }
 

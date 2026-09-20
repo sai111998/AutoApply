@@ -228,4 +228,5 @@ export type ListedAutoApplyJob = Pick<
   | 'matchScore'
   | 'postedAt'
   | 'fetchedAt'
->
+> &
+  Partial<Pick<LiveJob, 'rawMetadata' | 'applicationCapability' | 'applicationProvider' | 'discoveryProvider' | 'applicationUrl'>>

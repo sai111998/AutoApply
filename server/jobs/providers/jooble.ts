@@ -57,6 +57,11 @@ export function createJoobleProvider(options: JoobleClientOptions): JobProvider 
     isEnabled: () => options.enabled,
     isAvailable: () => options.enabled && Boolean(options.apiKey),
     connectionLabel: () => defaultConnectionLabel(options.enabled, options.enabled && Boolean(options.apiKey)),
+    supportsApplicationAutomation: () => false,
+    normalizeJob: (raw) => normalizeJoobleJob(raw),
+    async searchJobs(params) {
+      return this.search(params)
+    },
     async search(params) {
       if (!options.enabled) return warning('disabled', 'Jooble is turned off.', params)
       if (!options.apiKey) return warning('missing_key', 'Jooble is unavailable until JOOBLE_API_KEY is set.', params)

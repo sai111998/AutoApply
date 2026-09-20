@@ -31,6 +31,15 @@ function envFlag(name: string, fallback: boolean): boolean {
   return raw !== 'false' && raw !== '0' && raw !== 'off'
 }
 
+function envList(name: string, fallback: string[] = []): string[] {
+  const raw = process.env[name]?.trim()
+  if (!raw) return [...fallback]
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 export function getServerConfig() {
   const llmApiKey = process.env.LLM_API_KEY?.trim() ?? ''
   return {
@@ -50,7 +59,43 @@ export function getServerConfig() {
     jobOpportunitiesApiBaseUrl: (
       process.env.JOB_OPPORTUNITIES_API_BASE_URL?.trim() || 'https://api.jobopportunitiesapi.org'
     ).replace(/\/$/, ''),
+    greenhouseEnabled: envFlag('GREENHOUSE_ENABLED', true),
+    greenhouseBoardTokens: envList('GREENHOUSE_BOARD_TOKENS', ['gitlab']),
+    greenhouseJobBoardApiKey: process.env.GREENHOUSE_JOB_BOARD_API_KEY?.trim() || '',
+    leverEnabled: envFlag('LEVER_ENABLED', true),
+    leverSites: envList('LEVER_SITES', []),
+    ashbyEnabled: envFlag('ASHBY_ENABLED', true),
+    ashbyBoards: envList('ASHBY_BOARDS', []),
   }
 }
 
-export type ServerConfig = ReturnType<typeof getServerConfig>
+type AtsDiscoveryFields =
+  | 'greenhouseEnabled'
+  | 'greenhouseBoardTokens'
+  | 'greenhouseJobBoardApiKey'
+  | 'leverEnabled'
+  | 'leverSites'
+  | 'ashbyEnabled'
+  | 'ashbyBoards'
+
+export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscoveryFields> & {
+  greenhouseEnabled?: boolean
+  greenhouseBoardTokens?: string[]
+  greenhouseJobBoardApiKey?: string
+  leverEnabled?: boolean
+  leverSites?: string[]
+  ashbyEnabled?: boolean
+  ashbyBoards?: string[]
+}
+
+export function atsDiscoveryConfig(config: ServerConfig) {
+  return {
+    greenhouseEnabled: config.greenhouseEnabled ?? false,
+    greenhouseBoardTokens: config.greenhouseBoardTokens ?? [],
+    greenhouseJobBoardApiKey: config.greenhouseJobBoardApiKey ?? '',
+    leverEnabled: config.leverEnabled ?? false,
+    leverSites: config.leverSites ?? [],
+    ashbyEnabled: config.ashbyEnabled ?? false,
+    ashbyBoards: config.ashbyBoards ?? [],
+  }
+}

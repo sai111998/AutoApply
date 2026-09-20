@@ -119,8 +119,16 @@ export function identityKey(input: {
   return `meta:${normalizeToken(input.company)}|${normalizeToken(input.title)}|${normalizeToken(input.location ?? '')}`
 }
 
-export function fingerprint(job: Pick<NormalizedJob, 'company' | 'title' | 'location' | 'jobUrl'>): string {
-  const url = canonicalUrl(job.jobUrl)
+function fingerprintUrl(value: unknown): string | null {
+  const url = canonicalUrl(value)
+  if (!url) return null
+  return url.replace(/\/apply\/?$/i, '').replace(/\/+$/, '')
+}
+
+export function fingerprint(
+  job: Pick<NormalizedJob, 'company' | 'title' | 'location' | 'jobUrl'> & { applicationUrl?: string | null },
+): string {
+  const url = fingerprintUrl(job.applicationUrl) || fingerprintUrl(job.jobUrl)
   if (url) return `url:${normalizeToken(url)}`
   return `meta:${normalizeToken(job.company)}|${normalizeToken(job.title)}|${normalizeToken(job.location ?? '')}`
 }
@@ -172,5 +180,11 @@ export function emptyNormalizedJob(partial: Partial<NormalizedJob> & Pick<Normal
     identityKey: identity,
     rawMetadata: partial.rawMetadata ?? {},
     liveDemoProvider: partial.liveDemoProvider ?? false,
+    applicationUrl: canonicalUrl(partial.applicationUrl) ?? jobUrl,
+    updatedAt: partial.updatedAt ?? partial.postedAt ?? null,
+    sourceUrl: canonicalUrl(partial.sourceUrl) ?? jobUrl,
+    discoveryProvider: partial.discoveryProvider ?? partial.provider,
+    applicationProvider: partial.applicationProvider ?? null,
+    applicationCapability: partial.applicationCapability ?? null,
   }
 }

@@ -7,9 +7,8 @@ import type { FetchLike } from '../jobs/http'
 import { createApplyBrowser } from './browser'
 import {
   applicationIdentity,
-  hasDuplicateApplication,
   hasDuplicateQueueEntry,
-  isExcludedCompany,
+  isEligibleForAutoApply,
   jobApplicationUrl,
   meetsMatchThreshold,
 } from './eligibility'
@@ -46,9 +45,11 @@ import { releaseExtensionItem } from '../extension/connection'
 import { assertCanPrepareItem } from './validate'
 import { persistConfirmedSubmission, applyConfirmationToQueueItem } from './confirmed'
 import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitForBrowserJob } from '../browser-worker/worker'
-import { c2cOnly, remainingDailySlots, utcDayKey } from '../agent/policy'
+import { remainingDailySlots, utcDayKey } from '../agent/policy'
 import { discoverCampaignJobs } from '../agent/discovery'
 import { rememberUserAnswers } from './questions'
+import { resolveGreenhouseQuestions } from './greenhouse-questions'
+import type { GreenhouseQuestion } from '../jobs/providers/greenhouse'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -154,10 +155,20 @@ function enqueueEligibleJobs(input: {
   let autoApplyCapable = 0
   for (const job of jobs) {
     if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) break
-    if (c2cOnly(run.config) && job.c2cStatus !== 'confirmed') continue
-    if (isExcludedCompany(job.company, run.config.excludedCompanies)) continue
-    if (!jobApplicationUrl(job)) continue
-    if (hasDuplicateApplication(job, startInput.existingApplications)) continue
+    if (
+      !isEligibleForAutoApply(job, {
+        minimumMatchRate: run.config.minimumMatchRate,
+        finalMatchScore: job.match?.score ?? job.matchScore ?? null,
+        existingApplications: startInput.existingApplications,
+        existingQueueIdentities: queueIdentities,
+        jobType: run.config.jobType,
+        excludedCompanies: run.config.excludedCompanies,
+        profile: startInput.profile,
+        skipScoreCheck: true,
+      }).ok
+    ) {
+      continue
+    }
     if (hasDuplicateQueueEntry(job, queueIdentities)) continue
 
     const initial = job.match?.score ?? job.matchScore ?? null
@@ -214,6 +225,19 @@ function enqueueEligibleJobs(input: {
     }
     autoApplyCapable += 1
 
+    const structured = Array.isArray(job.rawMetadata?.applicationQuestions)
+      ? resolveGreenhouseQuestions(job.rawMetadata.applicationQuestions as GreenhouseQuestion[], startInput.profile, startInput.userId)
+      : { answered: [] as AutoApplyQueueItem['questions'], unknown: [] as AutoApplyQueueItem['questions'] }
+    if (structured.unknown.length) {
+      logApplyEvent('capability-skip', {
+        jobId: job.id,
+        applicationUrl,
+        matchScore: finalScore,
+        code: 'assisted_apply',
+      })
+      continue
+    }
+
     const identity = applicationIdentity(job)
     queueIdentities.push(identity)
     items.push({
@@ -234,7 +258,7 @@ function enqueueEligibleJobs(input: {
       c2cEvidence: job.c2cEvidence,
       applicationStatus: 'queued',
       failureReason: null,
-      questions: [],
+      questions: structured.answered,
       tailoredResumeText: tailoredText ?? startInput.resumeText,
       jobDescriptionSnapshot: job.description ?? null,
       location: job.location ?? null,

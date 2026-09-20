@@ -190,6 +190,11 @@ export function createJobOpportunitiesProvider(options: {
     isEnabled: () => options.enabled,
     isAvailable: () => available,
     connectionLabel: () => defaultConnectionLabel(options.enabled, available),
+    supportsApplicationAutomation: () => false,
+    normalizeJob: (raw) => normalizeJobOpportunitiesJob(raw),
+    async searchJobs(params) {
+      return this.search(params)
+    },
     async search(params) {
       if (!options.enabled) return warning('disabled', params, 'Job Opportunities API is turned off.')
       if (params.page > 1) {

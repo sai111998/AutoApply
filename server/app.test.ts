@@ -412,6 +412,9 @@ describe('GET /api/health', () => {
       'job-opportunities',
       'jooble',
       'usajobs',
+      'greenhouse',
+      'lever',
+      'ashby',
     ])
     expect(response.body.jobProviders.find((item: { name: string }) => item.name === 'jooble').connectionLabel).toBe(
       'Not configured',

@@ -67,6 +67,11 @@ export function createUsaJobsProvider(options: UsaJobsClientOptions): JobProvide
     isAvailable: () => options.enabled && Boolean(options.apiKey && options.userAgentEmail),
     connectionLabel: () =>
       defaultConnectionLabel(options.enabled, options.enabled && Boolean(options.apiKey && options.userAgentEmail)),
+    supportsApplicationAutomation: () => false,
+    normalizeJob: (raw) => normalizeUsaJobsJob(raw),
+    async searchJobs(params) {
+      return this.search(params)
+    },
     async search(params) {
       if (!options.enabled) return warning('disabled', 'USAJOBS is turned off.', params)
       if (!options.apiKey || !options.userAgentEmail) {

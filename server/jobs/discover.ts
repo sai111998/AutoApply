@@ -2,6 +2,7 @@ import type { ServerConfig } from '../config'
 import { deduplicateJobs } from './deduplicate'
 import type { FetchLike } from './http'
 import { stableJobId } from './normalize'
+import { annotateCanonicalJob, searchProviderJobs } from './aggregator'
 import { createJobProviders, providerStatuses, selectProviders } from './provider'
 import { scoreJobAgainstResume } from './score'
 import { persistDiscoveredJobs } from './store'
@@ -67,9 +68,9 @@ export async function discoverJobs(
   const allProviders = createJobProviders(config, fetchImpl)
   const providers = selectProviders(allProviders, request.providers)
   const params = providerParams(request)
-  const results = await Promise.all(providers.map((provider) => provider.search(params)))
+  const results = await Promise.all(providers.map((provider) => searchProviderJobs(provider, params)))
   const warnings: ProviderWarning[] = results.flatMap((item) => (item.warning ? [item.warning] : []))
-  const merged = deduplicateJobs(results.flatMap((item) => item.jobs))
+  const merged = deduplicateJobs(results.flatMap((item) => item.jobs)).map(annotateCanonicalJob)
     .filter((job) => matchesRemote(job, request.remote))
     .filter((job) => matchesEmployment(job, request.employmentType))
     .filter((job) => matchesExperience(job, request.experienceLevel))

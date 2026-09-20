@@ -2,6 +2,7 @@ import type { ServerConfig } from '../config'
 import { classifyC2c, matchesJobTypeFilter, type C2cClassification, type JobTypeFilter } from './c2c'
 import { deduplicateJobs } from './deduplicate'
 import type { FetchLike } from './http'
+import { annotateCanonicalJob } from './aggregator'
 import { createJobProviders } from './provider'
 import { emptyLiveMatch, scoreJobAgainstResume, type LiveJobMatch } from './score'
 import type {
@@ -44,6 +45,10 @@ export interface LiveJob {
   missingSkills: string[]
   c2cStatus: C2cClassification['status']
   c2cEvidence: C2cClassification['evidence']
+  applicationUrl?: string | null
+  discoveryProvider?: string | null
+  applicationProvider?: string | null
+  applicationCapability?: string | null
 }
 
 export interface LiveJobsRequest {
@@ -73,43 +78,48 @@ export interface LiveJobsResponse {
 }
 
 export function toLiveJob(job: NormalizedJob, match: LiveJobMatch = emptyLiveMatch()): LiveJob {
+  const annotated = annotateCanonicalJob(job)
   const c2c = classifyC2c({
-    title: job.title,
-    description: job.description,
-    employmentType: job.employmentType,
-    company: job.company,
+    title: annotated.title,
+    description: annotated.description,
+    employmentType: annotated.employmentType,
+    company: annotated.company,
   })
   return {
-    id: job.id,
-    title: job.title,
-    company: job.company,
-    location: job.location,
-    remote: job.remote,
-    employmentType: job.employmentType,
-    seniority: job.seniority,
-    description: job.description,
-    url: job.jobUrl,
-    source: job.source,
-    sourceJobId: job.providerJobId,
-    postedAt: job.postedAt,
-    fetchedAt: job.discoveredAt,
-    provider: job.provider,
-    providerJobId: job.providerJobId,
-    jobUrl: job.jobUrl,
-    workArrangement: job.workArrangement,
-    discoveredAt: job.discoveredAt,
-    lastVerifiedAt: job.lastVerifiedAt,
-    identityKey: job.identityKey,
-    salaryMin: job.salaryMin,
-    salaryMax: job.salaryMax,
-    salaryCurrency: job.salaryCurrency,
-    rawMetadata: job.rawMetadata,
+    id: annotated.id,
+    title: annotated.title,
+    company: annotated.company,
+    location: annotated.location,
+    remote: annotated.remote,
+    employmentType: annotated.employmentType,
+    seniority: annotated.seniority,
+    description: annotated.description,
+    url: annotated.applicationUrl ?? annotated.jobUrl,
+    source: annotated.source,
+    sourceJobId: annotated.providerJobId,
+    postedAt: annotated.postedAt,
+    fetchedAt: annotated.discoveredAt,
+    provider: annotated.provider,
+    providerJobId: annotated.providerJobId,
+    jobUrl: annotated.jobUrl,
+    workArrangement: annotated.workArrangement,
+    discoveredAt: annotated.discoveredAt,
+    lastVerifiedAt: annotated.lastVerifiedAt,
+    identityKey: annotated.identityKey,
+    salaryMin: annotated.salaryMin,
+    salaryMax: annotated.salaryMax,
+    salaryCurrency: annotated.salaryCurrency,
+    rawMetadata: annotated.rawMetadata,
     match,
     matchScore: match.score,
     matchedSkills: match.matchedSkills,
     missingSkills: match.missingSkills,
     c2cStatus: c2c.status,
     c2cEvidence: c2c.evidence,
+    applicationUrl: annotated.applicationUrl ?? annotated.jobUrl,
+    discoveryProvider: annotated.discoveryProvider ?? annotated.provider,
+    applicationProvider: annotated.applicationProvider ?? null,
+    applicationCapability: annotated.applicationCapability ?? null,
   }
 }
 
@@ -187,13 +197,17 @@ export function sortLiveJobs(jobs: LiveJob[], request: LiveJobsRequest): LiveJob
   return copy
 }
 
+const LIVE_DISCOVERY_PROVIDERS = new Set(['job-opportunities', 'greenhouse', 'lever', 'ashby'])
+
 export async function listLiveJobs(
   config: ServerConfig,
   request: LiveJobsRequest,
   fetchImpl?: FetchLike,
 ): Promise<LiveJobsResponse> {
-  const provider = createJobProviders(config, fetchImpl).find((item) => item.providerName() === 'job-opportunities')
-  if (!provider) {
+  const providers = createJobProviders(config, fetchImpl).filter(
+    (item) => LIVE_DISCOVERY_PROVIDERS.has(item.providerName()) && item.isEnabled(),
+  )
+  if (!providers.length) {
     return {
       jobs: [],
       page: request.page,
@@ -209,11 +223,12 @@ export async function listLiveJobs(
     }
   }
 
-  const result = await searchLiveJobs(provider, request)
+  const results = await Promise.all(providers.map((provider) => searchLiveJobs(provider, request)))
+  const merged = deduplicateJobs(results.flatMap((item) => item.jobs)).map(annotateCanonicalJob)
   const resumeText = request.resumeText?.trim() ?? ''
   const jobType = request.jobType || 'all'
   const jobs = sortLiveJobs(
-    deduplicateJobs(result.jobs)
+    merged
       .map((job) => {
         const match = resumeText
           ? scoreJobAgainstResume(job, resumeText, request.resumeVersionId)
@@ -229,13 +244,14 @@ export async function listLiveJobs(
       ),
     request,
   )
+  const joa = results.find((item) => item.provider === 'job-opportunities')
   return {
     jobs,
     page: request.page,
     limit: request.limit,
-    total: result.total ?? jobs.length,
-    hasMore: result.hasMore,
+    total: Math.max(joa?.total ?? 0, jobs.length),
+    hasMore: results.some((item) => item.hasMore),
     source: 'Job Opportunities API',
-    warning: result.warning,
+    warning: joa?.warning ?? results.find((item) => item.warning)?.warning,
   }
 }

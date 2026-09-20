@@ -1,16 +1,33 @@
 import type { ServerConfig } from '../config'
 import type { FetchLike } from './http'
+import { ashbyFromConfig } from './providers/ashby'
+import { greenhouseFromConfig } from './providers/greenhouse'
 import { jobOpportunitiesFromConfig } from './providers/job-opportunities'
 import { joobleFromConfig } from './providers/jooble'
+import { leverFromConfig } from './providers/lever'
 import { usajobsFromConfig } from './providers/usajobs'
 import type { JobProvider, JobProviderName, NormalizedJob, ProviderStatus } from './types'
+
+export function withJobProviderMethods(provider: JobProvider): JobProvider {
+  const search = provider.search.bind(provider)
+  return {
+    ...provider,
+    search,
+    searchJobs: provider.searchJobs?.bind(provider) ?? search,
+    getJob: provider.getJob?.bind(provider),
+    normalizeJob: provider.normalizeJob?.bind(provider),
+  }
+}
 
 export function createJobProviders(config: ServerConfig, fetchImpl?: FetchLike): JobProvider[] {
   return [
     jobOpportunitiesFromConfig(config, fetchImpl),
     joobleFromConfig(config, fetchImpl),
     usajobsFromConfig(config, fetchImpl),
-  ]
+    greenhouseFromConfig(config, fetchImpl),
+    leverFromConfig(config, fetchImpl),
+    ashbyFromConfig(config, fetchImpl),
+  ].map(withJobProviderMethods)
 }
 
 export function providerStatuses(providers: JobProvider[]): ProviderStatus[] {

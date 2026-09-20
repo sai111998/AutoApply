@@ -1,4 +1,4 @@
-export type JobProviderName = 'job-opportunities' | 'jooble' | 'usajobs' | string
+export type JobProviderName = 'job-opportunities' | 'jooble' | 'usajobs' | 'greenhouse' | 'lever' | 'ashby' | string
 export type ProviderConnectionLabel = 'Live Demo' | 'Connected' | 'Not configured' | 'Disabled'
 
 export type RemoteFilter = 'any' | 'remote' | 'onsite' | 'hybrid'
@@ -27,6 +27,12 @@ export interface NormalizedJob {
   identityKey: string
   rawMetadata: Record<string, unknown>
   liveDemoProvider: boolean
+  applicationUrl?: string | null
+  updatedAt?: string | null
+  sourceUrl?: string | null
+  discoveryProvider?: JobProviderName | null
+  applicationProvider?: string | null
+  applicationCapability?: 'auto_apply_supported' | 'assisted_apply' | 'unsupported' | 'blocked' | 'unknown' | null
 }
 
 export interface ProviderSearchParams {
@@ -129,5 +135,8 @@ export interface JobProvider {
   usesDemoKey?(): boolean
   connectionLabel(): ProviderConnectionLabel
   search(params: ProviderSearchParams): Promise<ProviderSearchResult>
+  searchJobs?(params: ProviderSearchParams): Promise<ProviderSearchResult>
   getJob?(jobId: string): Promise<NormalizedJob | null>
+  normalizeJob?(raw: unknown): NormalizedJob | null
+  supportsApplicationAutomation(): boolean
 }

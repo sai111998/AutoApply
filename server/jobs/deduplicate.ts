@@ -7,7 +7,8 @@ function quality(job: NormalizedJob): number {
     (job.jobUrl ? 40 : 0) +
     (job.salaryMin || job.salaryMax ? 20 : 0) +
     (job.postedAt ? 10 : 0) +
-    (job.company ? 10 : 0)
+    (job.company ? 10 : 0) +
+    (job.provider === 'greenhouse' || job.provider === 'lever' || job.provider === 'ashby' ? 50 : 0)
   )
 }
 

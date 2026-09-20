@@ -361,7 +361,14 @@ describe('discover aggregation', () => {
     expect(result.jobs.some((job) => job.provider === 'jooble')).toBe(true)
     expect(result.jobs.some((job) => job.provider === 'usajobs')).toBe(true)
     expect(result.jobs.find((job) => job.provider === 'jooble')?.matchScore).toBeGreaterThan(0)
-    expect(result.providers.map((item) => item.name)).toEqual(['job-opportunities', 'jooble', 'usajobs'])
+    expect(result.providers.map((item) => item.name)).toEqual([
+      'job-opportunities',
+      'jooble',
+      'usajobs',
+      'greenhouse',
+      'lever',
+      'ashby',
+    ])
     expect(result.providers.find((item) => item.name === 'jooble')?.connectionLabel).toBe('Connected')
     expect(result.providers.find((item) => item.name === 'usajobs')?.connectionLabel).toBe('Connected')
     expect(result.providers.find((item) => item.name === 'job-opportunities')?.connectionLabel).toBe('Connected')

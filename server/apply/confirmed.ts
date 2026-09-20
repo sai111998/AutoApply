@@ -28,6 +28,10 @@ export interface ConfirmedApplicationRecord {
   identityKey: string
   createdAt: string
   updatedAt: string
+  finalUrl?: string | null
+  discoveryProvider?: string | null
+  applicationProvider?: string | null
+  tailoredMatchScore?: number | null
 }
 
 const confirmed = new Map<string, ConfirmedApplicationRecord>()
@@ -71,7 +75,10 @@ export function applyConfirmationToQueueItem(
   const confirmedSubmission = isConfirmedSubmissionResult(confirmation)
   item.confirmationNumber = confirmation.confirmationNumber ?? item.confirmationNumber
   item.confirmationText = confirmation.confirmationText ?? item.confirmationText
-  if (confirmation.finalUrl) item.applicationUrl = confirmation.finalUrl
+  if (confirmation.finalUrl) {
+    item.applicationUrl = confirmation.finalUrl
+    item.finalApplicationUrl = confirmation.finalUrl
+  }
   if (confirmedSubmission) {
     item.applicationStatus = 'submitted'
     item.submittedAt = submittedAt
@@ -115,6 +122,10 @@ export function buildConfirmedApplicationRecord(input: {
     identityKey: input.item.identityKey,
     createdAt: input.item.createdAt,
     updatedAt: now,
+    finalUrl: input.item.finalApplicationUrl || input.item.applicationUrl,
+    discoveryProvider: input.item.discoverySource ?? null,
+    applicationProvider: input.item.applicationProvider ?? input.provider ?? null,
+    tailoredMatchScore: input.item.finalMatchScore,
   }
 }
 

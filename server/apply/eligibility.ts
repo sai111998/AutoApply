@@ -1,5 +1,8 @@
 import { canEnterAutonomousApply, classifyApplicationCapability } from './capability'
-import type { ExistingApplicationRecord, ListedAutoApplyJob } from './types'
+import type { AutoApplyProfile, ExistingApplicationRecord, ListedAutoApplyJob } from './types'
+
+const MAX_LIVE_JOB_AGE_MS = 90 * 24 * 60 * 60 * 1000
+const CLOSED_STATUSES = new Set(['closed', 'expired', 'filled', 'archived', 'inactive'])
 
 const FAILED_ATTEMPT = new Set(['failed', 'blocked', 'cancelled'])
 const APPLIED = new Set(['applied', 'interview', 'offer'])
@@ -55,6 +58,26 @@ export function meetsMatchThreshold(score: number | null | undefined, minimumMat
   return score >= minimumMatchRate
 }
 
+export function isJobLive(job: ListedAutoApplyJob): boolean {
+  const status = String(job.rawMetadata?.status ?? job.rawMetadata?.jobStatus ?? '').toLowerCase()
+  if (CLOSED_STATUSES.has(status)) return false
+  if (job.rawMetadata?.expired === true || job.rawMetadata?.live === false) return false
+  return Boolean(jobApplicationUrl(job))
+}
+
+export function isJobExpired(job: ListedAutoApplyJob, now = Date.now()): boolean {
+  if (!isJobLive(job)) return true
+  const posted = Date.parse(job.postedAt ?? '')
+  return Number.isFinite(posted) && now - posted > MAX_LIVE_JOB_AGE_MS
+}
+
+export function hasRequiredCandidateInformation(
+  profile?: Pick<AutoApplyProfile, 'fullName' | 'email'> | null,
+): boolean {
+  if (!profile) return true
+  return Boolean(profile.fullName.trim() && profile.email.trim())
+}
+
 export function isEligibleForAutoApply(
   job: ListedAutoApplyJob,
   options: {
@@ -64,6 +87,9 @@ export function isEligibleForAutoApply(
     existingQueueIdentities?: string[]
     jobType?: import('../jobs/c2c').JobTypeFilter
     excludedCompanies?: string[]
+    profile?: Pick<AutoApplyProfile, 'fullName' | 'email'> | null
+    skipScoreCheck?: boolean
+    now?: number
   },
 ): { ok: boolean; reason: string | null } {
   if (isExcludedCompany(job.company, options.excludedCompanies)) {
@@ -72,11 +98,20 @@ export function isEligibleForAutoApply(
   if (options.jobType === 'c2c' && job.c2cStatus !== 'confirmed') {
     return { ok: false, reason: 'C2C-only mode requires a confirmed C2C job.' }
   }
-  if (!meetsMatchThreshold(options.finalMatchScore, options.minimumMatchRate)) {
+  if (!options.skipScoreCheck && !meetsMatchThreshold(options.finalMatchScore, options.minimumMatchRate)) {
     return { ok: false, reason: 'Match score is below the selected threshold.' }
   }
   if (!jobApplicationUrl(job)) {
     return { ok: false, reason: 'This listing does not include a valid application URL.' }
+  }
+  if (!isJobLive(job)) {
+    return { ok: false, reason: 'This job is no longer live.' }
+  }
+  if (isJobExpired(job, options.now)) {
+    return { ok: false, reason: 'This job posting has expired.' }
+  }
+  if (!hasRequiredCandidateInformation(options.profile)) {
+    return { ok: false, reason: 'Required candidate information is missing.' }
   }
   if (hasDuplicateApplication(job, options.existingApplications)) {
     return { ok: false, reason: 'An application for this job already exists.' }
@@ -87,7 +122,7 @@ export function isEligibleForAutoApply(
   const capability = classifyApplicationCapability({
     url: job.url,
     applicationUrl: jobApplicationUrl(job),
-    discoveryProvider: job.provider,
+    discoveryProvider: job.discoveryProvider || job.provider,
   })
   if (!canEnterAutonomousApply(capability.capability)) {
     return {

@@ -3,6 +3,7 @@ import type { ServerConfig } from '../config'
 import type { FetchLike } from '../jobs/http'
 import type { ListedAutoApplyJob, AutoApplyStartInput } from '../apply/types'
 import { SEARCH_PAGE_LIMIT } from './policy'
+import { fetchProviderJob } from '../jobs/provider'
 
 export interface CampaignDiscoveryDeps {
   listJobs?: (request: LiveJobsRequest) => Promise<{ jobs: ListedAutoApplyJob[] }>
@@ -34,7 +35,7 @@ export async function discoverCampaignJobs(
   })
   const keywords = input.config.keywords.map((item) => item.trim().toLowerCase()).filter(Boolean)
   const titles = (input.config.jobTitles ?? []).map((item) => item.trim().toLowerCase()).filter(Boolean)
-  return listed.jobs.filter((job) => {
+  const filtered = listed.jobs.filter((job) => {
     if (keywords.length) {
       const haystack = `${job.title} ${job.company} ${job.description ?? ''}`.toLowerCase()
       if (!keywords.every((keyword) => haystack.includes(keyword))) return false
@@ -45,4 +46,22 @@ export async function discoverCampaignJobs(
     }
     return true
   })
+  return Promise.all(
+    filtered.map(async (job) => {
+      const discovery = job.discoveryProvider || job.provider
+      if (discovery !== 'greenhouse') return job
+      const existing = job.rawMetadata?.applicationQuestions
+      if (Array.isArray(existing) && existing.length) return job
+      const token = typeof job.rawMetadata?.boardToken === 'string' ? job.rawMetadata.boardToken : null
+      const id = job.providerJobId
+      if (!token || !id) return job
+      const detail = await fetchProviderJob(config, 'greenhouse', `${token}:${id}`, fetchImpl)
+      if (!detail) return job
+      return {
+        ...job,
+        description: job.description || detail.description,
+        rawMetadata: { ...job.rawMetadata, ...detail.rawMetadata },
+      }
+    }),
+  )
 }
