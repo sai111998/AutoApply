@@ -1,6 +1,9 @@
 import { mergeApplyTimeouts } from '../apply/timeouts'
 import { getStoredProfile } from '../extension/profile-store'
 import { memoryStore, persistRun } from '../apply/store'
+import { detectSubmissionConfirmation } from '../apply/confirm'
+import { persistConfirmedSubmission, applyConfirmationToQueueItem } from '../apply/confirmed'
+import { getServerConfig } from '../config'
 import type { AutoApplyQueueItem, BrowserSubmitResult } from '../apply/types'
 import { runApplicationAgent } from '../application/agent'
 import { recoverStuckBrowserJobs } from './recovery'
@@ -86,8 +89,17 @@ async function runClaimedJob(
     item.failureReason = result.failureReason
     item.questions = result.questions
     item.sessionId = result.session.pageId
+    if (result.confirmation) {
+      applyConfirmationToQueueItem(item, {
+        ...result.confirmation,
+        detected: Boolean(result.confirmation.detected ?? result.confirmation.confirmed),
+      })
+    }
     await persistBrowserJob(stored, item)
-    if (['captcha_required', 'mfa_required', 'login_required', 'needs_user_input', 'ready_for_submission', 'needs_user_confirmation'].includes(item.applicationStatus)) {
+    if (item.applicationStatus === 'submitted') {
+      await persistConfirmedSubmission({ userId, item, provider: result.session.provider, config: getServerConfig() })
+    }
+    if (['captcha_required', 'mfa_required', 'login_required', 'needs_user_input', 'ready_for_submission', 'needs_user_confirmation', 'needs_confirmation'].includes(item.applicationStatus)) {
       livePages.set(item.id, opened)
     } else {
       await opened.close()
@@ -163,7 +175,7 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
 export async function startEmbeddedWorker(options: BrowserWorkerOptions = {}) {
   if (process.env.JOBPILOT_EMBED_WORKER === '0') return null
   if (process.env.VITEST === 'true') return null
-  const instance = worker ?? (await createBrowserWorker(options))
+  const instance = worker ?? (await createBrowserWorker({ headless: true, ...options }))
   await instance.start()
   return instance
 }
@@ -180,19 +192,24 @@ export async function submitBrowserWorkerItem(itemId: string): Promise<BrowserSu
   const confirmationHtml = await live.page.content()
   const title = (await live.page.title?.()) ?? ''
   const confirmationUrl = typeof live.page.url === 'function' ? live.page.url() : live.page.url || url
-  const confirmed = submitted && adapter.detectConfirmation({ html: confirmationHtml, title, url: confirmationUrl })
+  const confirmation = detectSubmissionConfirmation({ html: confirmationHtml, title, url: confirmationUrl, provider: adapter.id })
   livePages.delete(itemId)
   await live.close().catch(() => undefined)
-  if (!confirmed) {
+  if (!submitted || !confirmation.confirmed) {
     markBrowserSessionState(itemId, 'failed', {
       currentUrl: confirmationUrl,
-      failureReason: 'Submission could not be confirmed on the employer site.',
+      failureReason: confirmation.reason ?? 'Submission could not be confirmed on the employer site.',
     })
     return {
-      status: 'failed',
-      failureReason: 'Submission could not be confirmed on the employer site.',
+      status: submitted ? 'needs_confirmation' : 'failed',
+      failureReason: confirmation.reason ?? 'Submission could not be confirmed on the employer site.',
       confirmationDetected: false,
       success: false,
+      confirmationNumber: confirmation.confirmationNumber,
+      confirmationText: confirmation.confirmationText,
+      resultingUrl: confirmationUrl,
+      pageTitle: title,
+      finalActionCompleted: submitted,
     }
   }
   markBrowserSessionState(itemId, 'submitted', { currentUrl: confirmationUrl })
@@ -201,6 +218,8 @@ export async function submitBrowserWorkerItem(itemId: string): Promise<BrowserSu
     failureReason: null,
     confirmationDetected: true,
     success: true,
+    confirmationNumber: confirmation.confirmationNumber,
+    confirmationText: confirmation.confirmationText,
     resultingUrl: confirmationUrl,
     pageTitle: title,
     finalActionCompleted: true,

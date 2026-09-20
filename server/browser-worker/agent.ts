@@ -3,7 +3,7 @@ import { clickApplyControl } from '../apply/apply-action'
 import { analyzeApplicationSurface } from '../apply/surface'
 import { resolveApplicationQuestions } from '../apply/questions'
 import { detectSubmissionConfirmation, isFinalSubmitLabel } from '../apply/confirm'
-import type { AutoApplyProfile, AutoApplyQueueItem } from '../apply/types'
+import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus } from '../apply/types'
 import { allowUnattendedSubmit } from './profile'
 import { detectAtsAdapter } from './providers'
 import { recordUserIntervention } from './intervention'
@@ -66,10 +66,20 @@ function profileValues(profile: AutoApplyProfile): Record<string, string> {
 
 export interface AgentRunResult {
   session: BrowserApplicationSession
-  status: ReturnType<typeof queueStatusFromSession>
+  status: AutoApplyQueueStatus
   questions: AutoApplyQueueItem['questions']
   failureReason: string | null
   confirmationDetected?: boolean
+  confirmation?: {
+    success: boolean
+    confirmed: boolean
+    detected?: boolean
+    confirmationNumber?: string
+    confirmationText?: string
+    finalUrl?: string
+    provider?: string
+    reason?: string
+  }
 }
 
 export async function runApplicationAgent(input: {
@@ -210,22 +220,30 @@ export async function runApplicationAgent(input: {
         const confirmationHtml = await input.page.content()
         const confirmationTitle = (await input.page.title?.()) ?? title
         const confirmationUrl = pageUrl(input.page, currentUrl)
-        const confirmed = submitted && adapter.detectConfirmation({ html: confirmationHtml, title: confirmationTitle, url: confirmationUrl })
-        if (!confirmed) {
+        const confirmation = detectSubmissionConfirmation({ html: confirmationHtml, title: confirmationTitle, url: confirmationUrl, provider: adapter.id })
+        if (!submitted || !confirmation.confirmed) {
           session = markBrowserSessionState(session.itemId, 'failed', {
             currentUrl: confirmationUrl,
-            failureReason: 'Submission could not be confirmed on the employer site.',
+            failureReason: confirmation.reason ?? 'Submission could not be confirmed on the employer site.',
           })
           return {
             session,
-            status: 'needs_user_confirmation',
+            status: submitted ? 'needs_confirmation' : 'needs_user_confirmation',
             questions: resolved.answered,
-            failureReason: 'Submission could not be confirmed on the employer site.',
+            failureReason: confirmation.reason ?? 'Submission could not be confirmed on the employer site.',
             confirmationDetected: false,
+            confirmation: { ...confirmation, success: false, confirmed: false },
           }
         }
         session = markBrowserSessionState(session.itemId, 'submitted', { currentUrl: confirmationUrl })
-        return { session, status: 'submitted', questions: resolved.answered, failureReason: null, confirmationDetected: true }
+        return {
+          session,
+          status: 'submitted',
+          questions: resolved.answered,
+          failureReason: null,
+          confirmationDetected: true,
+          confirmation,
+        }
       }
       session = markBrowserSessionState(session.itemId, 'ready_for_review', { currentUrl })
       return { session, status: 'ready_for_submission', questions: resolved.answered, failureReason: null }

@@ -34,6 +34,11 @@ export type AutoApplyApplicationSource = {
   finalMatchScore?: number | null
   applicationStatus: string
   tailoredResumeText?: string | null
+  jobDescriptionSnapshot?: string | null
+  location?: string | null
+  confirmationNumber?: string | null
+  confirmationText?: string | null
+  submittedAt?: string | null
   createdAt?: string
   updatedAt?: string
 }
@@ -65,10 +70,30 @@ export type AutoApplyListedJob = {
   match?: { score?: number | null } | null
 }
 
+export function shouldPersistAutoApplyApplication(queueStatus: string): boolean {
+  return queueStatus === 'submitted'
+}
+
+export function isConfirmedSubmittedApplication(application: Application): boolean {
+  if (application.isConfirmedSubmission === true) return true
+  return application.status === 'applied' || application.status === 'interview' || application.status === 'offer'
+}
+
 export function applicationStatusFromQueue(queueStatus: string, existing?: Application | null): ApplicationStatus {
   if (queueStatus === 'submitted') return 'applied'
   if (existing && TERMINAL_APPLICATION_STATUSES.includes(existing.status)) return existing.status
   return 'ready'
+}
+
+export function sanitizeJobDescriptionSnapshot(value: string | null | undefined): string | null {
+  if (!value) return null
+  const cleaned = value
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned || null
 }
 
 export function findExistingAutoApplyJob(jobs: Job[], item: AutoApplyApplicationSource): Job | null {
@@ -97,7 +122,13 @@ export function findExistingAutoApplyApplication(
 }
 
 export function applicationsVisibleOnApplicationsPage(applications: Application[], jobs: Job[]): Application[] {
-  return applications.filter((application) => jobs.some((job) => job.id === application.jobId))
+  return applications.filter((application) => {
+    if (!jobs.some((job) => job.id === application.jobId)) return false
+    if (application.isConfirmedSubmission === false && application.status === 'ready' && application.applicationUrl) {
+      return false
+    }
+    return true
+  })
 }
 
 export function usesTailoredResumeVersion(
@@ -126,7 +157,11 @@ export function jobFromAutoApplyItem(
     company: listed?.company || item.company || existing?.company || 'Unknown company',
     location: listed?.location ?? existing?.location ?? '',
     jobUrl: listed?.jobUrl || listed?.url || item.applicationUrl || existing?.jobUrl || '',
-    description: listed?.description ?? existing?.description ?? '',
+    description:
+      sanitizeJobDescriptionSnapshot(item.jobDescriptionSnapshot) ??
+      listed?.description ??
+      existing?.description ??
+      '',
     createdAt: existing?.createdAt ?? listed?.discoveredAt ?? listed?.fetchedAt ?? item.createdAt ?? now,
     provider: listed?.provider ?? existing?.provider ?? null,
     providerJobId: listed?.providerJobId ?? existing?.providerJobId ?? null,
@@ -152,9 +187,11 @@ export function tailoredResumeVersionFromAutoApply(input: {
   masterResume: Resume | null
   existingVersions: ResumeVersion[]
   now: string
+  freezeSubmitted?: boolean
 }): ResumeVersion | null {
   const masterResumeId = input.masterResume?.id ?? null
-  if (!usesTailoredResumeVersion(input.item, masterResumeId)) return null
+  const freezeSubmitted = Boolean(input.freezeSubmitted && input.item.applicationStatus === 'submitted')
+  if (!freezeSubmitted && !usesTailoredResumeVersion(input.item, masterResumeId)) return null
   if (!input.masterResume || !isUuid(input.masterResume.id)) return null
   const versionId = input.item.resumeVersionId
   if (!versionId || !isUuid(versionId)) return null
@@ -174,7 +211,10 @@ export function tailoredResumeVersionFromAutoApply(input: {
     sourceResumeId: input.masterResume.id,
     jobId: input.job.id,
     analysisId: null,
-    versionName: input.item.resumeVersionName || `Tailored v1 — ${input.job.title}`,
+    versionName:
+      freezeSubmitted && (!input.item.resumeVersionName || input.item.resumeVersionName === 'Master')
+        ? `Submitted — ${input.job.title}`
+        : input.item.resumeVersionName || `Tailored v1 — ${input.job.title}`,
     resumeContent: {
       ...emptyTailoredContent(),
       summary: input.item.tailoredResumeText?.trim() ?? '',
@@ -221,6 +261,7 @@ export function buildAutoApplyWorkspaceRecords(input: {
     masterResume: input.masterResume,
     existingVersions: input.resumeVersions,
     now,
+    freezeSubmitted: input.item.applicationStatus === 'submitted',
   })
   const selectedResumeVersionId = resumeVersion?.id ?? null
   const originalMatch =
@@ -250,13 +291,23 @@ export function buildAutoApplyWorkspaceRecords(input: {
   const applicationId =
     existingApplication?.id ??
     (input.item.applicationId && isUuid(input.item.applicationId) ? input.item.applicationId : job.id)
+  const submitted = status === 'applied'
+  const snapshot =
+    sanitizeJobDescriptionSnapshot(input.item.jobDescriptionSnapshot) ??
+    sanitizeJobDescriptionSnapshot(job.description) ??
+    existingApplication?.submittedJobDescriptionSnapshot ??
+    null
+  const submittedResumeVersionId = submitted
+    ? selectedResumeVersionId ??
+      (input.item.resumeVersionId && isUuid(input.item.resumeVersionId) ? input.item.resumeVersionId : null)
+    : selectedResumeVersionId
   const application: Application = {
     id: applicationId,
     userId: input.userId,
     jobId: job.id,
     matchId: existingApplication?.matchId ?? originalMatch?.id ?? null,
     resumeId: existingApplication?.resumeId ?? input.masterResume?.id ?? null,
-    selectedResumeVersionId,
+    selectedResumeVersionId: submittedResumeVersionId,
     currentMatchId:
       currentMatch?.id ??
       (selectedResumeVersionId
@@ -267,11 +318,23 @@ export function buildAutoApplyWorkspaceRecords(input: {
     dateAdded: existingApplication?.dateAdded ?? now.slice(0, 10),
     dateApplied:
       status === 'applied'
-        ? existingApplication?.dateApplied ?? now.slice(0, 10)
+        ? existingApplication?.dateApplied ?? input.item.submittedAt?.slice(0, 10) ?? now.slice(0, 10)
         : existingApplication?.dateApplied ?? null,
     nextAction: nextActionForStatus(status),
     notes: existingApplication?.notes ?? '',
     updatedAt: now,
+    isConfirmedSubmission: submitted,
+    submittedJobDescriptionSnapshot: submitted ? snapshot : existingApplication?.submittedJobDescriptionSnapshot ?? null,
+    confirmationNumber: submitted
+      ? input.item.confirmationNumber ?? existingApplication?.confirmationNumber ?? null
+      : existingApplication?.confirmationNumber ?? null,
+    confirmationText: submitted
+      ? input.item.confirmationText ?? existingApplication?.confirmationText ?? null
+      : existingApplication?.confirmationText ?? null,
+    submittedAt: submitted
+      ? input.item.submittedAt ?? existingApplication?.submittedAt ?? now
+      : existingApplication?.submittedAt ?? null,
+    applicationUrl: input.item.applicationUrl ?? existingApplication?.applicationUrl ?? job.jobUrl ?? null,
   }
 
   return {

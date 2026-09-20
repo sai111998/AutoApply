@@ -18,7 +18,7 @@ async function main() {
     autoSubmit: process.env.JOBPILOT_AUTO_SUBMIT === '1',
   })
   await worker.start()
-  console.log('JobPilot browser worker is running. Queue: existing Auto Apply jobs. Concurrency: 1.')
+  console.log('JobPilot browser worker is running headless. Queue: existing Auto Apply jobs. Concurrency: 1.')
 }
 
 if (process.argv[1] && process.argv[1].includes('browser-worker')) {

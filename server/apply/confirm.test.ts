@@ -74,9 +74,9 @@ describe('submission confirmation detection', () => {
   })
 
   it('marks confirmation from reliable employer text or a confirmation number', () => {
-    expect(detectSubmissionConfirmation({ html: '<p>Thank you for applying to this role.</p>' }).detected).toBe(true)
-    expect(detectSubmissionConfirmation({ html: '<p>Your application has been submitted.</p>' }).detected).toBe(true)
-    expect(detectSubmissionConfirmation({ html: '<p>We have received your application.</p>' }).detected).toBe(true)
+    expect(detectSubmissionConfirmation({ html: '<p>Thank you for applying to this role.</p>' }).confirmed).toBe(true)
+    expect(detectSubmissionConfirmation({ html: '<p>Your application has been submitted.</p>' }).confirmed).toBe(true)
+    expect(detectSubmissionConfirmation({ html: '<p>We have received your application.</p>' }).confirmed).toBe(true)
     const numbered = detectSubmissionConfirmation({
       html: '<p>Application submitted. Confirmation number: APP-9X22Q</p>',
     })

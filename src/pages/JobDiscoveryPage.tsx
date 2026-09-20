@@ -46,7 +46,6 @@ import {
   type LiveJobSort,
 } from '@/lib/live-job'
 import { matchBandLabel, matchBandTone } from '@/lib/match-band'
-import { handshakeExtensionSession, rememberExtensionSession, requestExtensionQueueProcessing } from '@/lib/extension-session'
 
 const US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
@@ -402,8 +401,6 @@ export function JobDiscoveryPage() {
         existingQueueIdentities: autoItems.map((item) => item.identityKey),
       })
       setAutoResult(result)
-      rememberExtensionSession({ userId: user.id })
-      if (result.items.length) requestExtensionQueueProcessing()
       for (const item of result.items) {
         await persistQueueApplication(item).catch(() => undefined)
       }
@@ -425,6 +422,7 @@ export function JobDiscoveryPage() {
   }
 
   async function persistQueueApplication(item: AutoApplyQueueItem) {
+    if (item.applicationStatus !== 'submitted') return
     await withClientTimeout(
       syncAutoApplyApplication({ item, listedJob: listedForQueueItem(item) }),
       PREPARE_PERSIST_TIMEOUT_MS,
@@ -433,12 +431,6 @@ export function JobDiscoveryPage() {
   }
 
   async function onQueueReview(item: AutoApplyQueueItem) {
-    try {
-      await persistQueueApplication(item)
-    } catch (persistError) {
-      notify(persistError instanceof Error ? persistError.message : 'Application could not be saved.', 'error')
-      return
-    }
     const listedJob = listedForQueueItem(item)
     if (listedJob) {
       await onReview(listedJob)
@@ -450,18 +442,9 @@ export function JobDiscoveryPage() {
   async function onQueueApply(item: AutoApplyQueueItem) {
     setAutoBusyId(item.id)
     try {
-      await handshakeExtensionSession({ userId: user?.id })
       const result = await prepareAutoApplyItemRequest(item.runId, item.id, applyProfile(), user?.id)
       setAutoResult(result)
       const prepared = result.items.find((row) => row.id === item.id) ?? result.items[0] ?? item
-      if (
-        prepared.applicationStatus === 'queued' ||
-        prepared.applicationStatus === 'opening' ||
-        prepared.applicationStatus === 'ready' ||
-        prepared.applicationStatus === 'filling'
-      ) {
-        requestExtensionQueueProcessing()
-      }
       await persistQueueApplication(prepared)
     } catch (applyError) {
       notify(applyError instanceof Error ? applyError.message : 'Could not prepare the application.', 'error')

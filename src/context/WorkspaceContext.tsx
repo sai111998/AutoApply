@@ -665,6 +665,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         masterResume: current.resumes.find((resume) => resume.isMaster) ?? current.resumes[0] ?? null,
       })
 
+      if (input.item.applicationStatus !== 'submitted') {
+        return built.application
+      }
+
       if (!isDemo && supabase) {
         try {
           let application = built.application

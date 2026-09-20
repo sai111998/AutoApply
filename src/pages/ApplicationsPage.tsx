@@ -10,6 +10,10 @@ import { Pill, ScoreBadge, StatusBadge } from '@/components/ui/Badge'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import {
+  applicationsVisibleOnApplicationsPage,
+  isConfirmedSubmittedApplication,
+} from '@/lib/auto-apply-application'
+import {
   applySelectAll,
   bulkDeleteBody,
   bulkDeleteTitle,
@@ -19,8 +23,54 @@ import {
   toggleId,
 } from '@/lib/application-bulk'
 import { resolveApplicationResumeDisplay } from '@/lib/application-selection'
-import type { ApplicationStatus } from '@/types/domain'
+import type { Application, ApplicationStatus } from '@/types/domain'
 import { APPLICATION_STATUS_LABELS } from '@/types/domain'
+
+function ApplicationRecordActions({
+  application,
+  jobUrl,
+  onViewJd,
+}: {
+  application: Application
+  jobUrl?: string | null
+  onViewJd: () => void
+}) {
+  if (!isConfirmedSubmittedApplication(application)) return null
+  const openUrl = application.applicationUrl || jobUrl || ''
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button type="button" variant="secondary" onClick={onViewJd}>
+        View JD
+      </Button>
+      {application.selectedResumeVersionId ? (
+        <Link
+          className="inline-flex items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-charcoal"
+          to={`/resume/versions/${application.selectedResumeVersionId}`}
+        >
+          View Resume
+        </Link>
+      ) : (
+        <Button type="button" variant="secondary" disabled>
+          View Resume
+        </Button>
+      )}
+      {openUrl ? (
+        <a
+          className="inline-flex items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-charcoal"
+          href={openUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open Application
+        </a>
+      ) : (
+        <Button type="button" variant="secondary" disabled>
+          Open Application
+        </Button>
+      )}
+    </div>
+  )
+}
 
 export function ApplicationsPage() {
   const { applications, jobs, matches, resumes, resumeVersions, updateApplication, deleteApplications, refreshAnalyses } =
@@ -32,14 +82,20 @@ export function ApplicationsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [pendingIds, setPendingIds] = useState<string[] | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [jdApplicationId, setJdApplicationId] = useState<string | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void refreshAnalyses()
   }, [refreshAnalyses])
 
+  const visibleApplications = useMemo(
+    () => applicationsVisibleOnApplicationsPage(applications, jobs),
+    [applications, jobs],
+  )
+
   const rows = useMemo(() => {
-    return applications
+    return visibleApplications
       .map((application) => {
         const job = jobs.find((item) => item.id === application.jobId)
         const display = resolveApplicationResumeDisplay({
@@ -63,7 +119,7 @@ export function ApplicationsPage() {
         return matchesQuery && matchesStatus && matchesScore
       })
       .sort((a, b) => b.application.updatedAt.localeCompare(a.application.updatedAt))
-  }, [applications, jobs, matches, minScore, query, resumeVersions, resumes, status])
+  }, [visibleApplications, jobs, matches, minScore, query, resumeVersions, resumes, status])
 
   const visibleIds = rows.map((row) => row.application.id)
   const visibleKey = visibleIds.join('\0')
@@ -228,9 +284,16 @@ export function ApplicationsPage() {
                       {display.usingMaster && <p className="text-xs text-muted">Original</p>}
                     </td>
                     <td>
-                      <IconButton label="Delete" variant="danger" onClick={() => setPendingIds([application.id])}>
-                        <Trash2 size={16} />
-                      </IconButton>
+                      <div className="flex flex-col items-end gap-2">
+                        <ApplicationRecordActions
+                          application={application}
+                          jobUrl={job?.jobUrl}
+                          onViewJd={() => setJdApplicationId(application.id)}
+                        />
+                        <IconButton label="Delete" variant="danger" onClick={() => setPendingIds([application.id])}>
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -284,6 +347,13 @@ export function ApplicationsPage() {
                     <span className="text-xs text-muted">{display.currentResumeLabel}</span>
                   </div>
                   <p className="mt-1 text-xs text-muted">Original match {display.originalMatchScore != null ? `${display.originalMatchScore}%` : 'Not analyzed'}</p>
+                  <div className="mt-3">
+                    <ApplicationRecordActions
+                      application={application}
+                      jobUrl={job?.jobUrl}
+                      onViewJd={() => setJdApplicationId(application.id)}
+                    />
+                  </div>
                 </div>
                 <IconButton label="Delete" variant="danger" onClick={() => setPendingIds([application.id])}>
                   <Trash2 size={16} />
@@ -307,6 +377,32 @@ export function ApplicationsPage() {
       >
         {bulkDeleteBody(pendingIds?.length ?? 0)}
       </ConfirmDialog>
+
+      {jdApplicationId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(32,36,28,0.35)] p-4" role="presentation">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="submitted-jd-title"
+            className="w-full max-w-2xl rounded-2xl border border-line bg-white p-6 shadow-card"
+          >
+            <h2 id="submitted-jd-title" className="text-lg font-semibold text-charcoal">
+              Job description
+            </h2>
+            <p className="mt-2 max-h-[60vh] overflow-auto whitespace-pre-wrap text-sm leading-6 text-charcoal">
+              {applications.find((application) => application.id === jdApplicationId)?.submittedJobDescriptionSnapshot ||
+                jobs.find((job) => job.id === applications.find((application) => application.id === jdApplicationId)?.jobId)
+                  ?.description ||
+                'No saved job description snapshot is available.'}
+            </p>
+            <div className="mt-5 flex justify-end">
+              <Button type="button" variant="secondary" onClick={() => setJdApplicationId(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

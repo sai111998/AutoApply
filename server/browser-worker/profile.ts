@@ -15,11 +15,9 @@ export function ensureBrowserProfileDirectory(env: NodeJS.ProcessEnv = process.e
 }
 
 export function isHeadlessBrowser(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.VITEST === 'true' || env.CI) return true
   const raw = env.JOBPILOT_BROWSER_HEADLESS?.trim().toLowerCase()
   if (raw === '0' || raw === 'false' || raw === 'off') return false
-  if (raw === '1' || raw === 'true' || raw === 'on') return true
-  return env.NODE_ENV === 'test'
+  return true
 }
 
 export function allowUnattendedSubmit(url: string, env: NodeJS.ProcessEnv = process.env): boolean {

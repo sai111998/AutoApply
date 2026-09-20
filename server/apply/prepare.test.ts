@@ -59,6 +59,7 @@ function listing(partial: Partial<ListedAutoApplyJob> & Pick<ListedAutoApplyJob,
     identityKey: `job-opportunities:${partial.id}`,
     provider: 'job-opportunities',
     providerJobId: partial.id,
+    location: 'Austin, TX',
     employmentType: 'Contract',
     c2cStatus: c2c.status,
     c2cEvidence: c2c.evidence,
@@ -90,6 +91,11 @@ function sampleItem(overrides: Partial<AutoApplyQueueItem> = {}): AutoApplyQueue
     failureReason: null,
     questions: [],
     tailoredResumeText: JAVA_RESUME_TEXT,
+    jobDescriptionSnapshot: 'Java Spring Boot C2C',
+    location: 'Austin, TX',
+    confirmationNumber: null,
+    confirmationText: null,
+    submittedAt: null,
     masterResumeUnchanged: true,
     sessionId: null,
     createdAt: '2026-09-18T00:00:00.000Z',
@@ -183,7 +189,8 @@ describe('application preparation flow', () => {
     expect(prepared.item.applicationStatus).toBe('ready_for_submission')
     expect(prepared.item.applicationStatus).not.toBe('applied')
     expect(prepared.item.applicationStatus).not.toBe('submitted')
-    expect(prepared.item.resumeVersionId).toBe('resume-1')
+    expect(prepared.item.resumeVersionId).toBeTruthy()
+    expect(prepared.item.sourceResumeId).toBe('resume-1')
     expect(prepared.item.tailoredResumeText).toContain('Java')
   })
 

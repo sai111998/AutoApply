@@ -71,18 +71,18 @@ describe('live jobs contracts', () => {
     expect(page).not.toMatch(/submit application/i)
   })
 
-  it('persists Auto Apply jobs into Applications after Apply, Review, or Submit', () => {
+  it('persists Auto Apply jobs into Applications only after confirmed submission', () => {
     expect(page).toMatch(/syncAutoApplyApplication/)
     expect(page).toMatch(/persistQueueApplication/)
     expect(page).toMatch(/Application could not be saved/)
     expect(page).toMatch(/applicationStatus === 'automation_blocked'/)
+    expect(page).toMatch(/item\.applicationStatus !== 'submitted'/)
     expect(page).toMatch(/await persistQueueApplication\(prepared\)/)
     expect(page).toMatch(/await persistQueueApplication\(submitted\)/)
     expect(page).toMatch(/submitted\.applicationStatus === 'submitted'/)
-    expect(page).toMatch(/await persistQueueApplication\(item\)/)
-    expect(page).toMatch(/handshakeExtensionSession/)
-    expect(page).toMatch(/requestExtensionQueueProcessing/)
-    expect(page).toMatch(/persistError instanceof Error \? persistError\.message : 'Application could not be saved\.'/)
+    expect(page).not.toMatch(/handshakeExtensionSession/)
+    expect(page).not.toMatch(/requestExtensionQueueProcessing/)
+    expect(page).not.toMatch(/rememberExtensionSession/)
   })
 
   it('pre-fills Job Analysis from a live job when the user explicitly tailors', () => {

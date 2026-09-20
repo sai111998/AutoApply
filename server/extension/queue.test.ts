@@ -54,6 +54,7 @@ function job(partial: Partial<ListedAutoApplyJob> & { id: string; title: string 
     identityKey: `job-opportunities:${partial.id}`,
     provider: 'job-opportunities',
     providerJobId: partial.id,
+    location: 'Austin, TX',
     employmentType: 'Contract',
     postedAt: '2026-09-17T00:00:00.000Z',
     fetchedAt: '2026-09-17T00:00:00.000Z',
@@ -122,7 +123,7 @@ describe('automation queue', () => {
     expect(next.body.item.applicationId).toBeTruthy()
     expect(next.body.item.jobId).toBe('java')
     expect(next.body.item.company).toBe('Acme')
-    expect(next.body.item.resumeVersionId).toBe('resume-1')
+    expect(next.body.item.resumeVersionId).toBeTruthy()
     expect(JSON.stringify(next.body)).not.toMatch(/jordan\.hale@example.com|SERVICE_ROLE/)
     expect(next.body.item.status).toBe('opening')
     const opened = await request(app).post('/api/automation/events').send({

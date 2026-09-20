@@ -66,21 +66,47 @@ export function extractConfirmationNumber(text: string): string | undefined {
   return match?.[1]
 }
 
+export interface SubmissionConfirmation {
+  success: boolean
+  confirmed: boolean
+  detected: boolean
+  confirmationNumber?: string
+  confirmationText?: string
+  finalUrl?: string
+  provider?: string
+  reason?: string
+}
+
 export function detectSubmissionConfirmation(input: {
   html: string
   url?: string | null
   title?: string | null
-}): { detected: boolean; confirmationNumber?: string; confirmationText?: string } {
+  provider?: string | null
+}): SubmissionConfirmation {
   const text = visiblePageText(input.html)
   const title = (input.title ?? '').trim()
   const haystack = `${title} ${text}`
   if (isWeakConfirmationText(text) || isWeakConfirmationText(title)) {
-    return { detected: false }
+    return {
+      success: false,
+      confirmed: false,
+      detected: false,
+      finalUrl: input.url ?? undefined,
+      provider: input.provider ?? undefined,
+      reason: 'Generic thank-you copy is not reliable confirmation.',
+    }
   }
   const phrase = CONFIRMATION_PHRASES.find((pattern) => pattern.test(haystack))
   const confirmationNumber = extractConfirmationNumber(haystack)
   if (!phrase && !confirmationNumber) {
-    return { detected: false }
+    return {
+      success: false,
+      confirmed: false,
+      detected: false,
+      finalUrl: input.url ?? undefined,
+      provider: input.provider ?? undefined,
+      reason: 'No reliable submission confirmation was found.',
+    }
   }
   const confirmationText = phrase
     ? haystack.match(phrase)?.[0]
@@ -88,9 +114,13 @@ export function detectSubmissionConfirmation(input: {
       ? `Confirmation ${confirmationNumber}`
       : undefined
   return {
+    success: true,
+    confirmed: true,
     detected: true,
     confirmationNumber,
     confirmationText,
+    finalUrl: input.url ?? undefined,
+    provider: input.provider ?? undefined,
   }
 }
 

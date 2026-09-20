@@ -29,6 +29,7 @@ import { createBrowserWorker, resetBrowserWorkerForTests } from './worker'
 import { resetAgentForTests } from '../agent'
 import { startSyntheticEmployer, syntheticEmployerHtml } from './synthetic'
 import { claimNextBrowserJob, resetBrowserWorkerQueueForTests } from './queue'
+import { listConfirmedApplications, resetConfirmedApplicationsForTests } from '../apply/confirmed'
 import type { AutoApplyProfile, AutoApplyQueueItem, ListedAutoApplyJob } from '../apply/types'
 
 const profile: AutoApplyProfile = {
@@ -54,6 +55,7 @@ function job(partial: Partial<ListedAutoApplyJob> & { id: string; title: string;
     identityKey: `job-opportunities:${partial.id}`,
     provider: 'job-opportunities',
     providerJobId: partial.id,
+    location: partial.location ?? 'Austin, TX',
     employmentType: 'Contract',
     postedAt: '2026-09-17T00:00:00.000Z',
     fetchedAt: '2026-09-17T00:00:00.000Z',
@@ -85,6 +87,11 @@ function queuedItem(overrides: Partial<AutoApplyQueueItem> = {}): AutoApplyQueue
     failureReason: null,
     questions: [],
     tailoredResumeText: 'Java',
+    jobDescriptionSnapshot: 'Java Spring Boot C2C',
+    location: 'Austin, TX',
+    confirmationNumber: null,
+    confirmationText: null,
+    submittedAt: null,
     masterResumeUnchanged: true,
     sessionId: null,
     createdAt: new Date().toISOString(),
@@ -101,6 +108,7 @@ afterEach(async () => {
   resetBrowserSessionsForTests()
   resetInterventionsForTests()
   resetBrowserWorkerQueueForTests()
+  resetConfirmedApplicationsForTests()
   await resetBrowserWorkerForTests()
 })
 
@@ -164,10 +172,14 @@ describe('browser worker architecture', () => {
   it('recovers crashed in-progress jobs and never auto-retries submitted ones', () => {
     const opening = queuedItem({ applicationStatus: 'opening' })
     const submitted = queuedItem({ id: 'item-2', applicationStatus: 'submitted' })
-    recoverStuckBrowserJobs([opening, submitted], { stuckMs: 1, now: Date.now() + 10_000, restart: true })
-    expect(opening.applicationStatus).toBe('failed')
+    const submitting = queuedItem({ id: 'item-3', applicationStatus: 'submitting' })
+    recoverStuckBrowserJobs([opening, submitted, submitting], { stuckMs: 1, now: Date.now() + 10_000, restart: true })
+    expect(opening.applicationStatus).toBe('queued')
     expect(submitted.applicationStatus).toBe('submitted')
+    expect(submitting.applicationStatus).toBe('needs_confirmation')
     expect(shouldNeverAutoRetry(submitted)).toBe(true)
+    expect(shouldNeverAutoRetry(submitting)).toBe(true)
+    expect(isRetryableBrowserJob(submitting)).toBe(false)
     expect(isRetryableBrowserJob(queuedItem({ applicationStatus: 'queued' }))).toBe(true)
   })
 
@@ -256,11 +268,20 @@ describe('browser worker architecture', () => {
       )
       expect(started.items[0].applicationStatus).toBe('queued')
       expect(started.run.status).toBe('running')
+      expect(listConfirmedApplications('user-1')).toEqual([])
       const processed = await worker.processOnce()
       expect(processed?.applicationStatus).toBe('submitted')
       expect(processed?.failureReason).toBeNull()
+      expect(processed?.confirmationNumber).toBe('ABC12345')
       expect(processed?.applicationStatus).not.toBe('opening')
-      expect(processed?.failureReason).toBeNull()
+      const confirmed = listConfirmedApplications('user-1')
+      expect(confirmed).toHaveLength(1)
+      expect(confirmed[0]?.status).toBe('applied')
+      expect(confirmed[0]?.isConfirmedSubmission).toBe(true)
+      expect(confirmed[0]?.submittedJobDescriptionSnapshot).toContain('C2C')
+      expect(confirmed[0]?.submittedResumeVersionId).toBeTruthy()
+      expect(confirmed[0]?.applicationUrl).toBeTruthy()
+      expect(listConfirmedApplications('user-1')).toHaveLength(1)
     } finally {
       await worker.stop()
       await site.close()

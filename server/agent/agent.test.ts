@@ -14,6 +14,7 @@ import { startSyntheticEmployer } from '../browser-worker/synthetic'
 import { inspectApplicationPage } from '../apply/detect'
 import { recoverStuckBrowserJobs, shouldNeverAutoRetry } from '../browser-worker/recovery'
 import { detectSubmissionConfirmation } from '../apply/confirm'
+import { listConfirmedApplications, resetConfirmedApplicationsForTests } from '../apply/confirmed'
 import type { AutoApplyProfile, ListedAutoApplyJob } from '../apply/types'
 import type { ServerConfig } from '../config'
 import {
@@ -71,6 +72,7 @@ function job(partial: Partial<ListedAutoApplyJob> & { id: string; title: string 
     identityKey: `job-opportunities:${partial.id}`,
     provider: 'job-opportunities',
     providerJobId: partial.id,
+    location: partial.location ?? 'Austin, TX',
     employmentType: 'Contract',
     postedAt: '2026-09-17T00:00:00.000Z',
     fetchedAt: '2026-09-17T00:00:00.000Z',
@@ -98,6 +100,7 @@ afterEach(async () => {
   clearAutoApplyMemory()
   resetExtensionProfilesForTests()
   resetBrowserWorkerQueueForTests()
+  resetConfirmedApplicationsForTests()
   await resetBrowserWorkerForTests()
 })
 
@@ -228,6 +231,11 @@ describe('autonomous campaign agent', () => {
       failureReason: null,
       questions: [],
       tailoredResumeText: 'Java',
+      jobDescriptionSnapshot: 'Java Spring Boot C2C',
+      location: 'Austin, TX',
+      confirmationNumber: null,
+      confirmationText: null,
+      submittedAt: null,
       masterResumeUnchanged: true,
       sessionId: null,
       createdAt: new Date().toISOString(),
@@ -235,7 +243,7 @@ describe('autonomous campaign agent', () => {
     }
     const submitted = { ...opening, id: 'item-2', applicationStatus: 'submitted' as const }
     recoverStuckBrowserJobs([opening, submitted], { stuckMs: 1, now: Date.now() + 10_000, restart: true })
-    expect(opening.applicationStatus).toBe('failed')
+    expect(opening.applicationStatus).toBe('queued')
     expect(submitted.applicationStatus).toBe('submitted')
     expect(shouldNeverAutoRetry(submitted)).toBe(true)
   })
@@ -261,10 +269,15 @@ describe('autonomous campaign agent', () => {
         },
       )
       expect(started.items[0].applicationStatus).toBe('queued')
+      expect(listConfirmedApplications('user-1')).toEqual([])
       const processed = await worker.processOnce()
       expect(processed?.applicationStatus).toBe('submitted')
       expect(processed?.failureReason).toBeNull()
       expect(processed?.applicationStatus).not.toBe('extension_not_connected')
+      const confirmed = listConfirmedApplications('user-1')
+      expect(confirmed).toHaveLength(1)
+      expect(confirmed[0]?.status).toBe('applied')
+      expect(confirmed[0]?.isConfirmedSubmission).toBe(true)
     } finally {
       await worker.stop()
       await site.close()

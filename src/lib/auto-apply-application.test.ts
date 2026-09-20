@@ -4,6 +4,8 @@ import {
   applicationsVisibleOnApplicationsPage,
   buildAutoApplyWorkspaceRecords,
   findExistingAutoApplyApplication,
+  isConfirmedSubmittedApplication,
+  shouldPersistAutoApplyApplication,
   usesTailoredResumeVersion,
   type AutoApplyApplicationSource,
 } from './auto-apply-application'
@@ -155,7 +157,7 @@ function version(overrides: Partial<ResumeVersion> = {}): ResumeVersion {
 }
 
 describe('auto apply application sync', () => {
-  it('creates an application record from Apply without marking it applied', () => {
+  it('does not surface queued Auto Apply jobs as Applications', () => {
     const built = buildAutoApplyWorkspaceRecords({
       item: item(),
       listedJob: {
@@ -176,18 +178,19 @@ describe('auto apply application sync', () => {
     })
 
     expect(built.created).toBe(true)
-    expect(built.application.id).toBe(APP_ID)
-    expect(built.application.userId).toBe(USER)
-    expect(built.application.jobId).toBe(JOB_ID)
     expect(built.application.status).toBe('ready')
+    expect(built.application.isConfirmedSubmission).toBe(false)
     expect(built.application.dateApplied).toBeNull()
-    expect(built.application.currentMatchScore).toBe(86)
-    expect(built.application.selectedResumeVersionId).toBeNull()
-    expect(built.job.company).toBe('JPMorgan Chase')
-    expect(built.job.jobUrl).toBe('https://jobs.example.com/jpmorgan')
-    expect(built.job.location).toBe('Columbus, OH')
-    expect(built.resumeVersion).toBeNull()
-    expect(applicationsVisibleOnApplicationsPage([built.application], [built.job])).toEqual([built.application])
+    expect(shouldPersistAutoApplyApplication('queued')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('ready')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('needs_user_input')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('captcha_required')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('login_required')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('mfa_required')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('failed')).toBe(false)
+    expect(shouldPersistAutoApplyApplication('submitted')).toBe(true)
+    expect(applicationsVisibleOnApplicationsPage([application()], [job()])).toEqual([application()])
+    expect(applicationsVisibleOnApplicationsPage([built.application], [built.job])).toEqual([])
   })
 
   it('updates an existing application instead of creating a duplicate', () => {
@@ -311,7 +314,16 @@ describe('auto apply application sync', () => {
     expect(applicationStatusFromQueue('ready', application({ status: 'applied' }))).toBe('applied')
 
     const submitted = buildAutoApplyWorkspaceRecords({
-      item: item({ applicationStatus: 'submitted', finalMatchScore: 91 }),
+      item: item({
+        applicationStatus: 'submitted',
+        jobDescriptionSnapshot: 'Lead Java role requiring Spring Boot.',
+        confirmationNumber: 'APP-9X22Q',
+        confirmationText: 'Your application was submitted',
+        submittedAt: '2026-09-18T18:00:00.000Z',
+        resumeVersionId: VERSION_ID,
+        resumeVersionName: 'Tailored v1 — Lead Software Engineer',
+        tailoredResumeText: 'Submitted Java resume',
+      }),
       userId: USER,
       jobs: [job()],
       applications: [application()],
@@ -321,13 +333,29 @@ describe('auto apply application sync', () => {
       now: '2026-09-18T18:00:00.000Z',
     })
     expect(submitted.application.status).toBe('applied')
+    expect(submitted.application.isConfirmedSubmission).toBe(true)
     expect(submitted.application.dateApplied).toBe('2026-09-18')
     expect(submitted.application.id).toBe(APP_ID)
+    expect(submitted.application.submittedJobDescriptionSnapshot).toContain('Spring Boot')
+    expect(submitted.application.selectedResumeVersionId).toBe(VERSION_ID)
+    expect(submitted.application.applicationUrl).toBe('https://jobs.example.com/jpmorgan')
+    expect(submitted.application.confirmationNumber).toBe('APP-9X22Q')
+    expect(isConfirmedSubmittedApplication(submitted.application)).toBe(true)
+    expect(applicationsVisibleOnApplicationsPage([submitted.application], [submitted.job]).map((row) => row.id)).toEqual([
+      APP_ID,
+    ])
   })
 
-  it('keeps the application visible after the workspace snapshot is reused (refresh/navigation)', () => {
+  it('keeps the confirmed application visible after the workspace snapshot is reused (refresh/navigation)', () => {
     const built = buildAutoApplyWorkspaceRecords({
-      item: item(),
+      item: item({
+        applicationStatus: 'submitted',
+        jobDescriptionSnapshot: 'Historical JD snapshot',
+        submittedAt: '2026-09-18T18:00:00.000Z',
+        resumeVersionId: VERSION_ID,
+        resumeVersionName: 'Tailored v1',
+        tailoredResumeText: 'Exact submitted resume',
+      }),
       listedJob: {
         id: JOB_ID,
         title: item().title,
@@ -335,6 +363,7 @@ describe('auto apply application sync', () => {
         location: 'Columbus, OH',
         jobUrl: 'https://jobs.example.com/jpmorgan',
         identityKey: 'jpmorgan-lead-java',
+        description: 'Current live JD that may change',
       },
       userId: USER,
       jobs: [],
@@ -343,6 +372,10 @@ describe('auto apply application sync', () => {
       resumeVersions: [],
       masterResume: resume(),
     })
+    expect(built.application.submittedJobDescriptionSnapshot).toBe('Historical JD snapshot')
+    expect(built.application.selectedResumeVersionId).toBe(VERSION_ID)
+    expect(built.resumeVersion?.id).toBe(VERSION_ID)
+    expect(built.resumeVersion?.resumeContent.summary).toContain('Exact submitted resume')
     const refreshedJobs = [built.job]
     const refreshedApplications = [built.application]
     expect(applicationsVisibleOnApplicationsPage(refreshedApplications, refreshedJobs).map((row) => row.id)).toEqual([
@@ -351,5 +384,6 @@ describe('auto apply application sync', () => {
     const afterNavigation = applicationsVisibleOnApplicationsPage(refreshedApplications, refreshedJobs)
     expect(afterNavigation).toHaveLength(1)
     expect(afterNavigation[0]?.jobId).toBe(JOB_ID)
+    expect(afterNavigation[0]?.applicationUrl).toBe('https://jobs.example.com/jpmorgan')
   })
 })

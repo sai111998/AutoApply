@@ -39,6 +39,7 @@ import {
 import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/profile-store'
 import { releaseExtensionItem } from '../extension/connection'
 import { assertCanPrepareItem } from './validate'
+import { persistConfirmedSubmission, applyConfirmationToQueueItem } from './confirmed'
 import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitForBrowserJob } from '../browser-worker/worker'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
@@ -155,7 +156,7 @@ function enqueueEligibleJobs(input: {
     ...(startInput.existingQueueIdentities ?? []),
     ...previous.flatMap((entry) =>
       entry.items
-        .filter((item) => !['skipped', 'cancelled', 'failed', 'submitted'].includes(item.applicationStatus))
+        .filter((item) => !['skipped', 'cancelled', 'failed'].includes(item.applicationStatus))
         .map((item) => item.identityKey),
     ),
   ]
@@ -165,7 +166,7 @@ function enqueueEligibleJobs(input: {
     const initial = job.match?.score ?? job.matchScore ?? null
     let finalScore = initial
     let tailoredText: string | null = null
-    let resumeVersionId: string | null = startInput.resumeVersionId
+    let resumeVersionId: string | null = randomUUID()
     let resumeVersionName = 'Master'
     const timestamp = nowIso()
 
@@ -210,6 +211,7 @@ function enqueueEligibleJobs(input: {
       applicationId: randomUUID(),
       resumeVersionId,
       resumeVersionName,
+      sourceResumeId: startInput.resumeId,
       title: job.title,
       company: job.company,
       applicationUrl: jobApplicationUrl(job),
@@ -221,6 +223,11 @@ function enqueueEligibleJobs(input: {
       failureReason: null,
       questions: [],
       tailoredResumeText: tailoredText ?? startInput.resumeText,
+      jobDescriptionSnapshot: job.description ?? null,
+      location: job.location ?? null,
+      confirmationNumber: null,
+      confirmationText: null,
+      submittedAt: null,
       masterResumeUnchanged: masterSnapshot === startInput.masterResumeText,
       sessionId: null,
       createdAt: timestamp,
@@ -640,6 +647,19 @@ async function submitQueueItemLocked(
   item.failureReason = submitted.failureReason
   item.sessionId = null
   item.updatedAt = nowIso()
+  if (submitted.status === 'submitted') {
+    applyConfirmationToQueueItem(item, {
+      success: submitted.success !== false,
+      confirmed: submitted.confirmationDetected !== false,
+      detected: submitted.confirmationDetected !== false,
+      confirmationNumber: submitted.confirmationNumber,
+      confirmationText: submitted.confirmationText,
+      finalUrl: submitted.resultingUrl,
+    })
+    if (item.applicationStatus === 'submitted') {
+      await persistConfirmedSubmission({ userId: current.run.userId, item, config })
+    }
+  }
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()

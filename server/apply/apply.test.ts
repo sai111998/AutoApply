@@ -61,6 +61,7 @@ function job(partial: Partial<ListedAutoApplyJob> & Pick<ListedAutoApplyJob, 'id
     identityKey: `job-opportunities:${partial.id}`,
     provider: 'job-opportunities',
     providerJobId: partial.id,
+    location: 'Austin, TX',
     employmentType: 'Contract',
     c2cStatus: c2c.status,
     c2cEvidence: c2c.evidence,
@@ -274,7 +275,8 @@ describe('auto apply engine', () => {
       undefined,
       { listJobs: async () => ({ jobs: offListed }), delayMs: 0 },
     )
-    expect(off.items[0]?.resumeVersionId).toBe('resume-1')
+    expect(off.items[0]?.resumeVersionId).toBeTruthy()
+    expect(off.items[0]?.sourceResumeId).toBe('resume-1')
     expect(off.items[0]?.resumeVersionName).toBe('Master')
     const onListed = [job({ id: 'java-on', title: 'Java Engineer', description: JAVA_BACKEND_JD + '\nC2C', matchScore: 88 })]
     const on = await startAutoApply(

@@ -75,6 +75,7 @@ export interface AutoApplyQueueItem {
   applicationId: string | null
   resumeVersionId: string | null
   resumeVersionName: string
+  sourceResumeId?: string | null
   title: string
   company: string
   applicationUrl: string | null
@@ -86,6 +87,11 @@ export interface AutoApplyQueueItem {
   failureReason: string | null
   questions: AutoApplyQuestion[]
   tailoredResumeText: string | null
+  jobDescriptionSnapshot: string | null
+  location: string | null
+  confirmationNumber: string | null
+  confirmationText: string | null
+  submittedAt: string | null
   masterResumeUnchanged: boolean
   sessionId: string | null
   createdAt: string
@@ -161,6 +167,7 @@ export interface BrowserSubmitResult {
     | 'submitted'
     | 'needs_user_input'
     | 'needs_user_confirmation'
+    | 'needs_confirmation'
     | 'captcha_required'
     | 'mfa_required'
     | 'login_required'
@@ -196,6 +203,7 @@ export type ListedAutoApplyJob = Pick<
   | 'provider'
   | 'providerJobId'
   | 'employmentType'
+  | 'location'
   | 'c2cStatus'
   | 'c2cEvidence'
   | 'match'

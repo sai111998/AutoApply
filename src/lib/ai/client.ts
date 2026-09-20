@@ -559,6 +559,11 @@ export interface AutoApplyQueueItem {
   failureReason: string | null
   questions: AutoApplyQuestion[]
   tailoredResumeText?: string | null
+  jobDescriptionSnapshot?: string | null
+  location?: string | null
+  confirmationNumber?: string | null
+  confirmationText?: string | null
+  submittedAt?: string | null
   createdAt?: string
   updatedAt?: string
 }

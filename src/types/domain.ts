@@ -143,6 +143,12 @@ export interface Application {
   nextAction: string
   notes: string
   updatedAt: string
+  isConfirmedSubmission?: boolean
+  submittedJobDescriptionSnapshot?: string | null
+  confirmationNumber?: string | null
+  confirmationText?: string | null
+  submittedAt?: string | null
+  applicationUrl?: string | null
 }
 
 export interface UserPreferences {

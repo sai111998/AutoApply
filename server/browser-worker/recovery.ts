@@ -1,6 +1,7 @@
 import type { AutoApplyQueueItem } from '../apply/types'
 
 const STUCK = new Set(['opening', 'filling', 'preparing', 'tailoring', 'submitting'])
+const SAFE_RESUME = new Set(['opening', 'filling', 'preparing', 'tailoring'])
 
 export function recoverStuckBrowserJobs(
   items: AutoApplyQueueItem[],
@@ -16,13 +17,22 @@ export function recoverStuckBrowserJobs(
     const updated = Date.parse(item.updatedAt)
     const stale = !Number.isFinite(updated) || now - updated > options.stuckMs
     if (!restart && !stale) continue
+    if (previous === 'submitting') {
+      item.applicationStatus = 'needs_confirmation'
+      item.failureReason = 'Submission may have occurred before the browser worker restarted. Confirm before retrying.'
+      item.updatedAt = new Date(now).toISOString()
+      continue
+    }
+    if (SAFE_RESUME.has(previous)) {
+      item.applicationStatus = 'queued'
+      item.failureReason = null
+      item.updatedAt = new Date(now).toISOString()
+      continue
+    }
     item.applicationStatus = 'failed'
-    item.failureReason =
-      previous === 'submitting'
-        ? 'Submission could not be confirmed after the browser worker restarted.'
-        : stale
-          ? 'Application preparation timed out.'
-          : 'The browser worker restarted before this application finished.'
+    item.failureReason = stale
+      ? 'Application preparation timed out.'
+      : 'The browser worker restarted before this application finished.'
     item.updatedAt = new Date(now).toISOString()
   }
   return items
@@ -33,5 +43,10 @@ export function isRetryableBrowserJob(item: AutoApplyQueueItem): boolean {
 }
 
 export function shouldNeverAutoRetry(item: AutoApplyQueueItem): boolean {
-  return item.applicationStatus === 'submitted'
+  return (
+    item.applicationStatus === 'submitted' ||
+    item.applicationStatus === 'submitting' ||
+    item.applicationStatus === 'needs_confirmation' ||
+    item.applicationStatus === 'needs_user_confirmation'
+  )
 }

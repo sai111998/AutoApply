@@ -108,7 +108,7 @@ function createAdapter(id: ApplicationProviderId): AtsProviderAdapter {
       return true
     },
     detectConfirmation(input) {
-      return detectSubmissionConfirmation(input).detected
+      return Boolean(detectSubmissionConfirmation(input).detected)
     },
   }
 }

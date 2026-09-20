@@ -115,6 +115,12 @@ type ApplicationRow = {
   next_action: string | null
   notes: string | null
   updated_at: string
+  is_confirmed_submission?: boolean | null
+  submitted_job_description_snapshot?: string | null
+  confirmation_number?: string | null
+  confirmation_text?: string | null
+  submitted_at?: string | null
+  application_url?: string | null
 }
 
 type PreferencesRow = {
@@ -340,6 +346,7 @@ export function matchToRow(match: JobMatch) {
 }
 
 export function mapApplication(row: ApplicationRow): Application {
+  const applied = row.status === 'applied' || row.status === 'interview' || row.status === 'offer'
   return {
     id: row.id,
     userId: row.user_id,
@@ -355,6 +362,12 @@ export function mapApplication(row: ApplicationRow): Application {
     nextAction: row.next_action ?? '',
     notes: row.notes ?? '',
     updatedAt: row.updated_at,
+    isConfirmedSubmission: row.is_confirmed_submission ?? applied,
+    submittedJobDescriptionSnapshot: row.submitted_job_description_snapshot ?? null,
+    confirmationNumber: row.confirmation_number ?? null,
+    confirmationText: row.confirmation_text ?? null,
+    submittedAt: row.submitted_at ?? null,
+    applicationUrl: row.application_url ?? null,
   }
 }
 
@@ -374,6 +387,12 @@ export function applicationToRow(application: Application) {
     next_action: application.nextAction,
     notes: application.notes,
     updated_at: application.updatedAt,
+    is_confirmed_submission: application.isConfirmedSubmission ?? application.status === 'applied',
+    submitted_job_description_snapshot: application.submittedJobDescriptionSnapshot ?? null,
+    confirmation_number: application.confirmationNumber ?? null,
+    confirmation_text: application.confirmationText ?? null,
+    submitted_at: application.submittedAt ?? null,
+    application_url: application.applicationUrl ?? null,
   }
 }
 
