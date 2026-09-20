@@ -168,6 +168,29 @@ describe('automation queue', () => {
     expect(prepared.item.applicationStatus).not.toBe('submitted')
   })
 
+  it('lets a later connected extension claim a job that was marked extension_not_connected', async () => {
+    const app = createApp({ config })
+    const started = await startAutoApply(
+      config,
+      {
+        userId: 'user-1',
+        resumeId: 'resume-1',
+        resumeVersionId: 'resume-1',
+        resumeText: JAVA_RESUME_TEXT,
+        masterResumeText: JAVA_RESUME_TEXT,
+        profile,
+        config: defaultAutoApplyConfig({ maxJobs: 1, minimumMatchRate: 70, autoTailorResume: false, q: 'Java' }),
+      },
+      undefined,
+      { listJobs: async () => ({ jobs: [job({ id: 'java', title: 'Java Engineer', matchScore: 90 })] }), delayMs: 0 },
+    )
+    await prepareQueueItem(started.run.id, started.items[0].id, { profile, userId: 'user-1' }, { delayMs: 0 })
+    await request(app).post('/api/automation/extension/register').send({ userId: 'user-1', extensionId: 'test-ext' })
+    const next = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')
+    expect(next.body.item.jobTitle).toBe('Java Engineer')
+    expect(next.body.item.status).toBe('opening')
+  })
+
   it('queues Apply for the Chrome extension when it is connected', async () => {
     const app = createApp({ config })
     const started = await startAutoApply(

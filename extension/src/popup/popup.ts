@@ -1,8 +1,23 @@
 import type { PageInspectionMessage } from '../shared/messages'
+import { isJobPilotAppUrl, userIdFromStorageLike } from '../shared/page-session'
 
 function setRow(id: string, value: string) {
   const node = document.getElementById(id)
   if (node) node.textContent = value
+}
+
+function renderWorkspace(url: string, status: string) {
+  setRow('url', url)
+  setRow('title', 'JobPilot workspace')
+  setRow('provider', 'jobpilot')
+  setRow('confidence', '—')
+  setRow('application', 'JobPilot app — not an employer form')
+  setRow('fields', 'none')
+  setRow('buttons', 'none')
+  setRow('captcha', 'no')
+  setRow('mfa', 'no')
+  setRow('login', 'no')
+  setRow('session', status)
 }
 
 function render(inspection: PageInspectionMessage) {
@@ -34,30 +49,64 @@ function failed(reason: string) {
   setRow('session', 'failed')
 }
 
-function connectFromTab(tabId: number): Promise<void> {
-  return chrome.scripting
-    ?.executeScript({
-      target: { tabId },
-      func: () => ({
-        userId:
-          document.documentElement.dataset.jobpilotUserId ||
-          sessionStorage.getItem('jobpilot.userId') ||
-          (sessionStorage.getItem('jobpilot.demo') === '1' ? '11111111-1111-4111-8111-111111111111' : ''),
-        backendOrigin: document.documentElement.dataset.jobpilotBackend || sessionStorage.getItem('jobpilot.backendOrigin') || location.origin,
-      }),
+function sendRuntime(message: unknown): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      resolve((response && typeof response === 'object' ? response : {}) as Record<string, unknown>)
     })
-    .then(async (results) => {
-      const value = Array.isArray(results) ? (results[0] as { result?: { userId?: string; backendOrigin?: string } } | undefined)?.result : undefined
-      if (value?.userId) {
-        chrome.runtime.sendMessage({
-          type: 'CONNECT_SESSION',
-          userId: value.userId,
-          backendOrigin: value.backendOrigin,
-        })
+  })
+}
+
+function readTabSession(tabId: number): Promise<{ userId: string | null; backendOrigin?: string }> {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage?.(tabId, { type: 'READ_JOBPILOT_SESSION' }, (response) => {
+      const fromBridge = response && typeof response === 'object' ? (response as { userId?: string; backendOrigin?: string }) : null
+      if (fromBridge?.userId) {
+        resolve({ userId: fromBridge.userId, backendOrigin: fromBridge.backendOrigin })
+        return
       }
-      await chrome.scripting?.executeScript({ target: { tabId }, files: ['bridge.js'] }).catch(() => undefined)
+      void chrome.scripting
+        ?.executeScript({
+          target: { tabId },
+          func: () => {
+            const localValues: Record<string, string> = {}
+            for (let index = 0; index < localStorage.length; index += 1) {
+              const key = localStorage.key(index)
+              if (key) localValues[key] = localStorage.getItem(key) || ''
+            }
+            return {
+              datasetUserId: document.documentElement.dataset.jobpilotUserId || '',
+              sessionUserId: sessionStorage.getItem('jobpilot.userId') || '',
+              demo: sessionStorage.getItem('jobpilot.demo') === '1',
+              backendOrigin: document.documentElement.dataset.jobpilotBackend || sessionStorage.getItem('jobpilot.backendOrigin') || location.origin,
+              localValues,
+            }
+          },
+        })
+        .then((results) => {
+          const value = Array.isArray(results) ? (results[0]?.result as Record<string, unknown> | undefined) : undefined
+          const userId = userIdFromStorageLike({
+            datasetUserId: String(value?.datasetUserId || ''),
+            sessionUserId: String(value?.sessionUserId || ''),
+            demo: value?.demo === true,
+            localValues: (value?.localValues as Record<string, string> | undefined) ?? {},
+          })
+          resolve({ userId, backendOrigin: String(value?.backendOrigin || '') })
+        })
+        .catch(() => resolve({ userId: null }))
     })
-    .catch(() => undefined)
+  })
+}
+
+async function connectFromTab(tabId: number): Promise<Record<string, unknown>> {
+  const session = await readTabSession(tabId)
+  await chrome.scripting?.executeScript({ target: { tabId }, files: ['bridge.js'] }).catch(() => undefined)
+  if (!session.userId) return { connected: false, error: 'No JobPilot user is available on this tab. Stay signed in and reload JobPilot.' }
+  return sendRuntime({
+    type: 'CONNECT_SESSION',
+    userId: session.userId,
+    backendOrigin: session.backendOrigin,
+  })
 }
 
 function requestInspection() {
@@ -71,23 +120,31 @@ function requestInspection() {
       failed('No active tab.')
       return
     }
-    void connectFromTab(tab.id)
-    chrome.tabs.sendMessage?.(tab.id, { type: 'INSPECT_PAGE' }, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        void chrome.scripting
-          ?.executeScript({ target: { tabId: tab.id! }, files: ['content.js'] })
-          .then(() => {
-            chrome.tabs.sendMessage?.(tab.id!, { type: 'INSPECT_PAGE' }, (retry) => {
-              if (retry && typeof retry === 'object' && 'detection' in retry) render(retry as PageInspectionMessage)
-              else failed('Open a page the extension can inspect, such as the local test form.')
-            })
-          })
-          .catch(() => failed('The extension does not have access to this tab.'))
+    const url = tab.url || ''
+    void connectFromTab(tab.id).then((connection) => {
+      const status = connection.connected ? 'connected' : String(connection.error || 'not connected')
+      if (isJobPilotAppUrl(url)) {
+        renderWorkspace(url, status)
         return
       }
-      if (typeof response === 'object' && response && 'detection' in response) {
-        render(response as PageInspectionMessage)
-      }
+      chrome.tabs.sendMessage?.(tab.id!, { type: 'INSPECT_PAGE' }, (response) => {
+        if (chrome.runtime.lastError || !response) {
+          void chrome.scripting
+            ?.executeScript({ target: { tabId: tab.id! }, files: ['content.js'] })
+            .then(() => {
+              chrome.tabs.sendMessage?.(tab.id!, { type: 'INSPECT_PAGE' }, (retry) => {
+                if (retry && typeof retry === 'object' && 'detection' in retry) render(retry as PageInspectionMessage)
+                else failed(status)
+              })
+            })
+            .catch(() => failed('The extension does not have access to this tab.'))
+          return
+        }
+        if (typeof response === 'object' && response && 'detection' in response) {
+          render(response as PageInspectionMessage)
+          setRow('session', status)
+        }
+      })
     })
   })
 }
@@ -95,19 +152,30 @@ function requestInspection() {
 requestInspection()
 document.getElementById('process')?.addEventListener('click', () => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tabId = tabs[0]?.id
-    const afterConnect = () => {
-      chrome.runtime.sendMessage({ type: 'PEEK_QUEUE' }, (peeked) => {
-        const origin = peeked && typeof peeked === 'object' ? (peeked as { origin?: string }).origin : undefined
-        const continueProcess = () => chrome.runtime.sendMessage({ type: 'PROCESS_QUEUE' }, () => requestInspection())
-        if (origin && chrome.permissions?.request) {
-          chrome.permissions.request({ origins: [origin] }, () => continueProcess())
+    const tab = tabs[0]
+    const tabId = tab?.id
+    void (async () => {
+      if (tabId) {
+        const connected = await connectFromTab(tabId)
+        if (!connected.connected) {
+          renderWorkspace(tab.url || '', String(connected.error || 'not connected'))
           return
         }
-        continueProcess()
-      })
-    }
-    if (tabId) void connectFromTab(tabId).then(afterConnect)
-    else afterConnect()
+      }
+      const peeked = await sendRuntime({ type: 'PEEK_QUEUE' })
+      const origin = typeof peeked.origin === 'string' ? peeked.origin : undefined
+      if (origin && chrome.permissions?.request) {
+        await new Promise<void>((resolve) => chrome.permissions.request({ origins: [origin] }, () => resolve()))
+      }
+      const processed = await sendRuntime({ type: 'PROCESS_QUEUE' })
+      if (processed.item && typeof processed.item === 'object') {
+        const item = processed.item as { jobTitle?: string; applicationUrl?: string }
+        setRow('url', item.applicationUrl || String(processed.error || 'Queue processed'))
+        setRow('title', item.jobTitle || 'Queued application')
+        setRow('session', processed.ok ? 'opening' : String(processed.error || 'failed'))
+        return
+      }
+      requestInspection()
+    })()
   })
 })

@@ -1,26 +1,42 @@
-const FALLBACK_BACKEND = 'http://127.0.0.1:8787'
+import { backendOriginsFor, isJobPilotAppUrl, userIdFromStorageLike } from '../shared/page-session'
 
-function readSession(): { userId: string | null; backendOrigin: string } {
+function localValues(): Record<string, string> {
+  const values: Record<string, string> = {}
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (!key) continue
+      values[key] = localStorage.getItem(key) || ''
+    }
+  } catch {
+    return values
+  }
+  return values
+}
+
+export function readSession(): { userId: string | null; backendOrigin: string } {
   const root = document.documentElement.dataset
-  const userId =
-    root.jobpilotUserId?.trim() ||
-    sessionStorage.getItem('jobpilot.userId')?.trim() ||
-    (sessionStorage.getItem('jobpilot.demo') === '1' ? '11111111-1111-4111-8111-111111111111' : '') ||
-    null
-  const backendOrigin =
+  const userId = userIdFromStorageLike({
+    datasetUserId: root.jobpilotUserId,
+    sessionUserId: sessionStorage.getItem('jobpilot.userId'),
+    demo: sessionStorage.getItem('jobpilot.demo') === '1',
+    localValues: localValues(),
+  })
+  const backendOrigin = (
     root.jobpilotBackend?.trim() ||
     sessionStorage.getItem('jobpilot.backendOrigin')?.trim() ||
-    (location.port === '5173' || location.port === '4173' ? location.origin : FALLBACK_BACKEND)
-  return { userId: userId || null, backendOrigin: backendOrigin.replace(/\/$/, '') }
+    (isJobPilotAppUrl(location.href) ? location.origin : backendOriginsFor()[0])
+  ).replace(/\/$/, '')
+  return { userId, backendOrigin }
 }
 
 function connect(processQueue = false) {
-  const { userId, backendOrigin } = readSession()
-  if (!userId) return
+  const session = readSession()
+  if (!session.userId) return
   chrome.runtime.sendMessage({
     type: 'CONNECT_SESSION',
-    userId,
-    backendOrigin,
+    userId: session.userId,
+    backendOrigin: session.backendOrigin,
   })
   if (processQueue) chrome.runtime.sendMessage({ type: 'PROCESS_QUEUE' })
 }
@@ -30,3 +46,11 @@ window.addEventListener('jobpilot-extension-connect', () => connect())
 window.addEventListener('jobpilot-extension-process', () => connect(true))
 document.addEventListener('visibilitychange', () => connect())
 setInterval(() => connect(), 1_000)
+
+chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+  const type = raw && typeof raw === 'object' ? (raw as { type?: string }).type : ''
+  if (type === 'READ_JOBPILOT_SESSION') {
+    sendResponse({ type: 'JOBPILOT_SESSION', ...readSession() })
+    return
+  }
+})

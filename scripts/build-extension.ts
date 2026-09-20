@@ -49,6 +49,7 @@ const popupHtml = `<!doctype html>
         <div><dt>Login</dt><dd id="login">—</dd></div>
         <div><dt>Session</dt><dd id="session">—</dd></div>
       </dl>
+      </dl>
     </main>
     <script src="popup.js"></script>
   </body>

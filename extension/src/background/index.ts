@@ -1,13 +1,18 @@
 import { isAgentMessage } from '../shared/messages'
 import { applyBackgroundMessage, getBackgroundSession, startBackgroundSession } from './session-store'
 import { inspectApplicationUrl, originPattern } from '../shared/url'
+import { backendOriginsFor } from '../shared/page-session'
 import { nextAgentAction } from '../agent/orchestrate'
 import { AGENT_TIMEOUTS } from '../agent/timeouts'
 import type { AgentMessage } from '../shared/messages'
 import type { ApplicationDetection } from '../shared/types'
 import type { AutomationQueueItem, AuthorizedResume } from '../shared/queue'
 
-const settings = { backendOrigin: 'http://127.0.0.1:8787', userId: null as string | null }
+const settings = {
+  backendOrigin: 'http://127.0.0.1:8787',
+  userId: null as string | null,
+  lastError: null as string | null,
+}
 let processing = false
 let activeTabId: number | null = null
 let activeItemId: string | null = null
@@ -42,13 +47,29 @@ function restoreSettings(): Promise<void> {
   })
 }
 
-async function register() {
-  if (!settings.userId) return
-  await fetch(api('/api/automation/extension/register'), {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify({ userId: settings.userId, extensionId: chrome.runtime.id }),
-  }).catch(() => null)
+async function register(): Promise<boolean> {
+  if (!settings.userId) {
+    settings.lastError = 'No JobPilot user is available on this tab.'
+    return false
+  }
+  for (const origin of backendOriginsFor(settings.backendOrigin)) {
+    try {
+      const response = await fetch(`${origin.replace(/\/$/, '')}/api/automation/extension/register`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ userId: settings.userId, extensionId: chrome.runtime.id }),
+      })
+      if (!response.ok) continue
+      settings.backendOrigin = origin
+      settings.lastError = null
+      persistSettings()
+      return true
+    } catch {
+      // Try the next local API origin.
+    }
+  }
+  settings.lastError = 'The extension could not reach the JobPilot API. Keep npm run dev running and reload the extension.'
+  return false
 }
 
 async function heartbeat() {
@@ -261,15 +282,18 @@ async function processItem(item: AutomationQueueItem, reuseTabId?: number | null
   await postEvent(item, 'failed', { reason: 'Application preparation timed out.', code: 'APPLICATION_TIMEOUT' })
 }
 
-async function processQueue() {
-  if (processing || !settings.userId) return
+async function processQueue(): Promise<{ ok: boolean; item?: AutomationQueueItem | null; error?: string }> {
+  if (!settings.userId) return { ok: false, error: settings.lastError || 'No JobPilot user is connected.' }
+  if (processing) return { ok: true }
   processing = true
   try {
-    await register()
+    const connected = await register()
+    if (!connected) return { ok: false, error: settings.lastError || 'The JobPilot extension is not connected.' }
     const item = await fetchQueueItem(true)
-    if (!item) return
+    if (!item) return { ok: true, item: null, error: 'No queued application is waiting.' }
     const reuse = activeItemId === item.itemId ? activeTabId : null
     await processItem(item, reuse)
+    return { ok: true, item }
   } finally {
     processing = false
   }
@@ -292,17 +316,23 @@ function reply(sendResponse: (value: unknown) => void, value: unknown) {
 async function handleMessage(raw: unknown): Promise<unknown> {
   if (
     !isAgentMessage(raw) &&
-    !(raw && typeof raw === 'object' && ['PROCESS_QUEUE', 'PEEK_QUEUE'].includes(String((raw as { type?: string }).type)))
+    !(raw && typeof raw === 'object' && ['PROCESS_QUEUE', 'PEEK_QUEUE', 'EXTENSION_STATUS'].includes(String((raw as { type?: string }).type)))
   ) {
     return { ok: false }
   }
-  const message = raw as AgentMessage | { type: 'PROCESS_QUEUE' | 'PEEK_QUEUE' }
+  const message = raw as AgentMessage | { type: 'PROCESS_QUEUE' | 'PEEK_QUEUE' | 'EXTENSION_STATUS' }
   if (message.type === 'CONNECT_SESSION') {
     settings.userId = message.userId
     if (message.backendOrigin) settings.backendOrigin = message.backendOrigin
     persistSettings()
-    await register()
-    return { ok: true, userId: settings.userId, connected: true }
+    const connected = await register()
+    return {
+      ok: connected,
+      userId: settings.userId,
+      connected,
+      error: settings.lastError,
+      backendOrigin: settings.backendOrigin,
+    }
   }
   if (message.type === 'START_APPLICATION') {
     const session = startBackgroundSession(message)
@@ -316,8 +346,22 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     return { ok: true, ...(await peekQueueOrigin()) }
   }
   if (message.type === 'PROCESS_QUEUE') {
-    await processQueue()
-    return { ok: true, session: getBackgroundSession() }
+    const result = await processQueue()
+    return {
+      ...result,
+      session: getBackgroundSession(),
+      userId: settings.userId,
+      connected: Boolean(settings.userId) && !settings.lastError,
+    }
+  }
+  if (message.type === 'EXTENSION_STATUS') {
+    return {
+      ok: true,
+      userId: settings.userId,
+      connected: Boolean(settings.userId) && !settings.lastError,
+      backendOrigin: settings.backendOrigin,
+      error: settings.lastError,
+    }
   }
   if (message.type === 'INSPECT_PAGE') return { ok: true, session: getBackgroundSession() }
   const session = applyBackgroundMessage(message as AgentMessage)
