@@ -7,8 +7,12 @@ import {
   type BrowserSubmitContext,
   type ExternalSubmissionResult,
 } from './confirm'
+import { clickApplyControl, clickNextControl } from './apply-action'
+import { saveApplyDebugArtifact } from './debug-capture'
 import { inspectApplicationPage } from './detect'
 import { ApplyError, isApplyError } from './errors'
+import { snapshotFromHtml, type PageSnapshot } from './page-snapshot'
+import { analyzeApplicationSurface, mergeSurfaceDocuments, type ApplicationAnalysis } from './surface'
 import {
   chromiumLaunchOptions,
   detectAutomationRuntime,
@@ -38,15 +42,27 @@ type PlaywrightLocator = PlaywrightLocatorHandle & {
   first: () => PlaywrightLocatorHandle
 }
 
+export type PlaywrightFrame = {
+  url?: (() => string) | string
+  content?: () => Promise<string>
+  locator?: (selector: string) => PlaywrightLocator
+}
+
 export type PlaywrightPage = {
   goto: (url: string, options?: { waitUntil?: string; timeout?: number }) => Promise<unknown>
   content: () => Promise<string>
   url?: (() => string) | string
   title?: () => Promise<string>
   waitForLoadState?: (state?: string, options?: { timeout?: number }) => Promise<unknown>
+  waitForTimeout?: (ms: number) => Promise<unknown>
+  waitForURL?: (url: string | RegExp | ((value: URL) => boolean), options?: { timeout?: number }) => Promise<unknown>
   fill?: (selector: string, value: string) => Promise<unknown>
   click?: (selector: string) => Promise<unknown>
   locator?: (selector: string) => PlaywrightLocator
+  getByRole?: (role: 'button' | 'link', options?: { name?: string | RegExp }) => PlaywrightLocator
+  frames?: () => PlaywrightFrame[]
+  screenshot?: (options?: { path?: string; fullPage?: boolean }) => Promise<unknown>
+  evaluate?: (fn: () => unknown) => Promise<unknown>
 }
 
 type PlaywrightBrowser = {
@@ -166,8 +182,42 @@ async function tryUploadResume(page: PlaywrightPage | undefined, resumeText: str
 }
 
 async function fillKnownFields(page: PlaywrightPage | undefined, input: BrowserPrepareInput, timeouts: ApplyTimeouts) {
-  await tryFill(page, ['input[name="name"]', 'input[autocomplete="name"]', 'input[name="full_name"]'], input.profile.fullName, timeouts)
-  await tryFill(page, ['input[type="email"]', 'input[name="email"]', 'input[autocomplete="email"]'], input.profile.email, timeouts)
+  const [firstName, ...lastParts] = input.profile.fullName.trim().split(/\s+/)
+  const lastName = lastParts.join(' ')
+  await tryFill(
+    page,
+    ['input[name="name"]', 'input[autocomplete="name"]', 'input[name="full_name"]', 'input[name="fullName"]'],
+    input.profile.fullName,
+    timeouts,
+  )
+  if (firstName) {
+    await tryFill(
+      page,
+      ['input[name="firstName"]', 'input[name="first_name"]', 'input[autocomplete="given-name"]', 'input[id*="first" i]'],
+      firstName,
+      timeouts,
+    )
+  }
+  if (lastName) {
+    await tryFill(
+      page,
+      ['input[name="lastName"]', 'input[name="last_name"]', 'input[autocomplete="family-name"]', 'input[id*="last" i]'],
+      lastName,
+      timeouts,
+    )
+  }
+  await tryFill(
+    page,
+    [
+      'input[type="email"]',
+      'input[name="email"]',
+      'input[name="primary-email"]',
+      'input[autocomplete="email"]',
+      'input[id*="email" i]',
+    ],
+    input.profile.email,
+    timeouts,
+  )
   await tryFill(
     page,
     ['input[name="location"]', 'input[name="city"]', 'input[autocomplete="address-level2"]'],
@@ -175,6 +225,128 @@ async function fillKnownFields(page: PlaywrightPage | undefined, input: BrowserP
     timeouts,
   )
   await tryUploadResume(page, input.resumeText, timeouts)
+}
+
+function sanitizeLoggedUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return value
+  }
+}
+
+function logEmployerSnapshot(initialUrl: string, snapshot: PageSnapshot) {
+  console.info(`[AutoApply] Employer URL: ${sanitizeLoggedUrl(initialUrl)}`)
+  console.info(`[AutoApply] Final URL after redirects: ${sanitizeLoggedUrl(snapshot.finalUrl || snapshot.url)}`)
+  console.info(`[AutoApply] Hostname: ${snapshot.hostname || 'unknown'}`)
+  console.info(`[AutoApply] Page title: ${snapshot.title || 'unknown'}`)
+  console.info(`[AutoApply] Main heading: ${snapshot.heading || 'unknown'}`)
+  console.info(`[AutoApply] Number of forms: ${snapshot.forms}`)
+  console.info(`[AutoApply] Number of inputs: ${snapshot.inputs}`)
+  console.info(`[AutoApply] Number of buttons: ${snapshot.buttons}`)
+  console.info(`[AutoApply] Number of iframes: ${snapshot.iframes}`)
+  for (const [label, present] of Object.entries(snapshot.keywords)) {
+    console.info(`[AutoApply] ${label}: ${present ? 'yes' : 'no'}`)
+  }
+}
+
+async function documentsFromPage(page: PlaywrightPage, fallbackUrl: string): Promise<Array<{ html: string; url: string; inIframe?: boolean }>> {
+  const currentUrl = pageUrl(page, fallbackUrl)
+  const html = await page.content()
+  const documents = [{ html, url: currentUrl, inIframe: false }]
+  for (const frame of page.frames?.() ?? []) {
+    const frameUrl = typeof frame.url === 'function' ? frame.url() : frame.url || ''
+    if (/hcaptcha|recaptcha|turnstile|about:blank/i.test(frameUrl)) continue
+    try {
+      const frameHtml = (await frame.content?.()) ?? ''
+      if (frameHtml.trim().length > 40) documents.push({ html: frameHtml, url: frameUrl, inIframe: true })
+    } catch {
+      // Cross-origin frames are not readable.
+    }
+  }
+  return documents
+}
+
+async function analyzePage(page: PlaywrightPage, fallbackUrl: string): Promise<ApplicationAnalysis> {
+  const documents = await documentsFromPage(page, fallbackUrl)
+  const analysis = mergeSurfaceDocuments(documents)
+  analysis.snapshot.finalUrl = pageUrl(page, fallbackUrl)
+  analysis.snapshot.url = fallbackUrl
+  return analysis
+}
+
+async function waitForRenderableSurface(
+  page: PlaywrightPage,
+  fallbackUrl: string,
+  spaWaitMs: number,
+  options: { acceptApplyControl?: boolean } = {},
+): Promise<ApplicationAnalysis> {
+  const deadline = Date.now() + spaWaitMs
+  let last = await analyzePage(page, fallbackUrl)
+  while (Date.now() < deadline) {
+    if (last.kind === 'application' || last.kind === 'blocked') return last
+    if (options.acceptApplyControl !== false && last.hasApplyControl) return last
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    last = await analyzePage(page, fallbackUrl)
+  }
+  return last
+}
+
+async function waitAfterApplyClick(
+  page: PlaywrightPage,
+  fallbackUrl: string,
+  previousUrl: string,
+  spaWaitMs: number,
+): Promise<ApplicationAnalysis> {
+  if (page.waitForURL) {
+    try {
+      await page.waitForURL(
+        (value) => value.href !== previousUrl || /\/apply\b/i.test(value.pathname),
+        { timeout: spaWaitMs },
+      )
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 1_200))
+    }
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return waitForRenderableSurface(page, fallbackUrl, spaWaitMs, { acceptApplyControl: false })
+}
+
+function resultFromAnalysis(input: BrowserPrepareInput, analysis: ApplicationAnalysis): BrowserPrepareResult {
+  if (analysis.kind === 'blocked') {
+    return {
+      status: analysis.inspection.status,
+      questions: [],
+      failureReason: analysis.failureReason,
+      sessionId: null,
+    }
+  }
+  if (analysis.kind !== 'application') {
+    return {
+      status: 'failed',
+      questions: [],
+      failureReason: analysis.failureReason ?? 'The employer application form could not be found.',
+      sessionId: null,
+    }
+  }
+  const resolved = resolveApplicationQuestions(analysis.inspection.questions, input.profile)
+  if (resolved.unknown.length) {
+    return {
+      status: 'needs_user_input',
+      questions: [...resolved.answered, ...resolved.unknown],
+      failureReason: null,
+      sessionId: null,
+    }
+  }
+  const sessionId = `filled:${analysis.snapshot.finalUrl || input.url}`
+  return {
+    status: 'ready_for_submission',
+    questions: resolved.answered,
+    failureReason: null,
+    sessionId,
+  }
 }
 
 async function closeSession(session: LiveSession | undefined) {
@@ -445,24 +617,54 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
           'The application form did not respond within the allowed time.',
         )
       } catch {
-        // Navigation already committed. Continue with the HTML that is available.
+        // Navigation already committed. Continue waiting for the rendered surface.
       }
-      const pageHtml = await bounded(
-        page.content(),
-        this.timeouts.selectorMs,
-        'BROWSER_SELECTOR_TIMEOUT',
-        'The application form did not respond within the allowed time.',
-      )
-      logAutoApplyStep(10, 'Application form detection started')
-      const prepared = this.fromHtml(input, pageHtml)
-      logAutoApplyStep(11, 'Application form detected', { applicationStatus: prepared.status })
+      let analysis = await waitForRenderableSurface(page, input.url, this.timeouts.spaWaitMs)
+      analysis.snapshot.finalUrl = pageUrl(page, input.url)
+      logEmployerSnapshot(input.url, analysis.snapshot)
+      logAutoApplyStep(10, 'Application form detection started', {
+        provider: analysis.provider,
+        kind: analysis.kind,
+        code: analysis.code,
+      })
+      if (analysis.kind === 'job_details' && analysis.hasApplyControl) {
+        const clicked = await clickApplyControl(page, { url: pageUrl(page, input.url), html: analysis.snapshot.html })
+        console.info(`[AutoApply] Apply control: ${clicked.clicked ? clicked.label || 'clicked' : 'not found'}`)
+        if (clicked.clicked) {
+          const previousUrl = pageUrl(page, input.url)
+          analysis = await waitAfterApplyClick(page, input.url, previousUrl, this.timeouts.spaWaitMs)
+          analysis.snapshot.finalUrl = pageUrl(page, input.url)
+          logEmployerSnapshot(input.url, analysis.snapshot)
+        }
+      }
+      if (analysis.kind === 'application' && analysis.hasNext && analysis.inspection.status === 'filling') {
+        await fillKnownFields(page, input, this.timeouts)
+        if (!analysis.hasFinalSubmit) {
+          const advanced = await clickNextControl(page)
+          if (advanced.clicked) {
+            console.info(`[AutoApply] Next control: ${advanced.label}`)
+            await new Promise((resolve) => setTimeout(resolve, 800))
+            analysis = await analyzePage(page, input.url)
+            logEmployerSnapshot(input.url, analysis.snapshot)
+          }
+        }
+      }
+      const prepared = resultFromAnalysis(input, analysis)
+      logAutoApplyStep(11, 'Application form detected', {
+        applicationStatus: prepared.status,
+        provider: analysis.provider,
+        fields: analysis.fields,
+        resumeUpload: analysis.hasResumeUpload,
+        code: analysis.code,
+      })
       if (prepared.status !== 'ready_for_submission') {
+        if (prepared.status === 'failed') await saveApplyDebugArtifact(page, analysis.code)
         await browser.close()
         return prepared
       }
       await fillKnownFields(page, input, this.timeouts)
       const sessionId = prepared.sessionId || `filled:${input.url}`
-      sessions.set(sessionId, { url: input.url, filled: true, browser, page })
+      sessions.set(sessionId, { url: analysis.snapshot.finalUrl || input.url, filled: true, browser, page })
       return { ...prepared, sessionId }
     } catch (error) {
       await closeSession({ url: input.url, filled: false, browser })
@@ -515,45 +717,25 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
   }
 
   private fromHtml(input: BrowserPrepareInput, html: string): BrowserPrepareResult {
-    const inspection = inspectApplicationPage(html)
-    if (inspection.status === 'captcha_required' || inspection.status === 'mfa_required' || inspection.status === 'blocked' || inspection.status === 'login_required' || inspection.status === 'automation_blocked') {
-      return {
-        status: inspection.status,
-        questions: [],
-        failureReason: inspection.failureReason,
-        sessionId: null,
-      }
+    const analysis = analyzeApplicationSurface(html, { url: input.url })
+    logEmployerSnapshot(input.url, snapshotFromHtml(html, input.url))
+    logAutoApplyStep(10, 'Application form detection started', {
+      provider: analysis.provider,
+      kind: analysis.kind,
+      code: analysis.code,
+    })
+    const prepared = resultFromAnalysis(input, analysis)
+    if (prepared.status === 'ready_for_submission' && prepared.sessionId) {
+      sessions.set(prepared.sessionId, { url: input.url, filled: true })
     }
-    if (
-      !inspection.hasSubmit &&
-      !inspection.hasFileInput &&
-      inspection.mappedFields.length === 0 &&
-      inspection.questions.length === 0
-    ) {
-      return {
-        status: 'failed',
-        questions: [],
-        failureReason: 'The employer application form could not be found.',
-        sessionId: null,
-      }
-    }
-    const resolved = resolveApplicationQuestions(inspection.questions, input.profile)
-    if (resolved.unknown.length) {
-      return {
-        status: 'needs_user_input',
-        questions: [...resolved.answered, ...resolved.unknown],
-        failureReason: null,
-        sessionId: null,
-      }
-    }
-    const sessionId = `filled:${input.url}`
-    sessions.set(sessionId, { url: input.url, filled: true })
-    return {
-      status: 'ready_for_submission',
-      questions: resolved.answered,
-      failureReason: null,
-      sessionId,
-    }
+    logAutoApplyStep(11, 'Application form detected', {
+      applicationStatus: prepared.status,
+      provider: analysis.provider,
+      fields: analysis.fields,
+      resumeUpload: analysis.hasResumeUpload,
+      code: analysis.code,
+    })
+    return prepared
   }
 }
 

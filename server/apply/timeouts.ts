@@ -18,6 +18,7 @@ export interface ApplyTimeouts {
   prepareMs: number
   lockMs: number
   stuckMs: number
+  spaWaitMs: number
 }
 
 export const DEFAULT_APPLY_TIMEOUTS: ApplyTimeouts = {
@@ -29,6 +30,7 @@ export const DEFAULT_APPLY_TIMEOUTS: ApplyTimeouts = {
   prepareMs: PREPARE_TIMEOUT_MS,
   lockMs: APPLY_LOCK_TIMEOUT_MS,
   stuckMs: STUCK_PREPARATION_MS,
+  spaWaitMs: 10_000,
 }
 
 export function mergeApplyTimeouts(partial: Partial<ApplyTimeouts> = {}): ApplyTimeouts {

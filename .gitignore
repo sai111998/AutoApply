@@ -28,3 +28,6 @@ dist-ssr
 
 # TypeScript
 *.tsbuildinfo
+
+# Local Auto Apply debug captures
+.auto-apply-debug/
