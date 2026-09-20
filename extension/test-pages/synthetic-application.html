@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>JobPilot Synthetic Application</title>
+  </head>
+  <body>
+    <h1>Job application form</h1>
+    <form id="application-form">
+      <label for="first-name">First Name</label>
+      <input id="first-name" name="first_name" autocomplete="given-name" placeholder="First name" />
+
+      <label for="last-name">Last Name</label>
+      <input id="last-name" name="last_name" autocomplete="family-name" placeholder="Last name" />
+
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" autocomplete="email" placeholder="Email" />
+
+      <label for="phone">Phone</label>
+      <input id="phone" type="tel" name="phone" autocomplete="tel" placeholder="Phone" />
+
+      <label for="resume">Upload Resume</label>
+      <input id="resume" type="file" name="resume" aria-label="Upload Resume" />
+
+      <label for="linkedin">LinkedIn</label>
+      <input id="linkedin" name="linkedin" placeholder="LinkedIn" />
+
+      <label for="work-auth">Are you legally authorized to work in the United States?</label>
+      <select id="work-auth" name="work_authorization">
+        <option value="">Select</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+
+      <button type="button">Next</button>
+      <button type="submit">Submit Application</button>
+    </form>
+  </body>
+</html>

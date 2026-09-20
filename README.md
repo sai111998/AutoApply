@@ -129,13 +129,31 @@ The model is instructed to use **only** the supplied resume text. It must not in
 | --- | --- |
 | `npm run dev` | API + Vite |
 | `npm test` | Backend analysis service and API tests |
-| `npm run build` | Typecheck and frontend bundle |
+| `npm run build` | Typecheck, frontend bundle, and Chrome extension |
+| `npm run build:extension` | Build the unpacked Chrome extension into `dist/extension` |
 | `npm run lint` | ESLint |
 | `npm run db:apply` | Apply `001_initial_schema.sql` to the linked Supabase project |
 | `npm run db:auth-flow` | Sign up → login → create/read/update profile against live Supabase |
 
+## Chrome extension
+
+The JobPilot Application Agent is a Manifest V3 Chrome extension that inspects employer application pages in the user's browser. This milestone detects the page, provider, and fields. It does **not** submit applications.
+
+```bash
+npm run build:extension
+```
+
+Then in Chrome:
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select `dist/extension`
+
+A local synthetic form is served at `http://127.0.0.1:8787/extension/test/application.html` when the API is running. See `extension/README.md`.
+
 ## Out of scope
 
 - Automatic job submission
-- Browser automation
 - Parsing PDF/DOCX bytes in the browser (paste resume text, or use demo parsed text)
+

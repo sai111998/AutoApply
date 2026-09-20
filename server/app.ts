@@ -37,6 +37,7 @@ import { tailorResume, validateSubmittedResume } from './tailor/engine'
 import { parseTailoredResume } from './tailor/parse'
 import { renderResumePdf } from './tailor/pdf'
 import { HttpError } from './types'
+import { registerExtensionRoutes } from './extension/routes'
 
 function sendApplyError(res: Response, error: unknown, fallback: string) {
   if (isApplyError(error)) {
@@ -73,6 +74,7 @@ export function createApp(options: AppOptions): Express {
 
   app.use(cors())
   app.use(express.json({ limit: '2mb' }))
+  registerExtensionRoutes(app, options.config)
 
   app.get('/api/health', (_req, res) => {
     res.json({
