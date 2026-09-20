@@ -75,6 +75,8 @@ export interface PageInspectionMessage {
   type: 'PAGE_INSPECTION'
   url: string
   title: string
+  hostname?: string
+  pageKind?: string | null
   detection: ApplicationDetection
   session: ExtensionSession | null
 }

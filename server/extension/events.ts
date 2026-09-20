@@ -4,6 +4,7 @@ import { detectSubmissionConfirmation } from '../apply/confirm'
 
 export const EVENT_STATUS: Record<AutomationEvent['type'], AutoApplyQueueStatus> = {
   opening: 'opening',
+  employer_page_opened: 'opening',
   application_detected: 'filling',
   provider_detected: 'filling',
   filling: 'filling',

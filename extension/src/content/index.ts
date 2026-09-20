@@ -1,5 +1,12 @@
 import { applicationDetector } from '../detection/application-detector'
 import { fillSelectorsFor, isFinalSubmitText, isLegitimateApplyText, isLegitimateNextText } from '../agent/fill'
+import { isSyntheticExtensionTestUrl } from '../shared/url'
+import {
+  JOBPILOT_INTERNAL_PAGE,
+  emptyApplicationDetection,
+  jobpilotInternalInspection,
+  shouldIgnoreJobPilotPage,
+} from '../shared/tab-session'
 import type { AgentProfileValues } from '../shared/queue'
 
 function isVisible(node: Element): boolean {
@@ -51,8 +58,20 @@ async function uploadResume(contentBase64: string, fileName: string, mimeType: s
   return true
 }
 
+function pageUrl() {
+  return location.href
+}
+
+function hostnameOf(url: string) {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return location.hostname
+  }
+}
+
 function snapshot() {
-  const url = location.href
+  const url = pageUrl()
   const title = document.title
   const html = document.documentElement.outerHTML
   const nodes = [...document.querySelectorAll('button, a, [role="button"], input[type="submit"], input[type="button"]')]
@@ -62,7 +81,9 @@ function snapshot() {
   return {
     url,
     title,
+    hostname: hostnameOf(url),
     html,
+    pageKind: null as string | null,
     detection: applicationDetector({ html, url, title }),
     visible: {
       apply: visibleLabels.some(isLegitimateApplyText),
@@ -72,14 +93,60 @@ function snapshot() {
   }
 }
 
+function ignoredSnapshot(reason: string) {
+  const url = pageUrl()
+  if (reason === JOBPILOT_INTERNAL_PAGE || shouldIgnoreJobPilotPage(url)) {
+    return { type: 'PAGE_INSPECTION', html: '', session: null, ...jobpilotInternalInspection(url) }
+  }
+  return {
+    type: 'PAGE_INSPECTION',
+    url,
+    title: document.title,
+    hostname: hostnameOf(url),
+    html: '',
+    pageKind: reason,
+    detection: emptyApplicationDetection({ signals: [reason] }),
+    visible: { apply: false, next: false, submit: false },
+    session: null,
+  }
+}
+
+function canInspectThisTab(): Promise<{ run: boolean; reason: string | null }> {
+  const url = pageUrl()
+  if (shouldIgnoreJobPilotPage(url)) return Promise.resolve({ run: false, reason: JOBPILOT_INTERNAL_PAGE })
+  try {
+    if (isSyntheticExtensionTestUrl(new URL(url))) return Promise.resolve({ run: true, reason: null })
+  } catch {
+    // Fall through to the session check.
+  }
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'CAN_INSPECT_TAB' }, (response) => {
+      const allowed = Boolean(response && typeof response === 'object' && (response as { run?: boolean }).run)
+      const reason = response && typeof response === 'object' ? String((response as { reason?: string }).reason || 'NO_ACTIVE_SESSION') : 'NO_ACTIVE_SESSION'
+      resolve({ run: allowed, reason: allowed ? null : reason })
+    })
+  })
+}
+
 chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   const message = raw && typeof raw === 'object' ? (raw as { type?: string } & Record<string, unknown>) : {}
   if (message.type === 'INSPECT_PAGE') {
-    sendResponse({ type: 'PAGE_INSPECTION', ...snapshot(), session: null })
-    return
+    void canInspectThisTab().then((allowed) => {
+      if (!allowed.run) {
+        sendResponse(ignoredSnapshot(allowed.reason || JOBPILOT_INTERNAL_PAGE))
+        return
+      }
+      sendResponse({ type: 'PAGE_INSPECTION', ...snapshot(), session: null })
+    })
+    return true
   }
   if (message.type === 'RUN_AGENT_STEP') {
     void (async () => {
+      const allowed = await canInspectThisTab()
+      if (!allowed.run) {
+        sendResponse({ ok: false, filled: [], uploaded: false, clicked: { clicked: false, label: null }, ...ignoredSnapshot(allowed.reason || JOBPILOT_INTERNAL_PAGE) })
+        return
+      }
       const values = (message.values ?? {}) as Partial<AgentProfileValues>
       const filled = fillValues(values)
       let uploaded = false

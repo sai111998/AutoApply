@@ -115,9 +115,36 @@ describe('automation queue', () => {
     expect(registered.body.connected).toBe(true)
     const next = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')
     expect(next.body.item.jobTitle).toBe('Java Engineer')
-    expect(next.body.item.applicationUrl).toMatch(/^https:\/\//)
+    expect(next.body.item.applicationUrl).toBe('https://jobs.example.com/java')
+    expect(next.body.item.applicationUrl).not.toMatch(/localhost|127\.0\.0\.1/)
+    expect(next.body.item.applicationId).toBeTruthy()
+    expect(next.body.item.jobId).toBe('java')
+    expect(next.body.item.company).toBe('Acme')
+    expect(next.body.item.resumeVersionId).toBe('resume-1')
     expect(JSON.stringify(next.body)).not.toMatch(/jordan\.hale@example.com|SERVICE_ROLE/)
     expect(next.body.item.status).toBe('opening')
+    const opened = await request(app).post('/api/automation/events').send({
+      userId: 'user-1',
+      itemId: next.body.item.itemId,
+      applicationId: next.body.item.applicationId,
+      type: 'employer_page_opened',
+      currentUrl: next.body.item.applicationUrl,
+    })
+    expect(opened.body.item.applicationStatus).toBe('opening')
+    const detected = await request(app).post('/api/automation/events').send({
+      userId: 'user-1',
+      itemId: next.body.item.itemId,
+      type: 'application_detected',
+      currentUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+    })
+    expect(detected.body.item.applicationStatus).toBe('filling')
+    const provider = await request(app).post('/api/automation/events').send({
+      userId: 'user-1',
+      itemId: next.body.item.itemId,
+      type: 'provider_detected',
+      provider: 'greenhouse',
+    })
+    expect(provider.body.item.applicationStatus).toBe('filling')
     const filling = await request(app).post('/api/automation/events').send({
       userId: 'user-1',
       itemId: next.body.item.itemId,
@@ -349,6 +376,34 @@ describe('automation queue', () => {
       type: 'cancelled',
     })
     expect(cancelled.body.item.applicationStatus).toBe('cancelled')
+  })
+
+  it('rejects a JobPilot localhost URL instead of opening it as an employer page', async () => {
+    const app = createApp({ config })
+    const started = await startAutoApply(
+      config,
+      {
+        userId: 'user-1',
+        resumeId: 'resume-1',
+        resumeVersionId: 'resume-1',
+        resumeText: JAVA_RESUME_TEXT,
+        masterResumeText: JAVA_RESUME_TEXT,
+        profile,
+        config: defaultAutoApplyConfig({ maxJobs: 1, minimumMatchRate: 70, autoTailorResume: false, q: 'Java' }),
+      },
+      undefined,
+      {
+        listJobs: async () => ({
+          jobs: [job({ id: 'local', title: 'Java Local', matchScore: 90, url: 'http://localhost:5173/jobs', jobUrl: 'http://localhost:5173/jobs' })],
+        }),
+        delayMs: 0,
+      },
+    )
+    expect(started.items).toHaveLength(1)
+    expect(started.items[0].applicationUrl).toBe('http://localhost:5173/jobs')
+    await request(app).post('/api/automation/extension/register').send({ userId: 'user-1' })
+    const next = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')
+    expect(next.body.item).toBeNull()
   })
 
   it('rejects an invalid application URL instead of opening it', async () => {

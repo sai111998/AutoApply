@@ -44,6 +44,9 @@ describe('browser agent orchestration', () => {
 
   it('rejects invalid application URLs', () => {
     expect(inspectApplicationUrl('javascript:alert(1)').ok).toBe(false)
+    expect(inspectApplicationUrl('chrome://extensions').ok).toBe(false)
+    expect(inspectApplicationUrl('file:///tmp/apply.html').ok).toBe(false)
+    expect(inspectApplicationUrl('http://localhost:5173/jobs').ok).toBe(false)
     expect(inspectApplicationUrl('https://jobs.example.com/apply').ok).toBe(true)
   })
 

@@ -1,5 +1,6 @@
 import type { PageInspectionMessage } from '../shared/messages'
 import { isJobPilotAppUrl, userIdFromStorageLike } from '../shared/page-session'
+import { JOBPILOT_INTERNAL_PAGE, jobpilotInternalInspection, type EmployerPageInspection } from '../shared/tab-session'
 
 function setRow(id: string, value: string) {
   const node = document.getElementById(id)
@@ -7,11 +8,12 @@ function setRow(id: string, value: string) {
 }
 
 function renderWorkspace(url: string, status: string) {
-  setRow('url', url)
+  const inspection = jobpilotInternalInspection(url)
+  setRow('url', inspection.url)
   setRow('title', 'JobPilot workspace')
   setRow('provider', 'jobpilot')
   setRow('confidence', '—')
-  setRow('application', 'JobPilot app — not an employer form')
+  setRow('application', JOBPILOT_INTERNAL_PAGE)
   setRow('fields', 'none')
   setRow('buttons', 'none')
   setRow('captcha', 'no')
@@ -20,10 +22,14 @@ function renderWorkspace(url: string, status: string) {
   setRow('session', status)
 }
 
-function render(inspection: PageInspectionMessage) {
+function render(inspection: PageInspectionMessage | EmployerPageInspection, status?: string) {
+  if ('pageKind' in inspection && inspection.pageKind === JOBPILOT_INTERNAL_PAGE) {
+    renderWorkspace(inspection.url, status || 'connected')
+    return
+  }
   const detection = inspection.detection
   setRow('url', inspection.url)
-  setRow('title', inspection.title)
+  setRow('title', 'title' in inspection ? inspection.title : '')
   setRow('provider', detection.provider)
   setRow('confidence', `${Math.round(detection.confidence * 100)}%`)
   setRow('application', detection.isApplicationPage ? 'yes' : detection.isJobDetailsPage ? 'job details' : 'no')
@@ -32,7 +38,12 @@ function render(inspection: PageInspectionMessage) {
   setRow('captcha', detection.challenges.captcha ? 'yes' : 'no')
   setRow('mfa', detection.challenges.mfa ? 'yes' : 'no')
   setRow('login', detection.challenges.login ? 'yes' : 'no')
-  setRow('session', inspection.session?.state ?? 'idle')
+  const sessionState =
+    status ||
+    ('session' in inspection && inspection.session && typeof inspection.session === 'object'
+      ? (inspection.session as { state?: string }).state
+      : undefined)
+  setRow('session', sessionState ?? 'idle')
 }
 
 function failed(reason: string) {
@@ -53,6 +64,55 @@ function sendRuntime(message: unknown): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (response) => {
       resolve((response && typeof response === 'object' ? response : {}) as Record<string, unknown>)
+    })
+  })
+}
+
+function queryFocusedTab(): Promise<{ id?: number; url?: string; title?: string } | null> {
+  return new Promise((resolve) => {
+    const finish = (tabs: Array<{ id?: number; url?: string; title?: string }>) => resolve(tabs[0] ?? null)
+    if (!chrome.tabs?.query) {
+      resolve(null)
+      return
+    }
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        finish(tabs)
+        return
+      }
+      chrome.tabs.query({ active: true, currentWindow: true }, finish)
+    })
+  })
+}
+
+function resolveTabUrl(tab: { id?: number; url?: string } | null): Promise<string> {
+  if (tab?.url) return Promise.resolve(tab.url)
+  if (!tab?.id || !chrome.scripting?.executeScript) return Promise.resolve('')
+  return chrome.scripting
+    .executeScript({
+      target: { tabId: tab.id },
+      func: () => location.href,
+    })
+    .then((results) => String(Array.isArray(results) ? results[0]?.result || '' : ''))
+    .catch(() => '')
+}
+
+function inspectEmployerTab(tabId: number): Promise<PageInspectionMessage | null> {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage?.(tabId, { type: 'INSPECT_PAGE' }, (response) => {
+      if (response && typeof response === 'object' && 'detection' in response) {
+        resolve(response as PageInspectionMessage)
+        return
+      }
+      void chrome.scripting
+        ?.executeScript({ target: { tabId }, files: ['content.js'] })
+        .then(() => {
+          chrome.tabs.sendMessage?.(tabId, { type: 'INSPECT_PAGE' }, (retry) => {
+            if (retry && typeof retry === 'object' && 'detection' in retry) resolve(retry as PageInspectionMessage)
+            else resolve(null)
+          })
+        })
+        .catch(() => resolve(null))
     })
   })
 }
@@ -109,73 +169,84 @@ async function connectFromTab(tabId: number): Promise<Record<string, unknown>> {
   })
 }
 
-function requestInspection() {
-  if (!chrome.tabs?.query) {
-    failed('This popup must run inside the JobPilot extension.')
+async function showInspection() {
+  const stored = await sendRuntime({ type: 'GET_EMPLOYER_SESSION' })
+  const employerSession = stored.employerSession as { tabId?: number; currentUrl?: string; status?: string } | undefined
+  const storedInspection = stored.inspection as EmployerPageInspection | undefined
+  if (storedInspection && storedInspection.pageKind !== JOBPILOT_INTERNAL_PAGE) {
+    render(storedInspection, employerSession?.status || 'opening')
+    if (employerSession?.tabId) {
+      const live = await inspectEmployerTab(employerSession.tabId)
+      if (live) render(live, employerSession.status)
+    }
     return
   }
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0]
-    if (!tab?.id) {
-      failed('No active tab.')
+  const tab = await queryFocusedTab()
+  const url = await resolveTabUrl(tab)
+  if (tab?.id) {
+    const connection = await connectFromTab(tab.id)
+    const status = connection.connected ? 'connected' : String(connection.error || 'not connected')
+    if (isJobPilotAppUrl(url) || isJobPilotAppUrl(tab.url)) {
+      renderWorkspace(url || tab.url || 'http://localhost:5173/jobs', status)
       return
     }
-    const url = tab.url || ''
-    void connectFromTab(tab.id).then((connection) => {
-      const status = connection.connected ? 'connected' : String(connection.error || 'not connected')
-      if (isJobPilotAppUrl(url)) {
-        renderWorkspace(url, status)
-        return
-      }
-      chrome.tabs.sendMessage?.(tab.id!, { type: 'INSPECT_PAGE' }, (response) => {
-        if (chrome.runtime.lastError || !response) {
-          void chrome.scripting
-            ?.executeScript({ target: { tabId: tab.id! }, files: ['content.js'] })
-            .then(() => {
-              chrome.tabs.sendMessage?.(tab.id!, { type: 'INSPECT_PAGE' }, (retry) => {
-                if (retry && typeof retry === 'object' && 'detection' in retry) render(retry as PageInspectionMessage)
-                else failed(status)
-              })
-            })
-            .catch(() => failed('The extension does not have access to this tab.'))
-          return
-        }
-        if (typeof response === 'object' && response && 'detection' in response) {
-          render(response as PageInspectionMessage)
-          setRow('session', status)
-        }
-      })
-    })
-  })
+  }
+  if (employerSession?.tabId) {
+    const live = await inspectEmployerTab(employerSession.tabId)
+    if (live) {
+      render(live, employerSession.status)
+      return
+    }
+  }
+  if (isJobPilotAppUrl(url)) {
+    renderWorkspace(url, 'connected')
+    return
+  }
+  failed('Waiting for an employer application tab.')
 }
 
-requestInspection()
+void showInspection()
 document.getElementById('process')?.addEventListener('click', () => {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0]
+  void (async () => {
+    const tab = await queryFocusedTab()
     const tabId = tab?.id
-    void (async () => {
-      if (tabId) {
-        const connected = await connectFromTab(tabId)
-        if (!connected.connected) {
-          renderWorkspace(tab.url || '', String(connected.error || 'not connected'))
-          return
-        }
-      }
-      const peeked = await sendRuntime({ type: 'PEEK_QUEUE' })
-      const origin = typeof peeked.origin === 'string' ? peeked.origin : undefined
-      if (origin && chrome.permissions?.request) {
-        await new Promise<void>((resolve) => chrome.permissions.request({ origins: [origin] }, () => resolve()))
-      }
-      const processed = await sendRuntime({ type: 'PROCESS_QUEUE' })
-      if (processed.item && typeof processed.item === 'object') {
-        const item = processed.item as { jobTitle?: string; applicationUrl?: string }
-        setRow('url', item.applicationUrl || String(processed.error || 'Queue processed'))
-        setRow('title', item.jobTitle || 'Queued application')
-        setRow('session', processed.ok ? 'opening' : String(processed.error || 'failed'))
+    const url = await resolveTabUrl(tab)
+    if (tabId && isJobPilotAppUrl(url || tab.url)) {
+      const connected = await connectFromTab(tabId)
+      if (!connected.connected) {
+        renderWorkspace(url || tab.url || '', String(connected.error || 'not connected'))
         return
       }
-      requestInspection()
-    })()
-  })
+    } else if (tabId) {
+      const connected = await connectFromTab(tabId)
+      if (!connected.connected && isJobPilotAppUrl(url)) {
+        renderWorkspace(url, String(connected.error || 'not connected'))
+        return
+      }
+    }
+    const peeked = await sendRuntime({ type: 'PEEK_QUEUE' })
+    const origin = typeof peeked.origin === 'string' ? peeked.origin : undefined
+    if (origin && chrome.permissions?.request) {
+      await new Promise<void>((resolve) => chrome.permissions.request({ origins: [origin] }, () => resolve()))
+    }
+    const processed = await sendRuntime({ type: 'PROCESS_QUEUE' })
+    const inspection = processed.inspection as EmployerPageInspection | undefined
+    const employerSession = processed.employerSession as { tabId?: number; status?: string; currentUrl?: string } | undefined
+    if (inspection && inspection.pageKind !== JOBPILOT_INTERNAL_PAGE) {
+      render(inspection, employerSession?.status || (processed.ok ? 'opening' : 'failed'))
+      return
+    }
+    if (processed.item && typeof processed.item === 'object') {
+      const item = processed.item as { jobTitle?: string; applicationUrl?: string }
+      setRow('url', employerSession?.currentUrl || item.applicationUrl || String(processed.error || 'Queue processed'))
+      setRow('title', item.jobTitle || 'Queued application')
+      setRow('session', employerSession?.status || (processed.ok ? 'opening' : String(processed.error || 'failed')))
+      if (typeof processed.tabId === 'number') {
+        const live = await inspectEmployerTab(processed.tabId)
+        if (live) render(live, employerSession?.status || 'opening')
+      }
+      return
+    }
+    await showInspection()
+  })()
 })

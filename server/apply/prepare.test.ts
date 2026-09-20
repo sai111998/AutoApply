@@ -125,6 +125,9 @@ describe('application preparation validation', () => {
     expect(inspectApplicationUrl(null).code).toBe('APPLICATION_URL_MISSING')
     expect(inspectApplicationUrl('javascript:alert(1)').code).toBe('INVALID_APPLICATION_URL')
     expect(inspectApplicationUrl('/relative/apply').code).toBe('INVALID_APPLICATION_URL')
+    expect(inspectApplicationUrl('http://localhost:5173/jobs').code).toBe('INVALID_APPLICATION_URL')
+    expect(inspectApplicationUrl('chrome://settings').code).toBe('INVALID_APPLICATION_URL')
+    expect(inspectApplicationUrl('file:///tmp/apply.html').code).toBe('INVALID_APPLICATION_URL')
   })
 
   it('requires a ready selected resume version and file text', () => {

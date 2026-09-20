@@ -34,9 +34,10 @@ declare const chrome: {
       callback?: (tab: { id?: number; url?: string }) => void,
     ) => void
     query: (
-      query: { active?: boolean; currentWindow?: boolean },
+      query: { active?: boolean; currentWindow?: boolean; lastFocusedWindow?: boolean },
       callback: (tabs: Array<{ id?: number; url?: string; title?: string }>) => void,
     ) => void
+    get: (tabId: number, callback: (tab?: { id?: number; url?: string; title?: string }) => void) => void
     sendMessage: (tabId: number, message: unknown, responseCallback?: (response: unknown) => void) => void
     onUpdated: {
       addListener: (callback: (tabId: number, info: { status?: string; url?: string }) => void) => void

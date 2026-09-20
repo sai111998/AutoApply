@@ -1,9 +1,23 @@
 import { isAgentMessage } from '../shared/messages'
 import { applyBackgroundMessage, getBackgroundSession, startBackgroundSession } from './session-store'
 import { inspectApplicationUrl, originPattern } from '../shared/url'
-import { backendOriginsFor } from '../shared/page-session'
+import { backendOriginsFor, isJobPilotAppUrl } from '../shared/page-session'
 import { nextAgentAction } from '../agent/orchestrate'
 import { AGENT_TIMEOUTS } from '../agent/timeouts'
+import { extensionLog } from '../shared/extension-log'
+import {
+  bindEmployerTab,
+  createEmployerTabSession,
+  inspectionTarget,
+  jobpilotInternalInspection,
+  markEmployerSessionStatus,
+  planEmployerTabOpen,
+  recordEmployerNavigation,
+  shouldRunApplicationDetector,
+  statusAfterDetection,
+  type EmployerPageInspection,
+  type EmployerTabSession,
+} from '../shared/tab-session'
 import type { AgentMessage } from '../shared/messages'
 import type { ApplicationDetection } from '../shared/types'
 import type { AutomationQueueItem, AuthorizedResume } from '../shared/queue'
@@ -16,6 +30,8 @@ const settings = {
 let processing = false
 let activeTabId: number | null = null
 let activeItemId: string | null = null
+let employerSession: EmployerTabSession | null = null
+let lastInspection: EmployerPageInspection | null = null
 
 function headers(): Record<string, string> {
   return {
@@ -124,7 +140,19 @@ function hasOrigin(origin: string): Promise<boolean> {
   })
 }
 
-function openTab(url: string): Promise<number> {
+function readTabUrl(tabId: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!chrome.tabs?.get) {
+      resolve(null)
+      return
+    }
+    chrome.tabs.get(tabId, (tab) => {
+      resolve(tab?.url || null)
+    })
+  })
+}
+
+function openTab(url: string): Promise<{ tabId: number; url: string }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('NAVIGATION_TIMEOUT')), AGENT_TIMEOUTS.tabOpenMs)
     chrome.tabs?.create?.({ url, active: true }, (tab) => {
@@ -134,24 +162,33 @@ function openTab(url: string): Promise<number> {
         return
       }
       const tabId = tab.id
-      const finish = () => {
+      let currentUrl = tab.url || url
+      const finish = (finalUrl = currentUrl) => {
         clearTimeout(timer)
-        resolve(tabId)
+        resolve({ tabId, url: finalUrl })
       }
       if (!chrome.tabs?.onUpdated?.addListener) {
         finish()
         return
       }
-      const onUpdated = (updatedId: number, info: { status?: string }) => {
-        if (updatedId === tabId && info.status === 'complete') {
+      const onUpdated = (updatedId: number, info: { status?: string; url?: string }) => {
+        if (updatedId !== tabId) return
+        if (info.url) {
+          currentUrl = info.url
+          if (employerSession?.tabId === tabId) {
+            employerSession = recordEmployerNavigation(employerSession, info.url)
+            extensionLog('[Extension] Navigated to:', { url: info.url })
+          }
+        }
+        if (info.status === 'complete') {
           chrome.tabs.onUpdated.removeListener(onUpdated)
-          finish()
+          finish(currentUrl)
         }
       }
       chrome.tabs.onUpdated.addListener(onUpdated)
       setTimeout(() => {
         chrome.tabs.onUpdated.removeListener(onUpdated)
-        finish()
+        finish(currentUrl)
       }, AGENT_TIMEOUTS.navigationMs)
     })
   })
@@ -171,6 +208,20 @@ async function fetchQueueItem(claim: boolean): Promise<AutomationQueueItem | nul
   return body.item ?? null
 }
 
+function rememberInspection(page: Record<string, unknown>, fallbackUrl: string) {
+  const detection = page.detection as ApplicationDetection | undefined
+  if (!detection) return null
+  lastInspection = {
+    url: String(page.url ?? fallbackUrl),
+    title: String(page.title ?? ''),
+    hostname: String(page.hostname ?? ''),
+    pageKind: typeof page.pageKind === 'string' ? page.pageKind : null,
+    detection,
+    visible: page.visible as EmployerPageInspection['visible'],
+  }
+  return lastInspection
+}
+
 async function waitForPauseClear(tabId: number, status: string) {
   const deadline = Date.now() + AGENT_TIMEOUTS.pauseMs
   while (Date.now() < deadline) {
@@ -187,27 +238,74 @@ async function waitForPauseClear(tabId: number, status: string) {
 }
 
 async function processItem(item: AutomationQueueItem, reuseTabId?: number | null) {
-  const inspected = inspectApplicationUrl(item.applicationUrl)
-  if (!inspected.ok || !inspected.url) {
-    await postEvent(item, 'failed', { reason: inspected.reason, code: 'APPLICATION_URL_INVALID' })
-    return
-  }
-  const origin = originPattern(inspected.url)
-  const granted = (await hasOrigin(origin)) || (await requestOrigin(origin))
-  if (!granted) {
-    await postEvent(item, 'failed', {
-      reason: 'JobPilot does not have permission to open this employer site. Use the extension popup to grant access.',
-      code: 'APPLICATION_URL_INVALID',
+  extensionLog('[Extension] Received application')
+  extensionLog('[Extension] Application ID:', { applicationId: item.applicationId, jobId: item.jobId })
+  extensionLog('[Extension] Application URL:', {
+    applicationUrl: item.applicationUrl,
+    company: item.company,
+    jobTitle: item.jobTitle,
+  })
+  if (!(employerSession?.itemId === item.itemId && employerSession.tabId != null)) {
+    employerSession = createEmployerTabSession({
+      applicationId: item.applicationId,
+      itemId: item.itemId,
+      jobId: item.jobId,
+      applicationUrl: item.applicationUrl,
+      company: item.company,
+      jobTitle: item.jobTitle,
+      resumeVersionId: item.resumeVersionId,
+      provider: item.provider,
     })
+  }
+  const reuseUrl = reuseTabId ? await readTabUrl(reuseTabId) : employerSession.currentUrl
+  const plan = planEmployerTabOpen({
+    applicationUrl: item.applicationUrl,
+    reuseTabId,
+    reuseTabUrl: reuseUrl,
+    session: employerSession,
+    itemId: item.itemId,
+  })
+  if (plan.action === 'reject') {
+    employerSession = markEmployerSessionStatus(employerSession, 'failed')
+    await postEvent(item, 'failed', { reason: plan.reason, code: 'APPLICATION_URL_INVALID' })
     return
   }
-  let tabId = reuseTabId && reuseTabId === activeTabId && activeItemId === item.itemId ? reuseTabId : null
-  if (!tabId) {
-    await postEvent(item, 'opening', { currentUrl: inspected.url.toString() })
-    tabId = await openTab(inspected.url.toString())
+  const origin = originPattern(new URL(plan.url))
+  let tabId: number
+  let currentUrl = plan.url
+  if (plan.action === 'reuse') {
+    tabId = plan.tabId
+    currentUrl = plan.url
+  } else {
+    await postEvent(item, 'opening', { currentUrl: plan.url })
+    employerSession = markEmployerSessionStatus(employerSession, 'opening', { currentUrl: plan.url })
+    extensionLog('[Extension] Creating employer tab', { applicationUrl: plan.url })
+    try {
+      const opened = await openTab(plan.url)
+      tabId = opened.tabId
+      currentUrl = opened.url
+    } catch (error) {
+      employerSession = markEmployerSessionStatus(employerSession, 'failed')
+      await postEvent(item, 'failed', {
+        reason: 'The employer application tab could not be opened.',
+        code: error instanceof Error && error.message === 'NAVIGATION_TIMEOUT' ? 'NAVIGATION_TIMEOUT' : 'APPLICATION_TIMEOUT',
+      })
+      return
+    }
+    extensionLog('[Extension] Created tab ID:', { tabId, url: currentUrl })
+    employerSession = bindEmployerTab(recordEmployerNavigation(employerSession, currentUrl), tabId)
+    activeTabId = tabId
+    activeItemId = item.itemId
+    await postEvent(item, 'employer_page_opened', { currentUrl })
+    employerSession = markEmployerSessionStatus(employerSession, 'employer_page_opened', { currentUrl })
   }
+  employerSession = bindEmployerTab(recordEmployerNavigation(employerSession, currentUrl), tabId)
   activeTabId = tabId
   activeItemId = item.itemId
+  const granted = (await hasOrigin(origin)) || (await requestOrigin(origin))
+  if (!granted) {
+    return
+  }
   await inject(tabId)
   const profileRes = await fetch(api(`/api/extension/profile?userId=${encodeURIComponent(settings.userId || '')}`), {
     headers: headers(),
@@ -223,20 +321,57 @@ async function processItem(item: AutomationQueueItem, reuseTabId?: number | null
   const values = profileBody.profile ?? {}
   const deadline = Date.now() + AGENT_TIMEOUTS.applicationMs
   let advanced = 0
+  let postedApplicationDetected = false
+  let postedProviderDetected = false
   while (Date.now() < deadline) {
+    const liveUrl = (await readTabUrl(tabId)) || currentUrl
+    if (liveUrl && liveUrl !== currentUrl) {
+      currentUrl = liveUrl
+      employerSession = recordEmployerNavigation(employerSession, liveUrl)
+      extensionLog('[Extension] Navigated to:', { url: liveUrl })
+      await inject(tabId)
+    }
+    if (isJobPilotAppUrl(currentUrl)) {
+      lastInspection = jobpilotInternalInspection(currentUrl)
+      await inject(tabId)
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      continue
+    }
+    extensionLog('[Extension] Running application detector', { tabId, url: currentUrl })
     const inspectedPage = await sendTab(tabId, { type: 'INSPECT_PAGE' })
     const detection = inspectedPage.detection as ApplicationDetection | undefined
     const html = String(inspectedPage.html ?? '')
-    const url = String(inspectedPage.url ?? inspected.url.toString())
+    const url = String(inspectedPage.url ?? currentUrl)
+    if (inspectedPage.pageKind === 'JOBPILOT_INTERNAL_PAGE' || isJobPilotAppUrl(url)) {
+      lastInspection = jobpilotInternalInspection(url)
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      continue
+    }
     if (!detection) {
       await inject(tabId)
       await new Promise((resolve) => setTimeout(resolve, 400))
       continue
     }
-    await postEvent(item, 'application_detected', { currentUrl: url, provider: detection.provider })
+    rememberInspection(inspectedPage, url)
+    currentUrl = url
+    employerSession = recordEmployerNavigation(employerSession, url)
+    extensionLog('[Extension] Provider:', { provider: detection.provider })
+    extensionLog('[Extension] Application confidence:', { confidence: detection.confidence })
+    extensionLog('[Extension] Application page:', { applicationPage: detection.isApplicationPage })
+    const nextStatus = statusAfterDetection(detection)
+    employerSession = markEmployerSessionStatus(employerSession, nextStatus, { provider: detection.provider, currentUrl: url })
+    if (!postedApplicationDetected) {
+      await postEvent(item, 'application_detected', { currentUrl: url, provider: detection.provider })
+      postedApplicationDetected = true
+    }
+    if (!postedProviderDetected && detection.provider && detection.provider !== 'unknown') {
+      await postEvent(item, 'provider_detected', { currentUrl: url, provider: detection.provider })
+      postedProviderDetected = true
+    }
     const visible = inspectedPage.visible as { apply?: boolean; next?: boolean; submit?: boolean } | undefined
     const action = nextAgentAction(detection, html)
     if (action.type === 'pause') {
+      employerSession = markEmployerSessionStatus(employerSession, action.status, { currentUrl: url })
       await postEvent(item, action.status, {
         currentUrl: url,
         questions: (action.questions ?? []).map((prompt, index) => ({ id: `unknown-${index + 1}`, prompt, answer: null })),
@@ -244,23 +379,28 @@ async function processItem(item: AutomationQueueItem, reuseTabId?: number | null
       const resumed = await waitForPauseClear(tabId, action.status)
       if (!resumed) {
         if (action.status === 'needs_user_input') return
+        employerSession = markEmployerSessionStatus(employerSession, 'failed')
         await postEvent(item, 'failed', { reason: 'Application preparation timed out.', code: 'APPLICATION_TIMEOUT' })
       }
       continue
     }
     if (action.type === 'fail' && !visible?.apply && !visible?.next && !visible?.submit) {
+      employerSession = markEmployerSessionStatus(employerSession, 'failed')
       await postEvent(item, 'failed', { currentUrl: url, reason: action.reason, code: action.code })
       return
     }
     if (visible?.submit && !visible.next && !visible.apply) {
+      employerSession = markEmployerSessionStatus(employerSession, 'ready_for_review', { currentUrl: url, provider: detection.provider })
       await postEvent(item, 'ready_for_review', { currentUrl: url, provider: detection.provider })
       return
     }
     const click = visible?.apply && !detection.isApplicationPage ? 'apply' : visible?.next ? 'next' : null
     if (!click && detection.isApplicationPage) {
+      employerSession = markEmployerSessionStatus(employerSession, 'ready_for_review', { currentUrl: url, provider: detection.provider })
       await postEvent(item, 'ready_for_review', { currentUrl: url, provider: detection.provider })
       return
     }
+    employerSession = markEmployerSessionStatus(employerSession, 'filling', { currentUrl: url, provider: detection.provider })
     await postEvent(item, 'filling', { currentUrl: url, provider: detection.provider })
     const stepped = await sendTab(tabId, {
       type: 'RUN_AGENT_STEP',
@@ -269,31 +409,49 @@ async function processItem(item: AutomationQueueItem, reuseTabId?: number | null
       click,
     })
     if (click === 'next' && stepped.uploaded === false && resumeBody.available && html.includes('type="file"')) {
+      employerSession = markEmployerSessionStatus(employerSession, 'failed')
       await postEvent(item, 'failed', { currentUrl: url, reason: 'The selected resume could not be uploaded to the employer form.', code: 'RESUME_UPLOAD_FAILED' })
       return
     }
+    const steppedUrl = String(stepped.url ?? url)
+    if (steppedUrl && steppedUrl !== url) {
+      employerSession = recordEmployerNavigation(employerSession, steppedUrl)
+      extensionLog('[Extension] Navigated to:', { url: steppedUrl })
+    }
+    rememberInspection(stepped, steppedUrl)
     advanced += 1
     if (advanced > 8) {
-      await postEvent(item, 'ready_for_review', { currentUrl: url })
+      employerSession = markEmployerSessionStatus(employerSession, 'ready_for_review', { currentUrl: steppedUrl })
+      await postEvent(item, 'ready_for_review', { currentUrl: steppedUrl })
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 700))
   }
+  employerSession = markEmployerSessionStatus(employerSession, 'failed')
   await postEvent(item, 'failed', { reason: 'Application preparation timed out.', code: 'APPLICATION_TIMEOUT' })
 }
 
-async function processQueue(): Promise<{ ok: boolean; item?: AutomationQueueItem | null; error?: string }> {
+async function processQueue(): Promise<{
+  ok: boolean
+  item?: AutomationQueueItem | null
+  error?: string
+  tabId?: number | null
+  inspection?: EmployerPageInspection | null
+  employerSession?: EmployerTabSession | null
+}> {
   if (!settings.userId) return { ok: false, error: settings.lastError || 'No JobPilot user is connected.' }
-  if (processing) return { ok: true }
+  if (processing) {
+    return { ok: true, tabId: activeTabId, inspection: lastInspection, employerSession }
+  }
   processing = true
   try {
     const connected = await register()
     if (!connected) return { ok: false, error: settings.lastError || 'The JobPilot extension is not connected.' }
     const item = await fetchQueueItem(true)
-    if (!item) return { ok: true, item: null, error: 'No queued application is waiting.' }
+    if (!item) return { ok: true, item: null, error: 'No queued application is waiting.', inspection: lastInspection, employerSession }
     const reuse = activeItemId === item.itemId ? activeTabId : null
     await processItem(item, reuse)
-    return { ok: true, item }
+    return { ok: true, item, tabId: activeTabId, inspection: lastInspection, employerSession }
   } finally {
     processing = false
   }
@@ -313,10 +471,40 @@ function reply(sendResponse: (value: unknown) => void, value: unknown) {
   sendResponse(value)
 }
 
-async function handleMessage(raw: unknown): Promise<unknown> {
+function canInspectSender(sender?: { tab?: { id?: number }; url?: string }) {
+  const tabId = sender?.tab?.id ?? null
+  const pageUrl = sender?.url ?? employerSession?.currentUrl ?? null
+  return shouldRunApplicationDetector({
+    pageUrl,
+    tabId,
+    sessionTabId: employerSession?.tabId ?? null,
+    workflowStarted: Boolean(employerSession?.tabId),
+  })
+}
+
+function sessionPayload() {
+  return {
+    session: getBackgroundSession(),
+    employerSession,
+    inspection: lastInspection,
+    tabId: activeTabId,
+    userId: settings.userId,
+    connected: Boolean(settings.userId) && !settings.lastError,
+    target: inspectionTarget({ session: employerSession }),
+  }
+}
+
+async function handleMessage(raw: unknown, sender?: { tab?: { id?: number }; url?: string }): Promise<unknown> {
+  const type = raw && typeof raw === 'object' ? String((raw as { type?: string }).type || '') : ''
+  if (type === 'CAN_INSPECT_TAB') {
+    return { ok: true, ...canInspectSender(sender) }
+  }
+  if (type === 'GET_EMPLOYER_SESSION') {
+    return { ok: true, ...sessionPayload() }
+  }
   if (
     !isAgentMessage(raw) &&
-    !(raw && typeof raw === 'object' && ['PROCESS_QUEUE', 'PEEK_QUEUE', 'EXTENSION_STATUS'].includes(String((raw as { type?: string }).type)))
+    !(raw && typeof raw === 'object' && ['PROCESS_QUEUE', 'PEEK_QUEUE', 'EXTENSION_STATUS', 'CAN_INSPECT_TAB', 'GET_EMPLOYER_SESSION'].includes(type))
   ) {
     return { ok: false }
   }
@@ -340,7 +528,7 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     persistSettings()
     await register()
     void processQueue()
-    return { ok: true, session }
+    return { ok: true, session, ...sessionPayload() }
   }
   if (message.type === 'PEEK_QUEUE') {
     return { ok: true, ...(await peekQueueOrigin()) }
@@ -349,35 +537,41 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     const result = await processQueue()
     return {
       ...result,
-      session: getBackgroundSession(),
-      userId: settings.userId,
+      ...sessionPayload(),
       connected: Boolean(settings.userId) && !settings.lastError,
     }
   }
   if (message.type === 'EXTENSION_STATUS') {
     return {
       ok: true,
-      userId: settings.userId,
-      connected: Boolean(settings.userId) && !settings.lastError,
+      ...sessionPayload(),
       backendOrigin: settings.backendOrigin,
       error: settings.lastError,
     }
   }
-  if (message.type === 'INSPECT_PAGE') return { ok: true, session: getBackgroundSession() }
+  if (message.type === 'INSPECT_PAGE') return { ok: true, ...sessionPayload() }
   const session = applyBackgroundMessage(message as AgentMessage)
-  return { ok: true, session }
+  return { ok: true, session, ...sessionPayload() }
 }
 
 void restoreSettings().then(() => register())
 
-chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
-  void handleMessage(raw).then((value) => reply(sendResponse, value))
+chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
+  void handleMessage(raw, sender).then((value) => reply(sendResponse, value))
   return true
 })
 
-chrome.runtime.onMessageExternal.addListener((raw, _sender, sendResponse) => {
-  void handleMessage(raw).then((value) => reply(sendResponse, value))
+chrome.runtime.onMessageExternal.addListener((raw, sender, sendResponse) => {
+  void handleMessage(raw, sender).then((value) => reply(sendResponse, value))
   return true
+})
+
+chrome.tabs?.onUpdated?.addListener?.((tabId, info) => {
+  if (!employerSession || employerSession.tabId !== tabId) return
+  if (info.url) {
+    employerSession = recordEmployerNavigation(employerSession, info.url)
+    extensionLog('[Extension] Navigated to:', { url: info.url })
+  }
 })
 
 chrome.alarms?.create?.('jobpilot-heartbeat', { periodInMinutes: 0.5 })

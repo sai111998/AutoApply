@@ -40,6 +40,7 @@ export interface AuthorizedResume {
 
 export const AUTOMATION_EVENT_TYPES = [
   'opening',
+  'employer_page_opened',
   'application_detected',
   'provider_detected',
   'filling',

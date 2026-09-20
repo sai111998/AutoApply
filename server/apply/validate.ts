@@ -1,3 +1,4 @@
+import { inspectApplicationUrl as inspectEmployerApplicationUrl } from '../../extension/src/shared/url'
 import { ApplyError, type ApplyErrorCode } from './errors'
 import type { AutoApplyQueueItem } from './types'
 
@@ -25,16 +26,9 @@ export function inspectApplicationUrl(value: string | null | undefined): {
 } {
   const raw = value?.trim() ?? ''
   if (!raw) return { ok: false, code: 'APPLICATION_URL_MISSING', url: null }
-  try {
-    const url = new URL(raw)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      return { ok: false, code: 'INVALID_APPLICATION_URL', url: null }
-    }
-    if (!url.hostname) return { ok: false, code: 'INVALID_APPLICATION_URL', url: null }
-    return { ok: true, code: null, url }
-  } catch {
-    return { ok: false, code: 'INVALID_APPLICATION_URL', url: null }
-  }
+  const inspected = inspectEmployerApplicationUrl(raw)
+  if (!inspected.ok || !inspected.url) return { ok: false, code: 'INVALID_APPLICATION_URL', url: null }
+  return { ok: true, code: null, url: inspected.url }
 }
 
 export function assertCanPrepareItem(
