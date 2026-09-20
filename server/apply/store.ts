@@ -13,6 +13,7 @@ export interface AutoApplyStore {
   save(run: AutoApplyRun, items: AutoApplyQueueItem[]): Promise<void>
   get(runId: string): Promise<StoredRun | null>
   list(userId: string): Promise<StoredRun[]>
+  listAll?(): Promise<StoredRun[]>
 }
 
 const runs = new Map<string, StoredRun>()
@@ -31,6 +32,12 @@ export const memoryStore: AutoApplyStore = {
       .filter((item) => item.run.userId === userId)
       .sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt))
       .map((item) => ({ run: { ...item.run }, items: item.items.map((entry) => ({ ...entry })) }))
+  },
+  async listAll() {
+    return [...runs.values()].map((item) => ({
+      run: { ...item.run },
+      items: item.items.map((entry) => ({ ...entry })),
+    }))
   },
 }
 

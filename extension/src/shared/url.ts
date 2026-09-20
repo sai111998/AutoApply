@@ -9,7 +9,10 @@ export function isLoopbackHostname(hostname: string): boolean {
 }
 
 export function isSyntheticExtensionTestUrl(url: URL): boolean {
-  return isLoopbackHostname(url.hostname) && url.pathname.startsWith('/extension/test/')
+  return (
+    isLoopbackHostname(url.hostname) &&
+    (url.pathname.startsWith('/extension/test/') || url.pathname.startsWith('/browser-worker/synthetic/'))
+  )
 }
 
 export function inspectApplicationUrl(value: string | null | undefined): {

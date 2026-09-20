@@ -37,8 +37,9 @@ import {
   type ApplyTimeouts,
 } from './timeouts'
 import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/profile-store'
-import { isExtensionConnected, releaseExtensionItem } from '../extension/connection'
+import { releaseExtensionItem } from '../extension/connection'
 import { assertCanPrepareItem } from './validate'
+import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitForBrowserJob } from '../browser-worker/worker'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -464,18 +465,19 @@ async function prepareQueueItemLocked(
     rememberAutoApplyProfile(current.run.userId, input.profile)
     rememberQueueResume(current.run.userId, item)
     if (!deps.browser && input.html == null) {
-      if (!isExtensionConnected(input.userId ?? current.run.userId)) {
-        item.applicationStatus = 'extension_not_connected'
-        item.failureReason = 'Connect the JobPilot Chrome extension to open this application in your browser.'
-        item.sessionId = null
-        await persistPrepared(store, current, item, config, timeouts)
-        logQueueItem('prepare-extension-missing', item, { code: 'EXTENSION_NOT_CONNECTED' })
-        logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
-        return toResult(current, item)
-      }
       item.applicationStatus = 'queued'
       item.failureReason = null
+      item.sessionId = null
       await persistPrepared(store, current, item, config, timeouts)
+      notifyBrowserWorker()
+      const worker = getBrowserWorker()
+      if (worker?.running()) {
+        const finished = await waitForBrowserJob(item.id, timeouts.prepareMs)
+        const latest = (await loadCurrent(runId, store, config)) ?? current
+        const updated = latest.items.find((entry) => entry.id === itemId) ?? finished ?? item
+        logAutoApplyStep(15, 'Returning response', { itemId: updated.id, applicationStatus: updated.applicationStatus })
+        return toResult(latest, updated)
+      }
       logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
       return toResult(current, item)
     }
@@ -588,16 +590,19 @@ async function submitQueueItemLocked(
   if (item.applicationStatus !== 'ready_for_submission') {
     return toResult(current, item)
   }
-  const browser = deps.browser ?? createApplyBrowser()
-  const sessionId = item.sessionId || (item.applicationUrl ? `filled:${item.applicationUrl}` : `open:${item.applicationUrl}`)
   item.applicationStatus = 'submitting'
   item.updatedAt = nowIso()
-  const submitted = await browser.submit(sessionId, {
-    jobId: item.jobId,
-    applicationId: item.applicationId,
-    identityKey: item.identityKey,
-    applicationUrl: item.applicationUrl,
-  })
+  const workerSubmitted = deps.browser ? null : await submitBrowserWorkerItem(item.id)
+  const submitted = workerSubmitted
+    ?? (await (deps.browser ?? createApplyBrowser()).submit(
+      item.sessionId || (item.applicationUrl ? `filled:${item.applicationUrl}` : `open:${item.applicationUrl}`),
+      {
+        jobId: item.jobId,
+        applicationId: item.applicationId,
+        identityKey: item.identityKey,
+        applicationUrl: item.applicationUrl,
+      },
+    ))
   item.applicationStatus = submitted.status === 'submitted' ? 'submitted' : submitted.status
   item.failureReason = submitted.failureReason
   item.sessionId = null

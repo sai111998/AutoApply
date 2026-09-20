@@ -175,7 +175,7 @@ describe('automation queue', () => {
     expect(confirmed.body.item.applicationStatus).toBe('submitted')
   })
 
-  it('marks Apply as extension_not_connected when the extension is missing', async () => {
+  it('queues Apply for the browser worker without a Chrome extension', async () => {
     const started = await startAutoApply(
       config,
       {
@@ -191,11 +191,11 @@ describe('automation queue', () => {
       { listJobs: async () => ({ jobs: [job({ id: 'java', title: 'Java Engineer', matchScore: 90 })] }), delayMs: 0 },
     )
     const prepared = await prepareQueueItem(started.run.id, started.items[0].id, { profile, userId: 'user-1' }, { delayMs: 0 })
-    expect(prepared.item.applicationStatus).toBe('extension_not_connected')
-    expect(prepared.item.applicationStatus).not.toBe('submitted')
+    expect(prepared.item.applicationStatus).toBe('queued')
+    expect(prepared.item.applicationStatus).not.toBe('extension_not_connected')
   })
 
-  it('lets a later connected extension claim a job that was marked extension_not_connected', async () => {
+  it('lets the browser worker claim a queued job without an extension', async () => {
     const app = createApp({ config })
     const started = await startAutoApply(
       config,

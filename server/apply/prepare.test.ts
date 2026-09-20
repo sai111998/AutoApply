@@ -366,7 +366,7 @@ describe('POST /api/jobs/auto-apply item apply', () => {
         'mfa_required',
         'login_required',
         'automation_blocked',
-        'extension_not_connected',
+        'queued',
         'failed',
       ]).toContain(prepared.body.items[0].applicationStatus)
     }

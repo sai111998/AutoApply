@@ -28,6 +28,7 @@ describe('employer application URLs', () => {
     expect(inspectApplicationUrl('http://localhost/apply').ok).toBe(false)
     expect(inspectApplicationUrl(null).ok).toBe(false)
     expect(inspectApplicationUrl('http://127.0.0.1:8787/extension/test/application.html').ok).toBe(true)
+    expect(inspectApplicationUrl('http://127.0.0.1:8790/browser-worker/synthetic/apply').ok).toBe(true)
   })
 })
 

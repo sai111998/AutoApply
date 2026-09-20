@@ -55,6 +55,11 @@ const FIELD_PATTERNS: Array<[string, RegExp]> = [
   ['github', new RegExp(`${CONTROL}(name|id|aria-label|placeholder)=['"][^'"]*github`, 'i')],
   ['resume', /type=['"]file['"]|<label[^>]*>\s*(upload )?(your )?(resume|cv)/i],
   ['cover_letter', new RegExp(`${CONTROL}(name|id|aria-label)=['"][^'"]*cover|label[^>]*>\\s*cover[-_ ]letter`, 'i')],
+  ['education', /<label[^>]*>[\s\S]*?(education|school|degree|university)|name=['"][^'"]*(education|school|degree)/i],
+  ['experience', /<label[^>]*>[\s\S]*?(work experience|years of experience)|name=['"][^'"]*(experience|employer)/i],
+  ['work_authorization', /<label[^>]*>[\s\S]*?(work authorization|authorized to work)|name=['"][^'"]*(work[-_]?auth|authorization)/i],
+  ['sponsorship', /<label[^>]*>[\s\S]*?sponsor|name=['"][^'"]*sponsor/i],
+  ['salary', /<label[^>]*>[\s\S]*?(salary|compensation|pay rate)|name=['"][^'"]*(salary|compensation)/i],
 ]
 
 const APPLICATION_SCORE_THRESHOLD = 3

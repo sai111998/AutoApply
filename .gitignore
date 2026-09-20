@@ -29,5 +29,7 @@ dist-ssr
 # TypeScript
 *.tsbuildinfo
 
-# Local Auto Apply debug captures
+# Local Auto Apply debug captures and browser profiles
 .auto-apply-debug/
+.jobpilot-browser-profile/
+.jobpilot/

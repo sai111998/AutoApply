@@ -36,6 +36,14 @@ const lever: ApplicationProvider = {
   },
 }
 
+const ashby: ApplicationProvider = {
+  id: 'ashby',
+  applyNames: [/^\s*apply\s*$/i, /^\s*apply now\s*$/i, /^\s*start application\s*$/i],
+  match({ hostname, url }) {
+    return /ashbyhq\.com$/i.test(hostname) || /jobs\.ashbyhq\.com/i.test(hostname) || /ashbyhq\.com/i.test(url)
+  },
+}
+
 const icims: ApplicationProvider = {
   id: 'icims',
   applyNames: [/^\s*apply\s*$/i, /^\s*apply for this job online\s*$/i, /^\s*apply now\s*$/i],
@@ -69,7 +77,7 @@ const generic: ApplicationProvider = {
   },
 }
 
-const PROVIDERS: ApplicationProvider[] = [workday, greenhouse, lever, icims, oraclecloud, generic]
+const PROVIDERS: ApplicationProvider[] = [workday, greenhouse, lever, ashby, icims, oraclecloud, generic]
 
 export function detectApplicationProvider(input: { url?: string | null; html?: string | null }): ApplicationProvider {
   const url = input.url?.trim() || ''
