@@ -116,6 +116,13 @@ export interface BrowserPageLike {
   }
   close?: () => Promise<unknown>
   evaluate?: (fn: () => unknown) => Promise<unknown>
+  frames?: () => Array<{
+    url?: (() => string) | string
+    title?: () => Promise<string>
+    content?: () => Promise<string>
+  }>
+  screenshot?: (options?: { path?: string; fullPage?: boolean }) => Promise<unknown>
+  waitForURL?: (url: string | RegExp | ((value: URL) => boolean), options?: { timeout?: number }) => Promise<unknown>
 }
 
 export function queueStatusFromSession(state: BrowserSessionState): AutoApplyQueueStatus {

@@ -78,13 +78,23 @@ export function preflightApplication(input: {
       blockers.push('Automated access is blocked.')
       capability = 'blocked'
       confidence = 'high'
+    } else if (surface.code === 'UNSUPPORTED_APPLICATION_FLOW') {
+      blockers.push('unsupported_application_flow')
+      capability = 'unsupported'
+      confidence = 'high'
+      reasons.push(surface.failureReason || 'This listing does not lead to a supported application flow.')
+    } else if (surface.code === 'UNSUPPORTED_PROVIDER') {
+      blockers.push('unsupported_provider')
+      capability = 'unsupported'
+      confidence = 'high'
+      reasons.push(surface.failureReason || 'This application provider is not supported for autonomous Auto Apply.')
     } else if (surface.kind === 'unknown' && !surface.hasApplyControl && surface.fields.length === 0) {
-      blockers.push('Application form was not found.')
+      blockers.push('unsupported_application_flow')
       if (canEnterAutonomousApply(capability)) {
         capability = 'unknown'
         confidence = 'low'
       }
-      reasons.push('No apply action or application fields were detectable.')
+      reasons.push('Page evidence was collected; no supported application or Apply action was visible.')
     } else if (surface.kind === 'job_details' && !surface.hasApplyControl) {
       blockers.push('Apply action is not available.')
       capability = capability === 'auto_apply_supported' ? 'unknown' : capability

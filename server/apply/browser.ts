@@ -339,7 +339,7 @@ function resultFromAnalysis(input: BrowserPrepareInput, analysis: ApplicationAna
     return {
       status: 'failed',
       questions: [],
-      failureReason: analysis.failureReason ?? 'The employer application form could not be found.',
+      failureReason: analysis.failureReason ?? 'The page was classified after collecting evidence and is not a supported application form.',
       sessionId: null,
     }
   }

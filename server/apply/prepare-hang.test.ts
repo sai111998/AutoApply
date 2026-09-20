@@ -331,7 +331,7 @@ describe('auto apply preparation hang recovery', () => {
       html: '<html><body><p>Welcome to Example</p></body></html>',
     })
     expect(prepared.status).toBe('failed')
-    expect(prepared.failureReason).toMatch(/form could not be found/i)
+    expect(prepared.failureReason).toMatch(/classified after collecting evidence|supported application/i)
     const queued = await prepareQueueItem(
       started.run.id,
       started.items[0].id,

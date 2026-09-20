@@ -1,8 +1,18 @@
 import { inspectApplicationUrl } from '../apply/validate'
 import { clickApplyControl } from '../apply/apply-action'
 import { canEnterAutonomousApply } from '../apply/capability'
+import {
+  diagnoseLivePage,
+  logBrowserNavigation,
+  logStoredApplication,
+  printApplicationDiagnostic,
+  responseUrlFromGoto,
+  uniqueUrls,
+} from '../apply/diagnose'
+import { livePreflightStatus } from '../apply/live-preflight'
+import { documentsFromEvidencePage } from '../apply/page-evidence'
 import { logApplyEvent } from '../apply/log'
-import { analyzeApplicationSurface } from '../apply/surface'
+import { mergeSurfaceDocuments } from '../apply/surface'
 import { resolveApplicationQuestions } from '../apply/questions'
 import { detectSubmissionConfirmation, isFinalSubmitLabel } from '../apply/confirm'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus } from '../apply/types'
@@ -93,7 +103,14 @@ export async function runApplicationAgent(input: {
   contextId: string
   autoSubmit?: boolean
 }): Promise<AgentRunResult> {
-  const inspected = inspectApplicationUrl(input.item.applicationUrl)
+  const stored = logStoredApplication({
+    jobId: input.item.jobId,
+    company: input.item.company,
+    title: input.item.title,
+    applicationUrl: input.item.applicationUrl,
+    applicationId: input.item.applicationId,
+  })
+  const inspected = inspectApplicationUrl(stored.url ?? input.item.applicationUrl)
   let session = createBrowserApplicationSession({
     applicationId: input.item.applicationId,
     itemId: input.item.id,
@@ -104,27 +121,63 @@ export async function runApplicationAgent(input: {
     applicationUrl: inspected.url?.toString() ?? input.item.applicationUrl ?? '',
   })
   session = bindBrowserPage(session, input.pageId)
-  if (!inspected.ok || !inspected.url) {
+  if (!stored.ok || !inspected.ok || !inspected.url) {
     session = markBrowserSessionState(session.itemId, 'failed', {
-      failureReason: 'This listing does not include a valid application URL.',
+      failureReason: stored.reason || 'This listing does not include a valid application URL.',
     })
     return { session, status: 'failed', questions: [], failureReason: session.failureReason }
   }
   const initialUrl = inspected.url.toString()
   input.item.initialUrl = input.item.initialUrl || initialUrl
-  await input.page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 16_000 })
+  const navigationResult = await input.page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 16_000 })
   await input.page.waitForLoadState?.('domcontentloaded', { timeout: 8_000 }).catch(() => undefined)
   let currentUrl = pageUrl(input.page, initialUrl)
+  const responseUrl = responseUrlFromGoto(navigationResult)
   session = recordBrowserRedirect(session, currentUrl)
-  input.item.redirectUrls = [...(input.item.redirectUrls ?? []), currentUrl].filter((value, index, all) => all.indexOf(value) === index)
-  let html = await input.page.content()
-  let adapter = detectAtsAdapter({ url: currentUrl, html })
-  const livePreflight = adapter.preflight({ url: currentUrl, html, applicationUrl: initialUrl })
-  input.item.preflight = livePreflight
-  input.item.applicationProvider = adapter.id
+  input.item.redirectUrls = uniqueUrls([...(input.item.redirectUrls ?? []), initialUrl, responseUrl, currentUrl])
+  logBrowserNavigation({
+    initialUrl,
+    responseUrl,
+    finalUrl: currentUrl,
+    redirectChain: input.item.redirectUrls,
+  })
+
+  const diagnose = async () =>
+    diagnoseLivePage({
+      job: {
+        jobId: input.item.jobId,
+        company: input.item.company,
+        title: input.item.title,
+        applicationUrl: initialUrl,
+        applicationId: input.item.applicationId,
+      },
+      page: input.page,
+      navigation: {
+        initialUrl,
+        responseUrl,
+        finalUrl: pageUrl(input.page, currentUrl),
+        redirectChain: uniqueUrls([...(input.item.redirectUrls ?? []), pageUrl(input.page, currentUrl)]),
+      },
+    })
+
+  let diagnostic = await diagnose()
+  printApplicationDiagnostic(diagnostic)
+  let html = (await documentsFromEvidencePage(input.page, currentUrl))[0]?.html ?? (await input.page.content())
+  let adapter = detectAtsAdapter({ url: diagnostic.preflight.finalUrl || currentUrl, html })
+  if (!adapter.detect({ url: diagnostic.preflight.finalUrl || currentUrl, html })) {
+    adapter = detectAtsAdapter({ url: diagnostic.preflight.finalUrl || currentUrl, html })
+  }
+  const livePreflight = diagnostic.preflight
+  input.item.preflight = adapter.preflight({
+    url: livePreflight.finalUrl || currentUrl,
+    html,
+    applicationUrl: initialUrl,
+  })
+  input.item.applicationProvider = livePreflight.provider
   input.item.applicationCapability = livePreflight.capability
-  input.item.captchaDetectionConfidence = livePreflight.captchaDetectionConfidence
-  input.item.captchaEvidence = livePreflight.captchaEvidence
+  input.item.captchaDetectionConfidence = input.item.preflight.captchaDetectionConfidence
+  input.item.captchaEvidence = input.item.preflight.captchaEvidence
+  input.item.finalApplicationUrl = livePreflight.finalUrl
   logApplyEvent('application-preflight', {
     jobId: input.item.jobId,
     applicationId: input.item.applicationId,
@@ -133,52 +186,59 @@ export async function runApplicationAgent(input: {
     applicationUrl: currentUrl,
     matchScore: input.item.finalMatchScore,
     applicationStatus: input.item.applicationStatus,
-    code: livePreflight.capability,
+    code: livePreflight.pageType,
+    provider: livePreflight.provider,
   })
-  if (!canEnterAutonomousApply(livePreflight.capability)) {
-    if (livePreflight.capability === 'blocked' && livePreflight.captcha) {
-      recordUserIntervention({
-        applicationId: input.item.applicationId || input.item.id,
-        itemId: input.item.id,
-        reason: 'CAPTCHA_REQUIRED',
-        currentUrl,
-      })
-      session = markBrowserSessionState(session.itemId, 'captcha_required', { currentUrl, provider: adapter.id })
-      return { session, status: 'captcha_required', questions: [], failureReason: null }
-    }
-    if (livePreflight.capability === 'blocked' && /login/i.test(livePreflight.blockers.join(' '))) {
-      recordUserIntervention({
-        applicationId: input.item.applicationId || input.item.id,
-        itemId: input.item.id,
-        reason: 'LOGIN_REQUIRED',
-        currentUrl,
-      })
-      session = markBrowserSessionState(session.itemId, 'login_required', { currentUrl, provider: adapter.id })
-      return { session, status: 'login_required', questions: [], failureReason: null }
-    }
-    if (livePreflight.capability === 'blocked' && /multi-factor|mfa/i.test(livePreflight.blockers.join(' '))) {
-      recordUserIntervention({
-        applicationId: input.item.applicationId || input.item.id,
-        itemId: input.item.id,
-        reason: 'MFA_REQUIRED',
-        currentUrl,
-      })
-      session = markBrowserSessionState(session.itemId, 'mfa_required', { currentUrl, provider: adapter.id })
-      return { session, status: 'mfa_required', questions: [], failureReason: null }
-    }
-    if (livePreflight.capability === 'assisted_apply') {
-      recordUserIntervention({
-        applicationId: input.item.applicationId || input.item.id,
-        itemId: input.item.id,
-        reason: 'UNKNOWN_REQUIRED_QUESTION',
-        currentUrl,
-      })
-      session = markBrowserSessionState(session.itemId, 'needs_user_input', { currentUrl, provider: adapter.id })
-      return { session, status: 'needs_user_input', questions: [], failureReason: null }
-    }
+
+  const classified = livePreflightStatus(livePreflight)
+  if (classified.status === 'captcha_required') {
+    recordUserIntervention({
+      applicationId: input.item.applicationId || input.item.id,
+      itemId: input.item.id,
+      reason: 'CAPTCHA_REQUIRED',
+      currentUrl,
+    })
+    session = markBrowserSessionState(session.itemId, 'captcha_required', { currentUrl, provider: adapter.id })
+    return { session, status: 'captcha_required', questions: [], failureReason: null }
+  }
+  if (classified.status === 'login_required') {
+    recordUserIntervention({
+      applicationId: input.item.applicationId || input.item.id,
+      itemId: input.item.id,
+      reason: 'LOGIN_REQUIRED',
+      currentUrl,
+    })
+    session = markBrowserSessionState(session.itemId, 'login_required', { currentUrl, provider: adapter.id })
+    return { session, status: 'login_required', questions: [], failureReason: null }
+  }
+  if (classified.status === 'mfa_required') {
+    recordUserIntervention({
+      applicationId: input.item.applicationId || input.item.id,
+      itemId: input.item.id,
+      reason: 'MFA_REQUIRED',
+      currentUrl,
+    })
+    session = markBrowserSessionState(session.itemId, 'mfa_required', { currentUrl, provider: adapter.id })
+    return { session, status: 'mfa_required', questions: [], failureReason: null }
+  }
+  if (classified.status === 'blocked') {
     session = markBrowserSessionState(session.itemId, 'failed', {
       currentUrl,
-      failureReason: livePreflight.blockers[0] || livePreflight.reasons[0] || 'This application is not Auto-Apply capable.',
+      failureReason: classified.failureReason,
+    })
+    return { session, status: 'blocked', questions: [], failureReason: session.failureReason }
+  }
+  if (classified.status === 'skipped') {
+    session = markBrowserSessionState(session.itemId, 'failed', {
+      currentUrl,
+      failureReason: classified.failureReason,
+    })
+    return { session, status: 'skipped', questions: [], failureReason: session.failureReason }
+  }
+  if (!canEnterAutonomousApply(livePreflight.capability) && classified.status !== 'job_details' && classified.status !== 'ready') {
+    session = markBrowserSessionState(session.itemId, 'failed', {
+      currentUrl,
+      failureReason: livePreflight.reason || 'This application is not Auto-Apply capable.',
     })
     return { session, status: 'skipped', questions: [], failureReason: session.failureReason }
   }
@@ -186,24 +246,44 @@ export async function runApplicationAgent(input: {
     provider: adapter.id,
     currentUrl,
   })
-  const analysis = analyzeApplicationSurface(html, { url: currentUrl })
-  if (analysis.kind === 'job_details' || (analysis.hasApplyControl && analysis.kind !== 'application' && analysis.kind !== 'blocked')) {
+  const analysis = mergeSurfaceDocuments(await documentsFromEvidencePage(input.page, currentUrl))
+  if (
+    diagnostic.page.pageType === 'JOB_DETAIL_PAGE' ||
+    analysis.kind === 'job_details' ||
+    (analysis.hasApplyControl && analysis.kind !== 'application' && analysis.kind !== 'blocked')
+  ) {
     session = markBrowserSessionState(session.itemId, 'job_page', { currentUrl })
-    const opened = await adapter.openApplication(input.page)
-    if (!opened) {
-      const fallback = await clickApplyControl(input.page)
-      if (!fallback.clicked) {
-        session = markBrowserSessionState(session.itemId, 'failed', {
-          failureReason: 'The employer application form could not be found.',
-          currentUrl,
+    const opened = adapter.detect({ url: currentUrl, html }) ? await adapter.openApplication(input.page) : false
+    const fallback = opened ? { clicked: true, label: 'provider-apply' } : await clickApplyControl(input.page)
+    console.info(`[AutoApply] Apply action: ${fallback.clicked ? fallback.label || 'clicked' : 'not found'}`)
+    if (!fallback.clicked) {
+      session = markBrowserSessionState(session.itemId, 'failed', {
+        failureReason: 'The job page did not expose a legitimate Apply action after page classification.',
+        currentUrl,
+      })
+      return { session, status: 'failed', questions: [], failureReason: session.failureReason }
+    }
+    if (input.page.waitForURL) {
+      await input.page
+        .waitForURL((value) => value.href !== currentUrl || /\/apply\b|#application/i.test(`${value.pathname}${value.hash}`), {
+          timeout: 8_000,
         })
-        return { session, status: 'failed', questions: [], failureReason: session.failureReason }
-      }
+        .catch(() => undefined)
     }
     await input.page.waitForLoadState?.('domcontentloaded', { timeout: 8_000 }).catch(() => undefined)
+    await input.page.waitForTimeout?.(600)
     currentUrl = pageUrl(input.page, currentUrl)
     session = recordBrowserRedirect(session, currentUrl)
-    html = await input.page.content()
+    input.item.redirectUrls = uniqueUrls([...(input.item.redirectUrls ?? []), currentUrl])
+    logBrowserNavigation({
+      initialUrl,
+      responseUrl,
+      finalUrl: currentUrl,
+      redirectChain: input.item.redirectUrls,
+    })
+    diagnostic = await diagnose()
+    printApplicationDiagnostic(diagnostic)
+    html = (await documentsFromEvidencePage(input.page, currentUrl))[0]?.html ?? (await input.page.content())
     adapter = detectAtsAdapter({ url: currentUrl, html })
   }
 
@@ -249,7 +329,7 @@ export async function runApplicationAgent(input: {
       session = markBrowserSessionState(session.itemId, state, { currentUrl })
       return { session, status: queueStatusFromSession(state), questions: [], failureReason: null }
     }
-    const surface = analyzeApplicationSurface(html, { url: currentUrl })
+    const surface = mergeSurfaceDocuments(await documentsFromEvidencePage(input.page, currentUrl))
     const resolved = resolveApplicationQuestions(surface.inspection.questions, input.profile, input.userId)
     if (resolved.unknown.length && surface.kind === 'application') {
       recordUserIntervention({
@@ -322,11 +402,13 @@ export async function runApplicationAgent(input: {
     const moved = await adapter.advanceStep(input.page)
     if (!moved) {
       if (surface.kind !== 'application') {
+        const after = await diagnose()
+        printApplicationDiagnostic(after)
         session = markBrowserSessionState(session.itemId, 'failed', {
           currentUrl,
-          failureReason: 'The employer application form could not be found.',
+          failureReason: after.result,
         })
-        return { session, status: 'failed', questions: [], failureReason: session.failureReason }
+        return { session, status: after.preflight.capability === 'unsupported' ? 'skipped' : 'failed', questions: [], failureReason: session.failureReason }
       }
       session = markBrowserSessionState(session.itemId, 'ready_for_review', { currentUrl })
       return { session, status: 'ready_for_submission', questions: resolved.answered, failureReason: null }

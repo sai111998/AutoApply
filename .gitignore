@@ -33,3 +33,4 @@ dist-ssr
 .auto-apply-debug/
 .jobpilot-browser-profile/
 .jobpilot/
+debug/application-failure/

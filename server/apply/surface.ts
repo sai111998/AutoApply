@@ -1,6 +1,9 @@
+import { isJobBoardHost } from './capability'
 import { inspectApplicationPage, type PageInspection } from './detect'
+import { classifyPageType, unsupportedProviderName } from './page-classify'
 import { hasApplyControl, pageVisibleText, snapshotFromHtml, type PageSnapshot } from './page-snapshot'
 import { detectApplicationProvider, type ApplicationProviderId } from './providers'
+import { hostnameOf } from './providers/types'
 
 export type ApplicationDetectionCode =
   | 'CAPTCHA_REQUIRED'
@@ -12,6 +15,7 @@ export type ApplicationDetectionCode =
   | 'APPLICATION_FORM_IN_IFRAME'
   | 'APPLICATION_FORM_DETECTED'
   | 'UNSUPPORTED_PROVIDER'
+  | 'UNSUPPORTED_APPLICATION_FLOW'
   | 'INVALID_APPLICATION_URL'
   | 'JOB_NOT_FOUND'
 
@@ -77,10 +81,45 @@ function collectSignals(html: string): { signals: ApplicationSignal[]; fields: s
       signals.push({ id: `field:${field}`, weight: field === 'email' || field === 'resume' || field === 'full_name' ? 2 : 1 })
     }
   }
-  if (/<form\b/i.test(html)) signals.push({ id: 'form', weight: 1 })
+  if (/<label[^>]*>[\s\S]{0,80}(first name|last name|email|phone|resume|cover letter|linkedin|work authorization)/i.test(html)) {
+    signals.push({ id: 'semantic_labels', weight: 2 })
+  }
+  if (/\b(submit application|start application|upload resume|upload cv)\b/i.test(html)) {
+    signals.push({ id: 'application_controls', weight: 1 })
+  }
+  if (/role=['"]textbox['"]|contenteditable=['"]true['"]/i.test(html) && fields.length) {
+    signals.push({ id: 'accessible_fields', weight: 1 })
+  }
   if (/type=['"]submit['"]|aria-label=['"]next['"]|>\s*next\s*</i.test(html)) signals.push({ id: 'next_or_submit', weight: 1 })
   if (/job application form|application form|candidate experience/i.test(html)) signals.push({ id: 'application_copy', weight: 1 })
   return { signals, fields: unique(fields) }
+}
+
+function unknownFailureReason(url: string, inIframe: boolean): { code: ApplicationDetectionCode; failureReason: string } {
+  const hostname = hostnameOf(url)
+  if (isJobBoardHost(hostname)) {
+    return {
+      code: 'UNSUPPORTED_APPLICATION_FLOW',
+      failureReason: 'This listing does not lead to a supported application flow.',
+    }
+  }
+  const unsupported = unsupportedProviderName(hostname)
+  if (unsupported) {
+    return {
+      code: 'UNSUPPORTED_PROVIDER',
+      failureReason: `This application provider (${unsupported}) is not supported for autonomous Auto Apply.`,
+    }
+  }
+  if (inIframe) {
+    return {
+      code: 'APPLICATION_FORM_IN_IFRAME',
+      failureReason: 'An embedded application frame was found and must be inspected before filling.',
+    }
+  }
+  return {
+    code: 'APPLICATION_FORM_NOT_RECOGNIZED',
+    failureReason: 'The page was classified after collecting evidence and is not a supported application form.',
+  }
 }
 
 function withQuestionSignals(
@@ -205,9 +244,8 @@ export function analyzeApplicationSurface(
     }
   }
 
-  const captchaFrame = snapshot.iframeUrls.some((frame) => /hcaptcha|recaptcha|turnstile/i.test(frame))
   const applicationFrame = snapshot.iframeUrls.some(
-    (frame) => /greenhouse|lever|workday|icims|oraclecloud|apply/i.test(frame) && !/hcaptcha|recaptcha|turnstile/i.test(frame),
+    (frame) => /greenhouse|lever|workday|icims|oraclecloud|ashby|apply/i.test(frame) && !/hcaptcha|recaptcha|turnstile/i.test(frame),
   )
   if (applicationFrame && score < APPLICATION_SCORE_THRESHOLD) {
     return {
@@ -224,14 +262,26 @@ export function analyzeApplicationSurface(
       provider: provider.id,
       inspection,
       snapshot,
-      failureReason: 'The application form is in an embedded frame that JobPilot cannot use.',
+      failureReason: 'An embedded application frame was found and must be inspected before filling.',
     }
   }
-  void captchaFrame
 
+  const classification = classifyPageType({
+    html,
+    url,
+    inspection,
+    applicationScore: score,
+    applicationKind: 'unknown',
+    hasApplyControl: applyControl,
+    inIframe: Boolean(input.inIframe) || applicationFrame,
+  })
+  const unknown = unknownFailureReason(url, Boolean(input.inIframe) || applicationFrame)
   return {
-    kind: 'unknown',
-    code: 'APPLICATION_FORM_NOT_RECOGNIZED',
+    kind: classification.pageType === 'JOB_DETAIL_PAGE' ? 'job_details' : 'unknown',
+    code:
+      classification.pageType === 'JOB_DETAIL_PAGE'
+        ? 'JOB_PAGE_REQUIRES_APPLY_CLICK'
+        : unknown.code,
     score,
     signals: collected.signals.map((item) => item.id),
     fields: collected.fields,
@@ -239,11 +289,14 @@ export function analyzeApplicationSurface(
     hasResumeUpload,
     hasNext,
     hasFinalSubmit,
-    inIframe: Boolean(input.inIframe),
+    inIframe: Boolean(input.inIframe) || applicationFrame,
     provider: provider.id,
     inspection,
     snapshot,
-    failureReason: 'The employer application form could not be found.',
+    failureReason:
+      classification.pageType === 'JOB_DETAIL_PAGE'
+        ? 'The job page requires an Apply action before the application form appears.'
+        : unknown.failureReason,
   }
 }
 

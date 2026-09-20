@@ -60,6 +60,6 @@ describe('application preflight', () => {
       html: '<html><body><h1>Careers</h1></body></html>',
     })
     expect(missing.capability).not.toBe('auto_apply_supported')
-    expect(missing.blockers.join(' ')).toMatch(/form|Apply/i)
+    expect(missing.blockers.join(' ')).toMatch(/unsupported_application_flow|Apply/i)
   })
 })

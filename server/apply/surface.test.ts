@@ -476,7 +476,7 @@ describe('job page apply click', () => {
       resumeText: 'Java engineer',
     })
     expect(prepared.status).toBe('failed')
-    expect(prepared.failureReason).toMatch(/form could not be found/i)
+    expect(prepared.failureReason).toMatch(/classified after collecting evidence|supported application/i)
     expect(prepared.status).not.toBe('submitted')
   })
 

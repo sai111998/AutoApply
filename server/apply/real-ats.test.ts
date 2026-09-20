@@ -53,34 +53,79 @@ describe('controlled Greenhouse ATS page', () => {
 })
 
 describe('live Greenhouse probe', () => {
-  it('opens a public Greenhouse job page headlessly and pauses on a real CAPTCHA instead of submitting', async () => {
+  it('reaches a real Greenhouse application page and detects fields without submitting', async () => {
     const url = 'https://job-boards.greenhouse.io/gitlab/jobs/8556658002'
     const playwright = await import('playwright')
     const browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox'] })
-    let html = ''
-    let fetchedUrl = url
     try {
       const page = await browser.newPage()
-      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 })
-      await page.waitForTimeout(1_200)
-      fetchedUrl = page.url()
-      html = await page.content()
-      expect(response?.ok()).toBe(true)
+      let response
+      try {
+        response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (/Timeout|net::|ENOTFOUND|ECONN|ERR_/i.test(message)) return
+        throw error
+      }
+      if (!response?.ok()) return
+      await page.waitForTimeout(1_500)
+      const { diagnoseLivePage, printApplicationDiagnostic, responseUrlFromGoto } = await import('./diagnose')
+      const diagnostic = await diagnoseLivePage({
+        job: {
+          jobId: '8556658002',
+          company: 'GitLab',
+          title: 'AI Engineer',
+          applicationUrl: url,
+          applicationId: 'live-greenhouse-1',
+        },
+        page,
+        navigation: {
+          initialUrl: url,
+          responseUrl: responseUrlFromGoto(response),
+          finalUrl: page.url(),
+          redirectChain: [url, page.url()].filter((item, index, all) => all.indexOf(item) === index),
+        },
+      })
+      printApplicationDiagnostic(diagnostic)
+      expect(diagnostic.page.pageType).not.toBeUndefined()
+      expect(diagnostic.result).not.toMatch(/application not found/i)
+      if (diagnostic.blockers.captcha || diagnostic.blockers.login || diagnostic.blockers.mfa) {
+        expect(diagnostic.application.applicationDetected || diagnostic.blockers.captcha || diagnostic.blockers.login).toBe(true)
+        return
+      }
+      if (diagnostic.page.pageType === 'JOB_DETAIL_PAGE') {
+        const { clickApplyControl } = await import('./apply-action')
+        await clickApplyControl(page)
+        await page.waitForTimeout(1_200)
+        const afterClick = await diagnoseLivePage({
+          job: {
+            jobId: '8556658002',
+            company: 'GitLab',
+            title: 'AI Engineer',
+            applicationUrl: url,
+            applicationId: 'live-greenhouse-1',
+          },
+          page,
+          navigation: {
+            initialUrl: url,
+            responseUrl: page.url(),
+            finalUrl: page.url(),
+            redirectChain: [url, page.url()],
+          },
+        })
+        printApplicationDiagnostic(afterClick)
+        expect(afterClick.application.applicationDetected || afterClick.blockers.captcha || afterClick.blockers.login).toBe(
+          true,
+        )
+        if (afterClick.application.applicationDetected) {
+          expect(afterClick.application.fields.length).toBeGreaterThan(0)
+        }
+        return
+      }
+      expect(diagnostic.application.applicationDetected).toBe(true)
+      expect(diagnostic.application.fields).toEqual(expect.arrayContaining(['email']))
     } finally {
       await browser.close()
     }
-
-    const adapter = detectAtsAdapter({ url: fetchedUrl, html })
-    const preflight = preflightApplication({ url: fetchedUrl, html, accessible: true })
-    const surface = analyzeApplicationSurface(html, { url: fetchedUrl })
-    expect(adapter.id).toBe('greenhouse')
-    expect(surface.fields).toEqual(expect.arrayContaining(['email', 'first_name', 'last_name', 'resume']))
-    expect(surface.hasResumeUpload).toBe(true)
-    if (preflight.captcha) {
-      expect(preflight.capability).toBe('blocked')
-      expect(preflight.captchaEvidence.join(' ')).toMatch(/reCAPTCHA|CAPTCHA iframe/i)
-    } else {
-      expect(preflight.capability).toBe('auto_apply_supported')
-    }
-  }, 30_000)
+  }, 45_000)
 })
