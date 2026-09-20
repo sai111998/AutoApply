@@ -716,7 +716,8 @@ export function JobDiscoveryPage() {
                     </Button>
                     {(item.applicationStatus === 'ready' ||
                       item.applicationStatus === 'failed' ||
-                      item.applicationStatus === 'automation_blocked') && (
+                      item.applicationStatus === 'automation_blocked' ||
+                      item.applicationStatus === 'extension_not_connected') && (
                       <Button type="button" onClick={() => void onQueueApply(item)} disabled={autoBusyId === item.id}>
                         {autoBusyId === item.id ? 'Preparing…' : 'Apply'}
                       </Button>

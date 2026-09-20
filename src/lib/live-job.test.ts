@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DiscoveredJobResult } from './ai/client'
-import { jobMetaLine, sortDiscoveredJobs, topSkills, workArrangementLabel } from './live-job'
+import { autoApplyStatusLabel, jobMetaLine, sortDiscoveredJobs, topSkills, workArrangementLabel } from './live-job'
 
 function job(partial: Partial<DiscoveredJobResult> & Pick<DiscoveredJobResult, 'id' | 'title'>): DiscoveredJobResult {
   return {
@@ -56,5 +56,14 @@ describe('live job presentation', () => {
     ]
     expect(sortDiscoveredJobs(jobs, 'match').map((item) => item.id)).toEqual(['high', 'mid', 'low'])
     expect(sortDiscoveredJobs(jobs, 'recent').map((item) => item.id)).toEqual(['low', 'mid', 'high'])
+  })
+
+  it('labels Auto Apply extension states without treating them as submitted', () => {
+    expect(autoApplyStatusLabel('ready_for_submission')).toBe('Ready')
+    expect(autoApplyStatusLabel('needs_user_input')).toBe('Needs input')
+    expect(autoApplyStatusLabel('captcha_required')).toBe('CAPTCHA required')
+    expect(autoApplyStatusLabel('extension_not_connected')).toBe('Extension not connected')
+    expect(autoApplyStatusLabel('failed')).toBe('Preparation Failed')
+    expect(autoApplyStatusLabel('submitted')).toBe('Submitted')
   })
 })

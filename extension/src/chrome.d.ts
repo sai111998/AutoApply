@@ -29,13 +29,29 @@ declare const chrome: {
     }
   }
   tabs?: {
+    create: (
+      options: { url: string; active?: boolean },
+      callback?: (tab: { id?: number; url?: string }) => void,
+    ) => void
     query: (
       query: { active?: boolean; currentWindow?: boolean },
       callback: (tabs: Array<{ id?: number; url?: string; title?: string }>) => void,
     ) => void
     sendMessage: (tabId: number, message: unknown, responseCallback?: (response: unknown) => void) => void
+    onUpdated: {
+      addListener: (callback: (tabId: number, info: { status?: string; url?: string }) => void) => void
+      removeListener: (callback: (tabId: number, info: { status?: string; url?: string }) => void) => void
+    }
   }
   scripting?: {
     executeScript: (options: { target: { tabId: number }; files?: string[] }) => Promise<unknown>
+  }
+  permissions?: {
+    request: (options: { origins?: string[] }, callback?: (granted: boolean) => void) => void
+    contains: (options: { origins?: string[] }, callback?: (result: boolean) => void) => void
+  }
+  alarms?: {
+    create: (name: string, info: { periodInMinutes?: number }) => void
+    onAlarm: { addListener: (callback: (alarm: { name: string }) => void) => void }
   }
 }

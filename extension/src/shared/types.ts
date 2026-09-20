@@ -31,12 +31,18 @@ export const DETECTED_FIELD_IDS = [
   'lastName',
   'email',
   'phone',
+  'address',
+  'city',
+  'state',
+  'zip',
+  'country',
   'resume',
   'coverLetter',
   'linkedin',
   'github',
   'workAuthorization',
-  'address',
+  'sponsorship',
+  'yearsExperience',
 ] as const
 
 export type DetectedFieldId = (typeof DETECTED_FIELD_IDS)[number]

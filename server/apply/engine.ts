@@ -36,6 +36,8 @@ import {
   withTimeout,
   type ApplyTimeouts,
 } from './timeouts'
+import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/profile-store'
+import { isExtensionConnected, releaseExtensionItem } from '../extension/connection'
 import { assertCanPrepareItem } from './validate'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
@@ -110,7 +112,7 @@ export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
     }
     if (item.applicationStatus === 'submitted') counts.submitted += 1
     if (item.applicationStatus === 'skipped') counts.skipped += 1
-    if (item.applicationStatus === 'failed' || item.applicationStatus === 'blocked' || item.applicationStatus === 'automation_blocked') counts.failed += 1
+    if (item.applicationStatus === 'failed' || item.applicationStatus === 'blocked' || item.applicationStatus === 'automation_blocked' || item.applicationStatus === 'extension_not_connected') counts.failed += 1
   }
   return counts
 }
@@ -224,11 +226,27 @@ export async function startAutoApply(
     const timestamp = nowIso()
 
     if (input.config.autoTailorResume) {
-      const tailored = tailorForJob({ resumeText: input.resumeText, job })
-      finalScore = tailored.score
-      tailoredText = tailored.text
-      resumeVersionId = randomUUID()
-      resumeVersionName = `Tailored v1 — ${job.title}`
+      const identity = applicationIdentity(job)
+      const reused = previous
+        .flatMap((entry) => entry.items)
+        .find(
+          (item) =>
+            item.identityKey === identity &&
+            Boolean(item.tailoredResumeText?.trim()) &&
+            /tailored/i.test(item.resumeVersionName),
+        )
+      if (reused?.tailoredResumeText) {
+        finalScore = reused.finalMatchScore ?? initial
+        tailoredText = reused.tailoredResumeText
+        resumeVersionId = reused.resumeVersionId
+        resumeVersionName = reused.resumeVersionName
+      } else {
+        const tailored = tailorForJob({ resumeText: input.resumeText, job })
+        finalScore = tailored.score
+        tailoredText = tailored.text
+        resumeVersionId = randomUUID()
+        resumeVersionName = `Tailored v1 — ${job.title}`
+      }
     }
 
     const eligibility = isEligibleForAutoApply(job, {
@@ -236,6 +254,7 @@ export async function startAutoApply(
       finalMatchScore: finalScore,
       existingApplications: input.existingApplications,
       existingQueueIdentities: queueIdentities,
+      jobType: run.config.jobType,
     })
     if (!eligibility.ok) continue
 
@@ -270,6 +289,8 @@ export async function startAutoApply(
   run.counts = { ...recount(items), found }
   run.status = items.length ? 'paused' : 'completed'
   run.updatedAt = nowIso()
+  rememberAutoApplyProfile(input.userId, input.profile)
+  for (const item of items) rememberQueueResume(input.userId, item)
   await persistRun(store, run, items, config)
   return { run, items }
 }
@@ -440,6 +461,24 @@ async function prepareQueueItemLocked(
       return toResult(current, item)
     }
     assertCanPrepareItem(item, { userId: input.userId, runUserId: current.run.userId })
+    rememberAutoApplyProfile(current.run.userId, input.profile)
+    rememberQueueResume(current.run.userId, item)
+    if (!deps.browser && input.html == null) {
+      if (!isExtensionConnected(input.userId ?? current.run.userId)) {
+        item.applicationStatus = 'extension_not_connected'
+        item.failureReason = 'Connect the JobPilot Chrome extension to open this application in your browser.'
+        item.sessionId = null
+        await persistPrepared(store, current, item, config, timeouts)
+        logQueueItem('prepare-extension-missing', item, { code: 'EXTENSION_NOT_CONNECTED' })
+        logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
+        return toResult(current, item)
+      }
+      item.applicationStatus = 'queued'
+      item.failureReason = null
+      await persistPrepared(store, current, item, config, timeouts)
+      logAutoApplyStep(15, 'Returning response', { itemId: item.id, applicationStatus: item.applicationStatus })
+      return toResult(current, item)
+    }
     if (!deps.browser) {
       const automation = await getAutomationHealth({ probe: false })
       if (!automation.available) {
@@ -608,6 +647,7 @@ export async function cancelRun(
   current.run.status = 'cancelled'
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   current.run.updatedAt = nowIso()
+  for (const item of current.items) releaseExtensionItem(current.run.userId, item.id)
   await persistRun(store, current.run, current.items, config)
   return current
 }
@@ -655,6 +695,7 @@ async function setItemStatus(
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   current.run.updatedAt = nowIso()
+  releaseExtensionItem(current.run.userId, item.id)
   await persistRun(store, current.run, current.items, config)
   return toResult(current, item)
 }

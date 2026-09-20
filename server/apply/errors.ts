@@ -24,6 +24,15 @@ export const APPLY_ERROR_CODES = [
   'PREPARE_TIMEOUT',
   'APPLICATION_AUTOMATION_UNSUPPORTED',
   'AUTHENTICATION_FAILURE',
+  'EXTENSION_NOT_CONNECTED',
+  'APPLICATION_URL_INVALID',
+  'APPLICATION_PAGE_NOT_FOUND',
+  'CAPTCHA_REQUIRED',
+  'UNKNOWN_QUESTION',
+  'RESUME_UPLOAD_FAILED',
+  'NAVIGATION_TIMEOUT',
+  'APPLICATION_TIMEOUT',
+  'SUBMISSION_NOT_CONFIRMED',
 ] as const
 
 export type ApplyErrorCode = (typeof APPLY_ERROR_CODES)[number]
@@ -53,6 +62,15 @@ export const APPLY_ERROR_MESSAGES: Record<ApplyErrorCode, string> = {
   PREPARE_TIMEOUT: 'Application preparation timed out.',
   APPLICATION_AUTOMATION_UNSUPPORTED: 'This employer site cannot be prepared automatically.',
   AUTHENTICATION_FAILURE: 'Sign in to prepare this application.',
+  EXTENSION_NOT_CONNECTED: 'Connect the JobPilot Chrome extension to open this application in your browser.',
+  APPLICATION_URL_INVALID: 'This listing does not include a valid application URL.',
+  APPLICATION_PAGE_NOT_FOUND: 'The employer application form could not be found.',
+  CAPTCHA_REQUIRED: 'CAPTCHA was detected. JobPilot will not bypass it.',
+  UNKNOWN_QUESTION: 'This application has a question JobPilot cannot answer from your profile.',
+  RESUME_UPLOAD_FAILED: 'The selected resume could not be uploaded to the employer form.',
+  NAVIGATION_TIMEOUT: 'The employer application page did not load within the allowed time.',
+  APPLICATION_TIMEOUT: 'Application preparation timed out.',
+  SUBMISSION_NOT_CONFIRMED: 'Submission could not be confirmed on the employer site.',
 }
 
 export class ApplyError extends HttpError {

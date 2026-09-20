@@ -123,6 +123,7 @@ export function autoApplyStatusLabel(status: string): string {
     login_required: 'Login required',
     blocked: 'Blocked',
     automation_blocked: 'Blocked',
+    extension_not_connected: 'Extension not connected',
     ready_for_submission: 'Ready',
     submitting: 'Submitting',
     needs_user_confirmation: 'Needs confirmation',

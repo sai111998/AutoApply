@@ -15,6 +15,7 @@ export type AutoApplyQueueStatus =
   | 'login_required'
   | 'blocked'
   | 'automation_blocked'
+  | 'extension_not_connected'
   | 'ready_for_submission'
   | 'submitting'
   | 'needs_user_confirmation'

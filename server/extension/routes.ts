@@ -5,6 +5,11 @@ import type { ServerConfig } from '../config'
 import { HttpError } from '../types'
 import { applyExtensionEvent, getExtensionSession, startExtensionSession } from './sessions'
 import { getExtensionApplicationContext } from './context'
+import { heartbeatExtensionConnection, isExtensionConnected, registerExtensionConnection } from './connection'
+import { applyAutomationEvent, nextAutomationQueueItem, peekAutomationQueueItem } from './queue'
+import { getStoredProfile, getStoredResume } from './profile-store'
+import { AUTOMATION_EVENT_TYPES, type AutomationEvent } from '../../extension/src/shared/queue'
+import { profileFillValues } from '../../extension/src/agent/answers'
 
 function queryString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -33,6 +38,11 @@ function sendError(res: Response, error: unknown, fallback: string) {
 
 export function registerExtensionRoutes(app: Express, config?: ServerConfig) {
   app.get('/extension/test/application.html', (_req, res) => {
+    const file = path.resolve(process.cwd(), 'extension/test-pages/synthetic-application.html')
+    res.type('html').send(readFileSync(file, 'utf8'))
+  })
+
+  app.get('/extension/test/synthetic-application.html', (_req, res) => {
     const file = path.resolve(process.cwd(), 'extension/test-pages/synthetic-application.html')
     res.type('html').send(readFileSync(file, 'utf8'))
   })
@@ -97,8 +107,9 @@ export function registerExtensionRoutes(app: Express, config?: ServerConfig) {
 
   app.get('/api/extension/profile', (req: Request, res: Response) => {
     try {
-      requireUserId(req)
-      res.json({ profile: null })
+      const userId = requireUserId(req)
+      const stored = getStoredProfile(userId)
+      res.json({ profile: stored ? profileFillValues(stored) : null })
     } catch (error) {
       sendError(res, error, 'Could not load the profile.')
     }
@@ -107,19 +118,25 @@ export function registerExtensionRoutes(app: Express, config?: ServerConfig) {
   app.get('/api/extension/resume', async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req)
-      const context = await getExtensionApplicationContext(
-        {
-          userId,
-          resumeVersionId: queryString(req.query.resumeVersionId) || undefined,
-          applicationId: queryString(req.query.applicationId) || undefined,
-          jobId: queryString(req.query.jobId) || undefined,
-        },
-        config,
-      )
+      const applicationId = queryString(req.query.applicationId) || queryString(req.query.itemId)
+      const stored = applicationId ? getStoredResume(userId, applicationId) : null
+      if (!stored?.text) {
+        res.json({
+          resume: { versionId: queryString(req.query.resumeVersionId) || null, name: 'Master' },
+          available: false,
+          reason: 'The selected resume is not available for this application.',
+        })
+        return
+      }
       res.json({
-        resume: context.resume,
-        available: false,
-        reason: 'Resume file transfer is not enabled in this milestone.',
+        resume: {
+          versionId: stored.versionId,
+          name: stored.name,
+          fileName: 'resume.txt',
+          mimeType: 'text/plain',
+          contentBase64: Buffer.from(stored.text).toString('base64'),
+        },
+        available: true,
       })
     } catch (error) {
       sendError(res, error, 'Could not load the resume.')
@@ -171,6 +188,93 @@ export function registerExtensionRoutes(app: Express, config?: ServerConfig) {
       res.json({ session })
     } catch (error) {
       sendError(res, error, 'Could not record the extension event.')
+    }
+  })
+
+  app.post('/api/automation/extension/register', (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req)
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
+      const connection = registerExtensionConnection(userId, typeof body.extensionId === 'string' ? body.extensionId : 'unpacked')
+      res.json({ connected: true, connection })
+    } catch (error) {
+      sendError(res, error, 'Could not register the extension.')
+    }
+  })
+
+  app.post('/api/automation/extension/heartbeat', (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req)
+      const connection = heartbeatExtensionConnection(userId) ?? registerExtensionConnection(userId)
+      res.json({ connected: isExtensionConnected(userId), connection })
+    } catch (error) {
+      sendError(res, error, 'Could not update the extension connection.')
+    }
+  })
+
+  app.get('/api/automation/extension/status', (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req)
+      res.json({ connected: isExtensionConnected(userId) })
+    } catch (error) {
+      sendError(res, error, 'Could not load extension status.')
+    }
+  })
+
+  app.get('/api/automation/queue/next', async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req)
+      const peek = queryString(req.query.claim) === '0' || queryString(req.query.peek) === '1'
+      const result = peek ? await peekAutomationQueueItem(userId, config) : await nextAutomationQueueItem(userId, config)
+      res.json(result)
+    } catch (error) {
+      sendError(res, error, 'Could not load the next application.')
+    }
+  })
+
+  app.post('/api/automation/events', async (req: Request, res: Response) => {
+    try {
+      const userId = requireUserId(req)
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
+      const type = typeof body.type === 'string' ? body.type : ''
+      if (!(AUTOMATION_EVENT_TYPES as readonly string[]).includes(type)) {
+        res.status(400).json({ success: false, error: 'Unknown automation event.' })
+        return
+      }
+      const questions = Array.isArray(body.questions)
+        ? body.questions
+            .map((entry) => {
+              if (!entry || typeof entry !== 'object') return null
+              const row = entry as { id?: unknown; prompt?: unknown; answer?: unknown }
+              if (typeof row.prompt !== 'string' || !row.prompt.trim()) return null
+              return {
+                id: typeof row.id === 'string' && row.id.trim() ? row.id : `unknown-${row.prompt.slice(0, 24)}`,
+                prompt: row.prompt,
+                answer: typeof row.answer === 'string' ? row.answer : null,
+              }
+            })
+            .filter((entry): entry is { id: string; prompt: string; answer: string | null } => Boolean(entry))
+        : undefined
+      const event: AutomationEvent = {
+        type: type as AutomationEvent['type'],
+        runId: typeof body.runId === 'string' ? body.runId : undefined,
+        itemId: typeof body.itemId === 'string' ? body.itemId : undefined,
+        applicationId: typeof body.applicationId === 'string' ? body.applicationId : null,
+        currentUrl: typeof body.currentUrl === 'string' ? body.currentUrl : null,
+        provider: typeof body.provider === 'string' ? body.provider : undefined,
+        reason: typeof body.reason === 'string' ? body.reason : null,
+        questions,
+        confirmationText: typeof body.confirmationText === 'string' ? body.confirmationText : null,
+        confirmationNumber: typeof body.confirmationNumber === 'string' ? body.confirmationNumber : null,
+      }
+      const item = await applyAutomationEvent(userId, event, { html: typeof body.html === 'string' ? body.html : undefined, title: typeof body.title === 'string' ? body.title : undefined }, config)
+      if (!item) {
+        res.status(404).json({ success: false, error: 'Application was not found.' })
+        return
+      }
+      res.json({ item })
+    } catch (error) {
+      sendError(res, error, 'Could not record the automation event.')
     }
   })
 }

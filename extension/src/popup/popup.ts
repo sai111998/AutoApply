@@ -66,3 +66,14 @@ function requestInspection() {
 }
 
 requestInspection()
+document.getElementById('process')?.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'PEEK_QUEUE' }, (peeked) => {
+    const origin = peeked && typeof peeked === 'object' ? (peeked as { origin?: string }).origin : undefined
+    const continueProcess = () => chrome.runtime.sendMessage({ type: 'PROCESS_QUEUE' }, () => requestInspection())
+    if (origin && chrome.permissions?.request) {
+      chrome.permissions.request({ origins: [origin] }, () => continueProcess())
+      return
+    }
+    continueProcess()
+  })
+})

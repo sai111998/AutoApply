@@ -8,11 +8,17 @@ const FIELD_PATTERNS: Array<[DetectedFieldId, string, RegExp]> = [
   ['lastName', 'Last Name', new RegExp(`${CONTROL}(name=['"][^'"]*(last[-_]?name|family|surname)|autocomplete=['"]family-name['"]|aria-label=['"][^'"]*last name|placeholder=['"][^'"]*last name)|<label[^>]*>\\s*last name`, 'i')],
   ['phone', 'Phone', new RegExp(`${CONTROL}(type=['"]tel['"]|autocomplete=['"]tel['"]|name=['"][^'"]*(phone|mobile)|aria-label=['"][^'"]*phone|placeholder=['"][^'"]*phone)|<label[^>]*>\\s*(phone|mobile)`, 'i')],
   ['address', 'Address', new RegExp(`${CONTROL}(autocomplete=['"]street-address['"]|name=['"][^'"]*address|aria-label=['"][^'"]*address)|<label[^>]*>\\s*address`, 'i')],
+  ['city', 'City', new RegExp(`${CONTROL}(autocomplete=['"]address-level2['"]|name=['"][^'"]*city|aria-label=['"][^'"]*city)|<label[^>]*>\\s*city`, 'i')],
+  ['state', 'State', new RegExp(`${CONTROL}(autocomplete=['"]address-level1['"]|name=['"][^'"]*(state|province)|aria-label=['"][^'"]*state)|<label[^>]*>\\s*state`, 'i')],
+  ['zip', 'ZIP', new RegExp(`${CONTROL}(autocomplete=['"]postal-code['"]|name=['"][^'"]*(zip|postal)|aria-label=['"][^'"]*(zip|postal))|<label[^>]*>\\s*(zip|postal)`, 'i')],
+  ['country', 'Country', new RegExp(`${CONTROL}(autocomplete=['"]country['"]|name=['"][^'"]*country|aria-label=['"][^'"]*country)|<label[^>]*>\\s*country`, 'i')],
   ['linkedin', 'LinkedIn', new RegExp(`${CONTROL}(name|id|aria-label|placeholder)=['"][^'"]*linkedin|<label[^>]*>\\s*linkedin`, 'i')],
   ['github', 'GitHub', new RegExp(`${CONTROL}(name|id|aria-label|placeholder)=['"][^'"]*github|<label[^>]*>\\s*github`, 'i')],
   ['resume', 'Resume', /type=['"]file['"]|<label[^>]*>\s*(upload )?(your )?(resume|cv)|aria-label=['"][^'"]*(resume|cv|upload resume)/i],
   ['coverLetter', 'Cover Letter', new RegExp(`${CONTROL}(name|id|aria-label|placeholder)=['"][^'"]*cover|label[^>]*>\\s*cover[-_ ]letter`, 'i')],
-  ['workAuthorization', 'Work Authorization', /<label[^>]*>[\s\S]*?(work authorization|authorized to work|legally authorized)|name=['"][^'"]*(work[-_]?auth|authorization|sponsorship)/i],
+  ['workAuthorization', 'Work Authorization', /<label[^>]*>[\s\S]*?(work authorization|authorized to work|legally authorized)|name=['"][^'"]*(work[-_]?auth|authorization)/i],
+  ['sponsorship', 'Sponsorship', /<label[^>]*>[\s\S]*?sponsor|name=['"][^'"]*sponsor/i],
+  ['yearsExperience', 'Years of Experience', /<label[^>]*>[\s\S]*?years of experience|name=['"][^'"]*(years[-_]?experience|experience)/i],
 ]
 
 const BUTTON_PATTERNS: Array<[DetectedButton['kind'], RegExp]> = [

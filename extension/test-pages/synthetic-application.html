@@ -5,35 +5,59 @@
     <title>JobPilot Synthetic Application</title>
   </head>
   <body>
-    <h1>Job application form</h1>
     <form id="application-form">
-      <label for="first-name">First Name</label>
-      <input id="first-name" name="first_name" autocomplete="given-name" placeholder="First name" />
+      <section id="step-1">
+        <h1>Job application form</h1>
+        <label for="first-name">First Name</label>
+        <input id="first-name" name="first_name" autocomplete="given-name" placeholder="First name" />
 
-      <label for="last-name">Last Name</label>
-      <input id="last-name" name="last_name" autocomplete="family-name" placeholder="Last name" />
+        <label for="last-name">Last Name</label>
+        <input id="last-name" name="last_name" autocomplete="family-name" placeholder="Last name" />
 
-      <label for="email">Email</label>
-      <input id="email" type="email" name="email" autocomplete="email" placeholder="Email" />
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" autocomplete="email" placeholder="Email" />
 
-      <label for="phone">Phone</label>
-      <input id="phone" type="tel" name="phone" autocomplete="tel" placeholder="Phone" />
+        <label for="phone">Phone</label>
+        <input id="phone" type="tel" name="phone" autocomplete="tel" placeholder="Phone" />
 
-      <label for="resume">Upload Resume</label>
-      <input id="resume" type="file" name="resume" aria-label="Upload Resume" />
+        <label for="resume">Upload Resume</label>
+        <input id="resume" type="file" name="resume" aria-label="Upload Resume" />
 
-      <label for="linkedin">LinkedIn</label>
-      <input id="linkedin" name="linkedin" placeholder="LinkedIn" />
+        <button type="button" id="next-btn">Next</button>
+      </section>
 
-      <label for="work-auth">Are you legally authorized to work in the United States?</label>
-      <select id="work-auth" name="work_authorization">
-        <option value="">Select</option>
-        <option value="yes">Yes</option>
-        <option value="no">No</option>
-      </select>
+      <section id="step-2" hidden>
+        <h1>More information</h1>
+        <label for="linkedin">LinkedIn</label>
+        <input id="linkedin" name="linkedin" placeholder="LinkedIn" />
 
-      <button type="button">Next</button>
-      <button type="submit">Submit Application</button>
+        <label for="work-auth">Are you legally authorized to work in the United States?</label>
+        <select id="work-auth" name="work_authorization">
+          <option value="">Select</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+        <button type="button" id="continue-btn">Continue</button>
+      </section>
+
+      <section id="step-3" hidden>
+        <h1>Review</h1>
+        <p>Review your application before submitting.</p>
+        <button type="submit" id="submit-btn">Submit Application</button>
+      </section>
     </form>
+    <script>
+      document.getElementById('next-btn').addEventListener('click', function () {
+        document.getElementById('step-1').hidden = true
+        document.getElementById('step-2').hidden = false
+      })
+      document.getElementById('continue-btn').addEventListener('click', function () {
+        document.getElementById('step-2').hidden = true
+        document.getElementById('step-3').hidden = false
+      })
+      document.getElementById('application-form').addEventListener('submit', function (event) {
+        event.preventDefault()
+      })
+    </script>
   </body>
 </html>

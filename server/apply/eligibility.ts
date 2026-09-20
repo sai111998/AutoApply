@@ -52,8 +52,12 @@ export function isEligibleForAutoApply(
     finalMatchScore: number | null
     existingApplications?: ExistingApplicationRecord[]
     existingQueueIdentities?: string[]
+    jobType?: import('../jobs/c2c').JobTypeFilter
   },
 ): { ok: boolean; reason: string | null } {
+  if (options.jobType === 'c2c' && job.c2cStatus !== 'confirmed') {
+    return { ok: false, reason: 'C2C-only mode requires a confirmed C2C job.' }
+  }
   if (!meetsMatchThreshold(options.finalMatchScore, options.minimumMatchRate)) {
     return { ok: false, reason: 'Match score is below the selected threshold.' }
   }

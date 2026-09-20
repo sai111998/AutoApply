@@ -14,6 +14,7 @@ await build({
     background: path.join(root, 'extension/src/background/index.ts'),
     content: path.join(root, 'extension/src/content/index.ts'),
     popup: path.join(root, 'extension/src/popup/popup.ts'),
+    bridge: path.join(root, 'extension/src/bridge/index.ts'),
   },
   outdir: outDir,
   bundle: true,
@@ -34,6 +35,7 @@ const popupHtml = `<!doctype html>
     <main>
       <h1>JobPilot Detection</h1>
       <p class="note">Development inspector only. This extension does not submit applications.</p>
+      <p><button type="button" id="process">Process queued application</button></p>
       <dl>
         <div><dt>Current URL</dt><dd id="url">Inspecting…</dd></div>
         <div><dt>Page title</dt><dd id="title">—</dd></div>

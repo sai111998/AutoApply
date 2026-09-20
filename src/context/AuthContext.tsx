@@ -31,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isDemo) {
       setUser({ id: DEMO_USER_ID, email: 'alex.rivera@example.com', fullName: 'Alex Rivera' })
+      sessionStorage.setItem('jobpilot.userId', DEMO_USER_ID)
       setLoading(false)
       return
     }
@@ -54,6 +55,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           : null,
       )
+      if (sessionUser?.id) sessionStorage.setItem('jobpilot.userId', sessionUser.id)
+      else sessionStorage.removeItem('jobpilot.userId')
       setLoading(false)
     })
 
@@ -71,6 +74,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? current
           : next,
       )
+      if (next?.id) sessionStorage.setItem('jobpilot.userId', next.id)
+      else sessionStorage.removeItem('jobpilot.userId')
     })
 
     return () => {
@@ -87,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       enterDemo: () => {
         sessionStorage.setItem(DEMO_FLAG, '1')
+        sessionStorage.setItem('jobpilot.userId', DEMO_USER_ID)
         setIsDemo(true)
         setUser({ id: DEMO_USER_ID, email: 'alex.rivera@example.com', fullName: 'Alex Rivera' })
       },
@@ -111,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut: async () => {
         sessionStorage.removeItem(DEMO_FLAG)
         sessionStorage.removeItem('jobpilot.workspace')
+        sessionStorage.removeItem('jobpilot.userId')
         setIsDemo(false)
         setUser(null)
         if (supabase) await supabase.auth.signOut()
