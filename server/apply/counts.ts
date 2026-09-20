@@ -68,19 +68,9 @@ export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
 
 export function syncRunStatus(run: AutoApplyRun, items: AutoApplyQueueItem[]): AutoApplyRun {
   if (run.status === 'cancelled' || run.status === 'paused' || run.status === 'stopped') return run
-  if (!items.length) {
-    run.status = 'completed'
-    return run
-  }
   const attention = items.some((item) => ATTENTION_STATUSES.has(item.applicationStatus))
   const active = items.some((item) => ACTIVE_STATUSES.has(item.applicationStatus))
-  const allTerminal = items.every((item) => TERMINAL_STATUSES.has(item.applicationStatus))
-  const allFailed = items.every((item) => FAILED_STATUSES.has(item.applicationStatus) || item.applicationStatus === 'cancelled')
-  if (allFailed && !items.some((item) => item.applicationStatus === 'submitted')) {
-    run.status = 'failed'
-  } else if (allTerminal) {
-    run.status = 'completed'
-  } else if (attention && !active) {
+  if (attention && !active) {
     run.status = 'needs_attention'
   } else {
     run.status = 'running'

@@ -3,7 +3,7 @@ export { startAgentScheduler, stopAgentScheduler, tickActiveCampaigns, resetAgen
 export { resetAgentStateForTests, getCampaign, listCampaigns } from './state'
 export { resetAgentEventsForTests, listAgentEvents } from './events'
 export { isEligibleForAutoApply, meetsMatchThreshold, campaignJobEligible } from './eligibility'
-export { agentIntervalMs, campaignMaxJobs, DEFAULT_AGENT_INTERVAL_MS } from './policy'
+export { agentIntervalMs, campaignMaxJobs, dailyApplyCount, remainingDailySlots, utcDayKey, DEFAULT_AGENT_INTERVAL_MS } from './policy'
 export { AgentError } from './errors'
 
 import { resetAgentEventsForTests } from './events'

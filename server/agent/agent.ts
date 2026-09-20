@@ -12,7 +12,7 @@ import type { ServerConfig } from '../config'
 import type { FetchLike } from '../jobs/http'
 import { AgentError } from './errors'
 import { recordAgentEvent } from './events'
-import { persistCampaignQueue, wakeApplicationWorker, isProcessableCampaign } from './queue'
+import { persistCampaignQueue, wakeApplicationWorker } from './queue'
 import {
   createCampaignRecord,
   getCampaign,
@@ -37,7 +37,7 @@ export async function startCampaign(
   const campaign = createCampaignRecord({
     runId: started.run.id,
     userId: input.userId,
-    status: started.run.status === 'completed' ? 'completed' : 'running',
+    status: started.run.status === 'paused' || started.run.status === 'cancelled' ? started.run.status : 'running',
     startInput: input,
     serverConfig,
     fetchImpl: options.fetchImpl,
@@ -56,13 +56,9 @@ export async function startCampaign(
 export async function tickCampaign(runId: string, now = Date.now()) {
   const campaign = getCampaign(runId)
   if (!campaign) throw new AgentError('CAMPAIGN_NOT_FOUND', 'Auto Apply campaign was not found.')
-  if (!isProcessableCampaign(campaign.status) && campaign.status !== 'completed' && campaign.status !== 'failed') {
-    if (campaign.status === 'paused') throw new AgentError('CAMPAIGN_PAUSED', 'This Auto Apply campaign is paused.')
+  if (campaign.status === 'paused') throw new AgentError('CAMPAIGN_PAUSED', 'This Auto Apply campaign is paused.')
+  if (campaign.status === 'cancelled' || campaign.status === 'stopped') {
     throw new AgentError('CAMPAIGN_STOPPED', 'This Auto Apply campaign is stopped.')
-  }
-  if (campaign.status === 'completed' || campaign.status === 'failed') {
-    const current = await getAutoApplyRun(runId)
-    return current ? { run: current.run, items: current.items, added: 0 } : null
   }
   recordAgentEvent('search_tick', runId, { tick: campaign.ticks + 1 }, campaign.userId)
   const refreshed = await refreshAutoApplyRun(runId, campaign.serverConfig, campaign.input, campaign.fetchImpl, campaign.deps)

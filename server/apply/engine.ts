@@ -7,8 +7,10 @@ import type { FetchLike } from '../jobs/http'
 import { createApplyBrowser } from './browser'
 import {
   applicationIdentity,
-  isEligibleForAutoApply,
+  hasDuplicateApplication,
+  hasDuplicateQueueEntry,
   jobApplicationUrl,
+  meetsMatchThreshold,
 } from './eligibility'
 import type {
   ApplyBrowser,
@@ -41,6 +43,7 @@ import { releaseExtensionItem } from '../extension/connection'
 import { assertCanPrepareItem } from './validate'
 import { persistConfirmedSubmission, applyConfirmationToQueueItem } from './confirmed'
 import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitForBrowserJob } from '../browser-worker/worker'
+import { c2cOnly, remainingDailySlots, utcDayKey } from '../agent/policy'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -151,6 +154,10 @@ function enqueueEligibleJobs(input: {
 }): { added: number; found: number } {
   const { run, items, jobs, startInput, previous } = input
   const masterSnapshot = startInput.masterResumeText
+  const day = utcDayKey()
+  const priorToday = previous
+    .filter((entry) => entry.run.id !== run.id)
+    .flatMap((entry) => entry.items)
   const queueIdentities = [
     ...items.map((item) => item.identityKey),
     ...(startInput.existingQueueIdentities ?? []),
@@ -162,7 +169,12 @@ function enqueueEligibleJobs(input: {
   ]
   let added = 0
   for (const job of jobs) {
-    if (items.length >= run.config.maxJobs) break
+    if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) break
+    if (c2cOnly(run.config) && job.c2cStatus !== 'confirmed') continue
+    if (!jobApplicationUrl(job)) continue
+    if (hasDuplicateApplication(job, startInput.existingApplications)) continue
+    if (hasDuplicateQueueEntry(job, queueIdentities)) continue
+
     const initial = job.match?.score ?? job.matchScore ?? null
     let finalScore = initial
     let tailoredText: string | null = null
@@ -192,14 +204,7 @@ function enqueueEligibleJobs(input: {
       }
     }
 
-    const eligibility = isEligibleForAutoApply(job, {
-      minimumMatchRate: run.config.minimumMatchRate,
-      finalMatchScore: finalScore,
-      existingApplications: startInput.existingApplications,
-      existingQueueIdentities: queueIdentities,
-      jobType: run.config.jobType,
-    })
-    if (!eligibility.ok) continue
+    if (!meetsMatchThreshold(finalScore, run.config.minimumMatchRate)) continue
 
     const identity = applicationIdentity(job)
     queueIdentities.push(identity)
@@ -663,9 +668,6 @@ async function submitQueueItemLocked(
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
-  if (current.items.every((entry) => ['submitted', 'skipped', 'cancelled', 'failed', 'blocked', 'automation_blocked'].includes(entry.applicationStatus))) {
-    current.run.status = 'completed'
-  }
   await persistRun(store, current.run, current.items, config)
   logQueueItem('submit-complete', item, { userId: current.run.userId })
   return toResult(current, item)

@@ -6,7 +6,7 @@ import { classifyC2c } from '../jobs/c2c'
 import { emptyLiveMatch } from '../jobs/score'
 import { JAVA_RESUME_TEXT } from '../tailor/fixtures'
 import { defaultAutoApplyConfig, resetAutoApplyEngineForTests } from '../apply/engine'
-import { clearAutoApplyMemory } from '../apply/store'
+import { clearAutoApplyMemory, memoryStore } from '../apply/store'
 import { resetExtensionProfilesForTests } from '../extension/profile-store'
 import { claimNextBrowserJob, resetBrowserWorkerQueueForTests } from '../browser-worker/queue'
 import { createBrowserWorker, resetBrowserWorkerForTests } from '../browser-worker/worker'
@@ -27,6 +27,9 @@ import {
   campaignJobEligible,
   meetsMatchThreshold,
   agentIntervalMs,
+  dailyApplyCount,
+  remainingDailySlots,
+  utcDayKey,
   DEFAULT_AGENT_INTERVAL_MS,
 } from './index'
 import { AgentError } from './errors'
@@ -283,4 +286,93 @@ describe('autonomous campaign agent', () => {
       await site.close()
     }
   }, 60_000)
+
+  it('keeps Auto Apply on and caps queueing at 10 jobs per day', async () => {
+    const listed = Array.from({ length: 12 }, (_, index) =>
+      job({ id: `java-${index}`, title: `Java Engineer ${index}` }),
+    )
+    const started = await startCampaign(
+      config,
+      {
+        ...startInput,
+        config: defaultAutoApplyConfig({
+          maxJobs: 10,
+          minimumMatchRate: 85,
+          autoTailorResume: false,
+          q: 'Java',
+          jobType: 'c2c',
+        }),
+      },
+      { deps: { delayMs: 0, listJobs: async () => ({ jobs: listed }) } },
+    )
+    expect(started.items).toHaveLength(10)
+    expect(started.run.status).toBe('running')
+    expect(started.campaign.status).toBe('running')
+    expect(dailyApplyCount(started.items)).toBe(10)
+    expect(remainingDailySlots(started.items, 10)).toBe(0)
+    const sameDay = await tickCampaign(started.run.id)
+    expect(sameDay?.added).toBe(0)
+    expect(sameDay?.items).toHaveLength(10)
+    expect(sameDay?.run.status).toBe('running')
+  })
+
+  it('queues more jobs after the daily cap resets', async () => {
+    const listed = [
+      job({ id: 'today-1', title: 'Java Today One' }),
+      job({ id: 'today-2', title: 'Java Today Two' }),
+      job({ id: 'next-1', title: 'Java Next One' }),
+    ]
+    const started = await startCampaign(
+      config,
+      {
+        ...startInput,
+        config: defaultAutoApplyConfig({ maxJobs: 1, minimumMatchRate: 85, autoTailorResume: false, q: 'Java', jobType: 'c2c' }),
+      },
+      { deps: { delayMs: 0, listJobs: async () => ({ jobs: listed }) } },
+    )
+    expect(started.items).toHaveLength(1)
+    const stored = await memoryStore.get(started.run.id)
+    if (!stored) throw new Error('run missing')
+    stored.items[0].createdAt = '2026-09-19T12:00:00.000Z'
+    stored.items[0].submittedAt = '2026-09-19T12:30:00.000Z'
+    stored.items[0].applicationStatus = 'submitted'
+    await memoryStore.save(stored.run, stored.items)
+    expect(dailyApplyCount(stored.items, utcDayKey())).toBe(0)
+    const ticked = await tickCampaign(started.run.id)
+    expect(ticked?.added).toBe(1)
+    expect(ticked?.items).toHaveLength(2)
+    expect(ticked?.run.status).toBe('running')
+  })
+
+  it('filters C2C before tailoring and only then queues for the application agent', async () => {
+    const started = await startCampaign(
+      config,
+      {
+        ...startInput,
+        config: defaultAutoApplyConfig({
+          maxJobs: 10,
+          minimumMatchRate: 85,
+          autoTailorResume: true,
+          q: 'Java',
+          jobType: 'c2c',
+        }),
+      },
+      {
+        deps: {
+          delayMs: 0,
+          listJobs: async () => ({
+            jobs: [
+              job({ id: 'w2', title: 'W2 Java', description: 'W2 only. No C2C.', matchScore: 96 }),
+              job({ id: 'c2c', title: 'C2C Java', description: 'Corp to Corp Java C2C', matchScore: 86 }),
+            ],
+          }),
+        },
+      },
+    )
+    expect(started.items).toHaveLength(1)
+    expect(started.items[0].title).toBe('C2C Java')
+    expect(started.items[0].c2cStatus).toBe('confirmed')
+    expect(started.items[0].applicationStatus).toBe('queued')
+    expect(started.items[0].resumeVersionName).toMatch(/Tailored/)
+  })
 })

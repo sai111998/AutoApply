@@ -1,4 +1,4 @@
-import type { AutoApplyConfig } from '../apply/types'
+import type { AutoApplyConfig, AutoApplyQueueItem } from '../apply/types'
 
 export const DEFAULT_AGENT_INTERVAL_MS = 5 * 60 * 1000
 export const MIN_AGENT_INTERVAL_MS = 30_000
@@ -17,6 +17,34 @@ export function campaignMaxJobs(config: Pick<AutoApplyConfig, 'maxJobs'>): numbe
 
 export function c2cOnly(config: Pick<AutoApplyConfig, 'jobType'>): boolean {
   return config.jobType === 'c2c'
+}
+
+export function utcDayKey(iso = new Date().toISOString()): string {
+  return iso.slice(0, 10)
+}
+
+export function usesDailyApplySlot(
+  item: Pick<AutoApplyQueueItem, 'applicationStatus' | 'createdAt' | 'submittedAt'>,
+  day = utcDayKey(),
+): boolean {
+  if (item.applicationStatus === 'skipped' || item.applicationStatus === 'cancelled') return false
+  const stamp = item.submittedAt || item.createdAt
+  return stamp.slice(0, 10) === day
+}
+
+export function dailyApplyCount(
+  items: Array<Pick<AutoApplyQueueItem, 'applicationStatus' | 'createdAt' | 'submittedAt'>>,
+  day = utcDayKey(),
+): number {
+  return items.filter((item) => usesDailyApplySlot(item, day)).length
+}
+
+export function remainingDailySlots(
+  items: Array<Pick<AutoApplyQueueItem, 'applicationStatus' | 'createdAt' | 'submittedAt'>>,
+  maxJobs: number,
+  day = utcDayKey(),
+): number {
+  return Math.max(0, campaignMaxJobs({ maxJobs }) - dailyApplyCount(items, day))
 }
 
 export function canSearchAgain(lastTickAt: number | null, now = Date.now(), intervalMs = agentIntervalMs()): boolean {

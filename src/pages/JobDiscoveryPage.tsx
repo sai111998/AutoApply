@@ -406,8 +406,8 @@ export function JobDiscoveryPage() {
       }
       notify(
         result.items.length
-          ? `Auto Apply queued ${result.items.length} job${result.items.length === 1 ? '' : 's'} for review.`
-          : 'No eligible jobs met the Auto Apply threshold.',
+          ? `Auto Apply is on. The agent queued ${result.items.length} job${result.items.length === 1 ? '' : 's'} for today.`
+          : 'Auto Apply is on. No eligible jobs met the threshold yet; the agent will keep searching.',
         result.items.length ? 'success' : 'info',
       )
     } catch (startError) {
@@ -663,7 +663,7 @@ export function JobDiscoveryPage() {
               void onStartAutoApply()
             }}
           >
-            <Field label="Number of jobs">
+            <Field label="Jobs per day">
               <Select value={String(autoMaxJobs)} onChange={(event) => setAutoMaxJobs(Number(event.target.value))}>
                 {JOB_COUNT_OPTIONS.map((count) => (
                   <option key={count} value={count}>
@@ -723,7 +723,7 @@ export function JobDiscoveryPage() {
         <Card className="mt-4 p-5">
           <h2 className="text-lg font-semibold text-charcoal">Auto Apply Run</h2>
           <p className="mt-2 text-sm text-charcoal">
-            Requested: {autoRun.config.maxJobs} jobs · Minimum Match: {autoRun.config.minimumMatchRate}% · Auto Tailor:{' '}
+            Requested: {autoRun.config.maxJobs} jobs/day · Minimum Match: {autoRun.config.minimumMatchRate}% · Auto Tailor:{' '}
             {autoRun.config.autoTailorResume ? 'ON' : 'OFF'} · C2C: {autoRun.config.jobType === 'c2c' ? 'YES' : 'NO'}
           </p>
           <p className="mt-2 text-sm text-muted">

@@ -62,7 +62,7 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/Auto Apply/)
     expect(page).toMatch(/Start Auto Apply/)
     expect(page).toMatch(/Minimum match/)
-    expect(page).toMatch(/Number of jobs/)
+    expect(page).toMatch(/Jobs per day/)
     expect(page).toMatch(/Auto-update resume/)
     expect(page).toMatch(/startAutoApplyRequest/)
     expect(page).toMatch(/jobType/)
