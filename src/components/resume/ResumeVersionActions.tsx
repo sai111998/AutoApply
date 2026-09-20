@@ -40,7 +40,7 @@ export function ResumeVersionActions({
           <MoreHorizontal size={16} />
         </IconButton>
         {open && (
-          <div className="mt-2 flex flex-col gap-1 rounded-xl border border-line bg-white p-1">
+          <div className="mt-2 flex flex-col gap-1 rounded-xl border border-line bg-surface p-1">
             <MobileAction label="View" onClick={() => { setOpen(false); onView() }} />
             {onRename && <MobileAction label="Rename" onClick={() => { setOpen(false); onRename() }} />}
             <MobileAction label="Download" onClick={() => { setOpen(false); onDownload() }} />

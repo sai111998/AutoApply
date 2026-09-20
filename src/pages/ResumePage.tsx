@@ -317,7 +317,7 @@ export function ResumePage() {
 
       {renameTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(32,36,28,0.35)] p-4">
-          <div role="dialog" aria-modal="true" aria-labelledby="rename-title" className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-card">
+          <div role="dialog" aria-modal="true" aria-labelledby="rename-title" className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-card">
             <h2 id="rename-title" className="text-lg font-semibold text-charcoal">
               Rename version
             </h2>

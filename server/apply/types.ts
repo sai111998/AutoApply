@@ -1,6 +1,6 @@
 import type { C2cEvidence, C2cStatus, JobTypeFilter } from '../jobs/c2c'
 import type { LiveJob } from '../jobs/list'
-import type { RemoteFilter } from '../jobs/types'
+import type { EmploymentFilter, RemoteFilter } from '../jobs/types'
 
 export type AutoApplyQueueStatus =
   | 'queued'
@@ -40,7 +40,10 @@ export interface AutoApplyConfig {
   autoTailorResume: boolean
   jobType: JobTypeFilter
   remotePreference: RemoteFilter
+  employmentType: EmploymentFilter
   keywords: string[]
+  jobTitles: string[]
+  excludedCompanies: string[]
   q: string
   country: string
   state: string
@@ -64,7 +67,7 @@ export interface AutoApplyQuestion {
   id: string
   prompt: string
   answer: string | null
-  source: 'profile' | 'user'
+  source: 'profile' | 'user' | 'library'
 }
 
 export interface AutoApplyQueueItem {

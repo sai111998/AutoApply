@@ -12,9 +12,9 @@ export function IconButton({
   variant?: 'secondary' | 'ghost' | 'danger'
 }) {
   const variants = {
-    secondary: 'border border-line bg-white text-charcoal hover:border-olive-border hover:bg-olive-soft',
+    secondary: 'border border-line bg-surface text-charcoal hover:border-olive-border hover:bg-olive-soft',
     ghost: 'border border-transparent text-muted hover:bg-olive-soft hover:text-olive-dark',
-    danger: 'border border-transparent text-danger hover:bg-[#f7ece8]',
+    danger: 'border border-transparent text-danger hover:bg-danger-soft',
   }
   return (
     <button

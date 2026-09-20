@@ -181,7 +181,7 @@ export async function runApplicationAgent(input: {
       return { session, status: queueStatusFromSession(state), questions: [], failureReason: null }
     }
     const surface = analyzeApplicationSurface(html, { url: currentUrl })
-    const resolved = resolveApplicationQuestions(surface.inspection.questions, input.profile)
+    const resolved = resolveApplicationQuestions(surface.inspection.questions, input.profile, input.userId)
     if (resolved.unknown.length && surface.kind === 'application') {
       recordUserIntervention({
         applicationId: input.item.applicationId || input.item.id,

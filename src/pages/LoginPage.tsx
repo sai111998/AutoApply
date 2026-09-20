@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { Compass, ShieldCheck, Sparkles } from 'lucide-react'
 import { BrandMark } from '@/components/BrandMark'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/Button'
 import { Field, TextInput } from '@/components/ui/Field'
 import { useAuth } from '@/context/AuthContext'
@@ -40,8 +41,8 @@ export function LoginPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-olive-soft">Job search workspace</p>
           <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight">See the fit before you apply.</h1>
           <p className="mt-4 text-sm leading-6 text-white/75">
-            Track roles, store resume versions, and keep every analysis in your account. This MVP does not auto-submit
-            applications.
+            Track roles, store resume versions, and keep every analysis in your account. Auto Apply can submit
+            supported applications from the JobPilot worker.
           </p>
           <ul className="mt-8 space-y-3 text-sm text-white/85">
             <li className="flex gap-3">
@@ -57,7 +58,10 @@ export function LoginPage() {
         </div>
       </section>
       <section className="grid place-items-center bg-canvas px-6 py-12">
-        <div className="w-full max-w-md rounded-2xl border border-line bg-white p-8 shadow-card">
+        <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-8 shadow-card">
+          <div className="mb-6 flex justify-end">
+            <ThemeToggle compact />
+          </div>
           <div className="mb-8 min-[901px]:hidden">
             <Link to="/" aria-label="JobPilot AI home">
               <BrandMark />

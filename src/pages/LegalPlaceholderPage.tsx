@@ -14,7 +14,7 @@ export function LegalPlaceholderPage({
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive">JobPilot AI</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-charcoal">{title}</h1>
         <p className="mt-4 text-sm leading-7 text-muted">{summary}</p>
-        <p className="mt-6 rounded-2xl border border-line bg-white px-5 py-4 text-sm leading-6 text-muted">
+        <p className="mt-6 rounded-2xl border border-line bg-surface px-5 py-4 text-sm leading-6 text-muted">
           This page is a placeholder. Full language will be published here before a public launch. Nothing on this
           site is legal advice, and JobPilot AI does not guarantee interviews, offers, or job placement.
         </p>

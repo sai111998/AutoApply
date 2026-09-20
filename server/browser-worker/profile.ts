@@ -25,7 +25,7 @@ export function allowUnattendedSubmit(url: string, env: NodeJS.ProcessEnv = proc
   try {
     const parsed = new URL(url)
     const local = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
-    return local && (/\/browser-worker\/synthetic\//.test(parsed.pathname) || /\/extension\/test\//.test(parsed.pathname))
+    return local && (/\/browser-worker\/synthetic\//.test(parsed.pathname) || /\/test-employer/.test(parsed.pathname) || /\/extension\/test\//.test(parsed.pathname))
   } catch {
     return false
   }

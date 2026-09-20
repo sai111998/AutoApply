@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { BrandMark } from '@/components/BrandMark'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/Button'
 import { Field, TextInput } from '@/components/ui/Field'
 import { useAuth } from '@/context/AuthContext'
@@ -33,11 +34,14 @@ export function SignupPage() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center px-6 py-12">
+    <div className="grid min-h-screen place-items-center bg-canvas px-6 py-12">
       <div className="w-full max-w-md">
-        <Link to="/" aria-label="JobPilot AI home">
-          <BrandMark />
-        </Link>
+        <div className="flex items-start justify-between gap-3">
+          <Link to="/" aria-label="JobPilot AI home">
+            <BrandMark />
+          </Link>
+          <ThemeToggle compact />
+        </div>
         <h1 className="mt-8 text-3xl font-semibold tracking-tight text-charcoal">Create your workspace</h1>
         <p className="mt-2 text-slate-ink">
           {supabaseEnabled

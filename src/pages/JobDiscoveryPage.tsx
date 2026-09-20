@@ -388,6 +388,7 @@ export function JobDiscoveryPage() {
           country: 'US',
           state,
           location,
+          employmentType,
         },
         existingApplications: applications.map((application) => {
           const job = jobs.find((item) => item.id === application.jobId)
@@ -925,7 +926,7 @@ export function JobDiscoveryPage() {
       {reviewing && (
         <div className="fixed inset-0 z-40 flex justify-end bg-charcoal/40" onClick={closeReview}>
           <aside
-            className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl"
+            className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-surface shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3 border-b border-line px-6 py-5">

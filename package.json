@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:e2e": "vitest run server/agent/agent.test.ts server/browser-worker/worker.test.ts",
     "test:watch": "vitest",
     "db:apply": "tsx scripts/apply-schema.ts",
     "db:auth-flow": "tsx scripts/test-auth-flow.ts",

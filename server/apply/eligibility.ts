@@ -35,6 +35,15 @@ export function hasDuplicateApplication(
   })
 }
 
+export function isExcludedCompany(company: string | null | undefined, excluded: string[] = []): boolean {
+  const hay = (company ?? '').trim().toLowerCase()
+  if (!hay) return false
+  return excluded.some((item) => {
+    const needle = item.trim().toLowerCase()
+    return Boolean(needle) && (hay === needle || hay.includes(needle))
+  })
+}
+
 export function hasDuplicateQueueEntry(job: ListedAutoApplyJob, identities: string[] = []): boolean {
   const identity = applicationIdentity(job)
   return identities.some((item) => item.trim().toLowerCase() === identity)
@@ -53,8 +62,12 @@ export function isEligibleForAutoApply(
     existingApplications?: ExistingApplicationRecord[]
     existingQueueIdentities?: string[]
     jobType?: import('../jobs/c2c').JobTypeFilter
+    excludedCompanies?: string[]
   },
 ): { ok: boolean; reason: string | null } {
+  if (isExcludedCompany(job.company, options.excludedCompanies)) {
+    return { ok: false, reason: 'This company is excluded from Auto Apply.' }
+  }
   if (options.jobType === 'c2c' && job.c2cStatus !== 'confirmed') {
     return { ok: false, reason: 'C2C-only mode requires a confirmed C2C job.' }
   }

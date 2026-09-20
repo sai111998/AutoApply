@@ -76,6 +76,7 @@ export function shouldPersistAutoApplyApplication(queueStatus: string): boolean 
 
 export function isConfirmedSubmittedApplication(application: Application): boolean {
   if (application.isConfirmedSubmission === true) return true
+  if (application.isConfirmedSubmission === false) return false
   return application.status === 'applied' || application.status === 'interview' || application.status === 'offer'
 }
 

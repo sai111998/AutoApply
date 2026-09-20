@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http'
 
-const JOB_PAGE = `<!doctype html>
+function jobPage(base: string) {
+  return `<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /><title>Software Engineer Job Details</title></head>
   <body>
@@ -8,15 +9,17 @@ const JOB_PAGE = `<!doctype html>
     <p>Job Description</p>
     <p>Job Identification 210786459</p>
     <p>Posting Date January 1</p>
-    <a href="/browser-worker/synthetic/apply">Apply Now</a>
+    <a href="${base}/apply">Apply Now</a>
   </body>
 </html>`
+}
 
-const APPLY_PAGE = `<!doctype html>
+function applyPage(base: string) {
+  return `<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /><title>JobPilot Synthetic Application</title></head>
   <body>
-    <form id="application-form" action="/browser-worker/synthetic/submit" method="post">
+    <form id="application-form" action="${base}/submit" method="post">
       <section id="step-1">
         <h1>Job application form</h1>
         <label for="first-name">First Name</label>
@@ -65,6 +68,7 @@ const APPLY_PAGE = `<!doctype html>
     </script>
   </body>
 </html>`
+}
 
 const CONFIRM_PAGE = `<!doctype html>
 <html lang="en">
@@ -76,10 +80,13 @@ const CONFIRM_PAGE = `<!doctype html>
   </body>
 </html>`
 
-export function syntheticEmployerHtml(kind: 'job' | 'apply' | 'confirm'): string {
-  if (kind === 'job') return JOB_PAGE
+export function syntheticEmployerHtml(
+  kind: 'job' | 'apply' | 'confirm',
+  base = '/browser-worker/synthetic',
+): string {
+  if (kind === 'job') return jobPage(base)
   if (kind === 'confirm') return CONFIRM_PAGE
-  return APPLY_PAGE
+  return applyPage(base)
 }
 
 export function startSyntheticEmployer(port = 0): Promise<{
@@ -92,18 +99,24 @@ export function startSyntheticEmployer(port = 0): Promise<{
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       const url = req.url || '/'
-      if (url.startsWith('/browser-worker/synthetic/submit')) {
+      const testBase = url.startsWith('/test-employer')
+      const base = testBase ? '/test-employer' : '/browser-worker/synthetic'
+      if (url.startsWith('/browser-worker/synthetic/submit') || url.startsWith('/test-employer/submit')) {
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end(CONFIRM_PAGE)
+        res.end(syntheticEmployerHtml('confirm', base))
         return
       }
-      if (url.startsWith('/browser-worker/synthetic/apply') || url.startsWith('/extension/test/application')) {
+      if (
+        url.startsWith('/browser-worker/synthetic/apply') ||
+        url.startsWith('/test-employer/apply') ||
+        url.startsWith('/extension/test/application')
+      ) {
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end(APPLY_PAGE)
+        res.end(syntheticEmployerHtml('apply', base))
         return
       }
       res.writeHead(200, { 'Content-Type': 'text/html' })
-      res.end(JOB_PAGE)
+      res.end(syntheticEmployerHtml('job', url.startsWith('/test-employer') ? '/test-employer' : '/browser-worker/synthetic'))
     })
     server.listen(port, '127.0.0.1', () => {
       const address = server.address()
@@ -111,8 +124,8 @@ export function startSyntheticEmployer(port = 0): Promise<{
       resolve({
         server,
         port: resolvedPort,
-        jobUrl: `http://127.0.0.1:${resolvedPort}/browser-worker/synthetic/job`,
-        applyUrl: `http://127.0.0.1:${resolvedPort}/browser-worker/synthetic/apply`,
+        jobUrl: `http://127.0.0.1:${resolvedPort}/test-employer`,
+        applyUrl: `http://127.0.0.1:${resolvedPort}/test-employer/apply`,
         close: () =>
           new Promise((done, reject) => {
             server.close((error) => (error ? reject(error) : done()))

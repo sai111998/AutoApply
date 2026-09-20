@@ -11,7 +11,9 @@ export function isLoopbackHostname(hostname: string): boolean {
 export function isSyntheticExtensionTestUrl(url: URL): boolean {
   return (
     isLoopbackHostname(url.hostname) &&
-    (url.pathname.startsWith('/extension/test/') || url.pathname.startsWith('/browser-worker/synthetic/'))
+    (url.pathname.startsWith('/extension/test/') ||
+      url.pathname.startsWith('/browser-worker/synthetic/') ||
+      url.pathname.startsWith('/test-employer'))
   )
 }
 

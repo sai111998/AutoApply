@@ -5,18 +5,19 @@ import { claimNextBrowserJob } from './queue'
 import { syntheticEmployerHtml } from './synthetic'
 
 export function registerBrowserWorkerRoutes(app: Express) {
-  app.get('/browser-worker/synthetic/job', (_req, res) => {
-    res.type('html').send(syntheticEmployerHtml('job'))
-  })
-  app.get('/browser-worker/synthetic/apply', (_req, res) => {
-    res.type('html').send(syntheticEmployerHtml('apply'))
-  })
-  app.post('/browser-worker/synthetic/submit', (_req, res) => {
-    res.type('html').send(syntheticEmployerHtml('confirm'))
-  })
-  app.get('/browser-worker/synthetic/submit', (_req, res) => {
-    res.type('html').send(syntheticEmployerHtml('confirm'))
-  })
+  function sendSynthetic(res: Response, kind: 'job' | 'apply' | 'confirm', base: string) {
+    res.type('html').send(syntheticEmployerHtml(kind, base))
+  }
+
+  app.get('/browser-worker/synthetic/job', (_req, res) => sendSynthetic(res, 'job', '/browser-worker/synthetic'))
+  app.get('/browser-worker/synthetic/apply', (_req, res) => sendSynthetic(res, 'apply', '/browser-worker/synthetic'))
+  app.post('/browser-worker/synthetic/submit', (_req, res) => sendSynthetic(res, 'confirm', '/browser-worker/synthetic'))
+  app.get('/browser-worker/synthetic/submit', (_req, res) => sendSynthetic(res, 'confirm', '/browser-worker/synthetic'))
+
+  app.get('/test-employer', (_req, res) => sendSynthetic(res, 'job', '/test-employer'))
+  app.get('/test-employer/apply', (_req, res) => sendSynthetic(res, 'apply', '/test-employer'))
+  app.post('/test-employer/submit', (_req, res) => sendSynthetic(res, 'confirm', '/test-employer'))
+  app.get('/test-employer/submit', (_req, res) => sendSynthetic(res, 'confirm', '/test-employer'))
 
   app.get('/api/browser-worker/health', async (_req: Request, res: Response) => {
     const playwright = await importPlaywright()

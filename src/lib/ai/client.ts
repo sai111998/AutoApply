@@ -520,6 +520,9 @@ export interface AutoApplyConfigPayload {
   country?: string
   state?: string
   location?: string
+  employmentType?: string
+  jobTitles?: string[]
+  excludedCompanies?: string[]
 }
 
 export interface AutoApplyProfilePayload {

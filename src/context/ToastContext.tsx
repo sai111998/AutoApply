@@ -38,10 +38,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={toast.id}
             className={`toast-enter pointer-events-auto rounded-xl border px-4 py-3 text-sm font-medium shadow-card ${
               toast.tone === 'error'
-                ? 'border-[#ead5cf] bg-white text-danger'
+                ? 'border-danger-border bg-surface text-danger'
                 : toast.tone === 'info'
-                  ? 'border-line bg-white text-charcoal'
-                  : 'border-olive-border bg-white text-olive-dark'
+                  ? 'border-line bg-surface text-charcoal'
+                  : 'border-olive-border bg-surface text-olive-dark'
             }`}
           >
             {toast.message}

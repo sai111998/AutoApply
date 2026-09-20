@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ToastProvider } from '@/context/ToastContext'
+import { ThemeProvider } from '@/context/ThemeContext'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { WorkspaceProvider } from '@/context/WorkspaceContext'
 import { AppLayout } from '@/components/layout/AppLayout'
@@ -42,10 +43,11 @@ function CatchAll() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <ToastProvider>
-        <AuthProvider>
-          <WorkspaceProvider>
-            <Routes>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <WorkspaceProvider>
+              <Routes>
               <Route path="/" element={<LandingGate />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignupPage />} />
@@ -102,9 +104,10 @@ export default function App() {
               </Route>
               <Route path="*" element={<CatchAll />} />
             </Routes>
-          </WorkspaceProvider>
-        </AuthProvider>
-      </ToastProvider>
+            </WorkspaceProvider>
+          </AuthProvider>
+        </ToastProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   )
 }

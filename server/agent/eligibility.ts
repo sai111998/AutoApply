@@ -3,6 +3,7 @@ export {
   hasDuplicateApplication,
   hasDuplicateQueueEntry,
   isEligibleForAutoApply,
+  isExcludedCompany,
   jobApplicationUrl,
   meetsMatchThreshold,
 } from '../apply/eligibility'
@@ -18,6 +19,7 @@ export function campaignJobEligible(
     jobType?: import('../jobs/c2c').JobTypeFilter
     existingApplications?: import('../apply/types').ExistingApplicationRecord[]
     existingQueueIdentities?: string[]
+    excludedCompanies?: string[]
   },
 ) {
   if (c2cOnly({ jobType: options.jobType ?? 'all' }) && job.c2cStatus !== 'confirmed') {

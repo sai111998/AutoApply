@@ -44,7 +44,7 @@ function ApplicationRecordActions({
       </Button>
       {application.selectedResumeVersionId ? (
         <Link
-          className="inline-flex items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-charcoal"
+          className="inline-flex items-center justify-center rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-charcoal"
           to={`/resume/versions/${application.selectedResumeVersionId}`}
         >
           View Resume
@@ -56,7 +56,7 @@ function ApplicationRecordActions({
       )}
       {openUrl ? (
         <a
-          className="inline-flex items-center justify-center rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-semibold text-charcoal"
+          className="inline-flex items-center justify-center rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-charcoal"
           href={openUrl}
           target="_blank"
           rel="noreferrer"
@@ -187,7 +187,7 @@ export function ApplicationsPage() {
 
       {visibleSelected.length > 0 && (
         <div
-          className="sticky top-0 z-10 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white px-4 py-3"
+          className="sticky top-0 z-10 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3"
           data-testid="bulk-action-bar"
         >
           <p className="text-sm font-semibold text-charcoal">{visibleSelected.length} selected</p>
@@ -384,7 +384,7 @@ export function ApplicationsPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="submitted-jd-title"
-            className="w-full max-w-2xl rounded-2xl border border-line bg-white p-6 shadow-card"
+            className="w-full max-w-2xl rounded-2xl border border-line bg-surface p-6 shadow-card"
           >
             <h2 id="submitted-jd-title" className="text-lg font-semibold text-charcoal">
               Job description

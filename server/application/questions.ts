@@ -1,1 +1,1 @@
-export { answerKnownQuestion, resolveApplicationQuestions } from '../apply/questions'
+export { answerKnownQuestion, resolveApplicationQuestions, rememberUserAnswers } from '../apply/questions'

@@ -34,7 +34,7 @@ export function ErrorState({
   onRetry?: () => void
 }) {
   return (
-    <div className="rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-5 py-4">
+    <div className="rounded-2xl border border-danger-border bg-danger-soft px-5 py-4">
       <p className="text-sm font-semibold text-danger">{title}</p>
       <p className="mt-1 text-sm text-muted">{description}</p>
       {onRetry && (

@@ -31,6 +31,8 @@ import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
 import { getAutomationHealth, publicAutomationHealth, type AutomationHealth } from './apply/health'
 import { logApplyEvent } from './apply/log'
+import { memoryStore } from './apply/store'
+import { getBrowserWorker } from './browser-worker/worker'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
 import { tailorResume, validateSubmittedResume } from './tailor/engine'
@@ -91,10 +93,18 @@ export function createApp(options: AppOptions): Express {
     const health = publicAutomationHealth(
       await (options.automationHealth ?? (() => getAutomationHealth({ probe: true })))(),
     )
+    const runs = memoryStore.listAll ? await memoryStore.listAll() : []
+    const items = runs.flatMap((entry) => entry.items)
+    const processing = new Set(['opening', 'filling', 'preparing', 'tailoring', 'submitting'])
     res.json({
       available: health.available,
       browser: health.browser,
       playwright: health.playwright,
+      worker: Boolean(getBrowserWorker()?.running()),
+      queue: {
+        depth: items.filter((item) => item.applicationStatus === 'queued' || item.applicationStatus === 'ready').length,
+        processing: items.filter((item) => processing.has(item.applicationStatus)).length,
+      },
       runtime: health.runtime,
       ...(health.reason ? { reason: health.reason } : {}),
     })

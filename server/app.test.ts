@@ -360,6 +360,8 @@ describe('GET /api/automation/health', () => {
       available: false,
       browser: null,
       playwright: true,
+      worker: false,
+      queue: { depth: 0, processing: 0 },
       runtime: 'node-server',
       reason: 'Chromium executable not found',
     })
@@ -382,8 +384,20 @@ describe('GET /api/automation/health', () => {
       available: true,
       browser: 'chromium',
       playwright: true,
+      worker: false,
+      queue: { depth: 0, processing: 0 },
       runtime: 'node-server',
     })
+  })
+})
+
+describe('GET /test-employer', () => {
+  it('serves the synthetic employer job page', async () => {
+    const app = createApp({ config })
+    const response = await request(app).get('/test-employer')
+    expect(response.status).toBe(200)
+    expect(response.text).toMatch(/Apply Now/)
+    expect(response.text).toMatch(/\/test-employer\/apply/)
   })
 })
 

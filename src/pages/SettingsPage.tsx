@@ -4,6 +4,7 @@ import { Card, PageHeader } from '@/components/ui/Card'
 import { Field, Select, TextArea, TextInput } from '@/components/ui/Field'
 import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { getAnalysisHealth } from '@/lib/ai/client'
 import type { UserPreferences, WorkArrangement } from '@/types/domain'
 import { WORK_ARRANGEMENT_LABELS } from '@/types/domain'
@@ -50,6 +51,14 @@ export function SettingsPage() {
       />
 
       <form className="grid gap-6 lg:grid-cols-2" onSubmit={(event) => void onSubmit(event)}>
+        <Card className="p-6">
+          <h2 className="text-lg font-semibold text-charcoal">Appearance</h2>
+          <p className="mt-2 text-sm text-muted">Light is the default. Dark mode is stored on this device.</p>
+          <div className="mt-4">
+            <ThemeToggle />
+          </div>
+        </Card>
+
         <Card className="p-6">
           <h2 className="text-lg font-semibold text-charcoal">AI preferences</h2>
           <div className="mt-4 space-y-4">
@@ -145,8 +154,7 @@ export function SettingsPage() {
                 Prepare a cover letter when an application is marked ready
               </label>
               <p className="rounded-2xl bg-canvas p-4 text-sm text-muted">
-                Automatic job submission and browser automation are not part of this MVP. Preferences here shape how
-                you prepare materials, not how they are sent.
+                Auto Apply runs in the JobPilot browser worker. Preferences here shape how you prepare materials.
               </p>
             </div>
           </div>

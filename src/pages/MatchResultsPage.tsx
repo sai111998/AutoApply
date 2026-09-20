@@ -139,12 +139,12 @@ export function MatchResultsPage() {
       />
 
       {!resume && (
-        <div className="mb-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">
+        <div className="mb-6 rounded-2xl border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
           Upload a resume before tailoring.
         </div>
       )}
       {resume && (!job.description.trim() || match.analysisStatus !== 'complete') && (
-        <div className="mb-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">
+        <div className="mb-6 rounded-2xl border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
           Analyze a job before tailoring your resume.
         </div>
       )}

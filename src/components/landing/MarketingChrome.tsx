@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import { BrandMark } from '@/components/BrandMark'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/Button'
 
 const navLinks = [
@@ -29,7 +30,7 @@ export function MarketingNav() {
   }
 
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-white/90 backdrop-blur-md">
+    <header className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <Link to="/" aria-label="JobPilot AI home" onClick={() => setOpen(false)}>
           <BrandMark />
@@ -42,6 +43,7 @@ export function MarketingNav() {
           ))}
         </nav>
         <div className="hidden items-center gap-2 md:flex">
+          <ThemeToggle compact />
           <Link
             to="/login"
             className="rounded-xl px-3 py-2 text-sm font-semibold text-charcoal transition hover:bg-olive-soft"
@@ -63,7 +65,10 @@ export function MarketingNav() {
         </button>
       </div>
       {open && (
-        <div className="border-t border-line bg-white px-4 py-4 md:hidden">
+        <div className="border-t border-line bg-surface px-4 py-4 md:hidden">
+          <div className="mb-3">
+            <ThemeToggle />
+          </div>
           <div className="flex flex-col gap-3 text-sm font-medium">
             {navLinks.map((link) => (
               <a
@@ -97,7 +102,7 @@ export function MarketingNav() {
 
 export function MarketingFooter() {
   return (
-    <footer className="border-t border-line bg-white">
+    <footer className="border-t border-line bg-surface">
       <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-[1.3fr_1fr_1fr]">
         <div>
           <Link to="/" aria-label="JobPilot AI home">

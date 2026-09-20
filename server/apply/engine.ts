@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { conservativeTailor } from '../tailor/engine'
 import { tailoredResumeToText } from '../tailor/match-optimize'
-import { listLiveJobs, type LiveJobsRequest } from '../jobs/list'
+import type { LiveJobsRequest } from '../jobs/list'
 import type { ServerConfig } from '../config'
 import type { FetchLike } from '../jobs/http'
 import { createApplyBrowser } from './browser'
@@ -9,6 +9,7 @@ import {
   applicationIdentity,
   hasDuplicateApplication,
   hasDuplicateQueueEntry,
+  isExcludedCompany,
   jobApplicationUrl,
   meetsMatchThreshold,
 } from './eligibility'
@@ -44,6 +45,8 @@ import { assertCanPrepareItem } from './validate'
 import { persistConfirmedSubmission, applyConfirmationToQueueItem } from './confirmed'
 import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitForBrowserJob } from '../browser-worker/worker'
 import { c2cOnly, remainingDailySlots, utcDayKey } from '../agent/policy'
+import { discoverCampaignJobs } from '../agent/discovery'
+import { rememberUserAnswers } from './questions'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -119,30 +122,7 @@ async function listCampaignJobs(
   fetchImpl: FetchLike | undefined,
   deps: AutoApplyEngineDeps,
 ): Promise<ListedAutoApplyJob[]> {
-  const listJobs =
-    deps.listJobs ??
-    ((request: LiveJobsRequest) => listLiveJobs(config, request, fetchImpl))
-  const listed = await listJobs({
-    q: input.config.q,
-    country: input.config.country || 'US',
-    state: input.config.state,
-    location: input.config.location,
-    remote: input.config.remotePreference,
-    employmentType: 'any',
-    seniority: '',
-    page: 1,
-    limit: 50,
-    resumeText: input.resumeText,
-    resumeVersionId: input.resumeVersionId ?? undefined,
-    sort: 'match',
-    jobType: input.config.jobType,
-  })
-  const keywords = input.config.keywords.map((item) => item.trim().toLowerCase()).filter(Boolean)
-  return listed.jobs.filter((job) => {
-    if (!keywords.length) return true
-    const haystack = `${job.title} ${job.company} ${job.description ?? ''}`.toLowerCase()
-    return keywords.every((keyword) => haystack.includes(keyword))
-  })
+  return discoverCampaignJobs(config, input, fetchImpl, deps)
 }
 
 function enqueueEligibleJobs(input: {
@@ -171,6 +151,7 @@ function enqueueEligibleJobs(input: {
   for (const job of jobs) {
     if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) break
     if (c2cOnly(run.config) && job.c2cStatus !== 'confirmed') continue
+    if (isExcludedCompany(job.company, run.config.excludedCompanies)) continue
     if (!jobApplicationUrl(job)) continue
     if (hasDuplicateApplication(job, startInput.existingApplications)) continue
     if (hasDuplicateQueueEntry(job, queueIdentities)) continue
@@ -729,6 +710,7 @@ export async function answerQueueItem(
     const next = answers.find((answer) => answer.id === question.id)
     return next ? { ...question, answer: next.answer, source: 'user' as const } : question
   })
+  rememberUserAnswers(current.run.userId, item.questions)
   if (item.questions.every((question) => question.answer?.trim())) {
     item.applicationStatus = 'ready_for_submission'
   }
@@ -794,7 +776,10 @@ export function defaultAutoApplyConfig(partial: Partial<AutoApplyConfig> = {}): 
     autoTailorResume: true,
     jobType: 'all',
     remotePreference: 'any',
+    employmentType: 'any',
     keywords: [],
+    jobTitles: [],
+    excludedCompanies: [],
     q: '',
     country: 'US',
     state: '',

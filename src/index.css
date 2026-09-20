@@ -17,6 +17,8 @@
   --color-line: #e2dfd6;
   --color-fog: #ebe8e0;
   --color-danger: #9a4f3e;
+  --color-danger-soft: #fdf7f5;
+  --color-danger-border: #ead5cf;
   --color-warning: #a4843c;
   --color-info: #4d6a78;
 
@@ -37,6 +39,31 @@
 
 html {
   scroll-behavior: smooth;
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+  --color-olive-soft: #2a3122;
+  --color-olive-border: #4a5538;
+  --color-canvas: #131510;
+  --color-surface: #1b1e18;
+  --color-charcoal: #eceee6;
+  --color-muted: #b0b6a8;
+  --color-line: #2f342b;
+  --color-fog: #242820;
+  --color-danger: #e08a78;
+  --color-danger-soft: #3a2420;
+  --color-danger-border: #6a4038;
+  --color-warning: #d4b56a;
+  --color-info: #7fa3b3;
+  --color-navy: #eceee6;
+  --color-ink: #eceee6;
+  --color-slate-ink: #b0b6a8;
+  --color-paper: #131510;
+  --color-card: #1b1e18;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.24), 0 8px 24px rgb(0 0 0 / 0.28);
+  --shadow-hover: 0 1px 2px rgb(0 0 0 / 0.28), 0 12px 28px rgb(0 0 0 / 0.34);
 }
 
 html,
@@ -142,7 +169,7 @@ textarea {
 .field {
   width: 100%;
   border: 1px solid var(--color-line);
-  background: #fff;
+  background: var(--color-surface);
   color: var(--color-charcoal);
   border-radius: 0.75rem;
   padding: 0.7rem 0.85rem;
@@ -237,7 +264,7 @@ textarea {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, var(--color-fog) 25%, #f3f1eb 50%, var(--color-fog) 75%);
+  background: linear-gradient(90deg, var(--color-fog) 25%, var(--color-line) 50%, var(--color-fog) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.4s ease infinite;
   border-radius: 0.6rem;

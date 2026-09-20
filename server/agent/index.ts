@@ -4,14 +4,16 @@ export { resetAgentStateForTests, getCampaign, listCampaigns } from './state'
 export { resetAgentEventsForTests, listAgentEvents } from './events'
 export { isEligibleForAutoApply, meetsMatchThreshold, campaignJobEligible } from './eligibility'
 export { agentIntervalMs, campaignMaxJobs, dailyApplyCount, remainingDailySlots, utcDayKey, DEFAULT_AGENT_INTERVAL_MS } from './policy'
-export { AgentError } from './errors'
+export { discoverCampaignJobs } from './discovery'
 
 import { resetAgentEventsForTests } from './events'
 import { resetAgentSchedulerForTests } from './scheduler'
 import { resetAgentStateForTests } from './state'
+import { resetAnswerLibraryForTests } from '../application/answers'
 
 export function resetAgentForTests() {
   resetAgentStateForTests()
   resetAgentEventsForTests()
   resetAgentSchedulerForTests()
+  resetAnswerLibraryForTests()
 }

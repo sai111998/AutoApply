@@ -477,7 +477,7 @@ export function TailorResumePage() {
       )}
 
       {message && (
-        <div className="mt-6 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">{message}</div>
+        <div className="mt-6 rounded-2xl border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">{message}</div>
       )}
 
       {failed && !options.some((item) => item.versionId) && (
@@ -546,7 +546,7 @@ export function TailorResumePage() {
               <li
                 key={option.id}
                 className={`flex flex-col gap-3 px-6 py-4 lg:flex-row lg:items-center lg:justify-between ${
-                  option.isSelected ? 'bg-olive-soft/70' : previewOption?.id === option.id ? 'bg-canvas' : 'bg-white'
+                  option.isSelected ? 'bg-olive-soft/70' : previewOption?.id === option.id ? 'bg-canvas' : 'bg-surface'
                 }`}
               >
                 <button type="button" className="text-left" onClick={() => setPreviewOptionId(option.id)}>
@@ -577,7 +577,7 @@ export function TailorResumePage() {
       {(complete || editing) && activeContent && (
         <>
           {!editing && (
-            <div className="sticky top-3 z-10 mt-6 rounded-2xl border border-line bg-white/95 p-4 shadow-[0_8px_18px_rgb(85,99,56,0.08)] backdrop-blur">
+            <div className="sticky top-3 z-10 mt-6 rounded-2xl border border-line bg-surface/95 p-4 shadow-[0_8px_18px_rgb(85,99,56,0.08)] backdrop-blur">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Primary actions</p>

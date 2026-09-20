@@ -109,7 +109,7 @@ export function LandingPage() {
           <HeroPreview />
         </section>
 
-        <section id="features" className="landing-reveal scroll-mt-24 border-t border-line bg-white py-16 sm:py-20">
+        <section id="features" className="landing-reveal scroll-mt-24 border-t border-line bg-surface py-16 sm:py-20">
           <div className="mx-auto max-w-6xl px-4 sm:px-6">
             <h2 className="text-2xl font-semibold tracking-tight text-charcoal sm:text-3xl">What JobPilot is for</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted sm:text-base">
@@ -138,7 +138,7 @@ export function LandingPage() {
             <div className="relative mt-12 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
               <div className="pointer-events-none absolute top-8 right-[7%] left-[7%] hidden h-px bg-olive-border xl:block" />
               {steps.map((step, index) => (
-                <article key={step.title} className="relative rounded-2xl border border-line bg-white p-5 transition hover:border-olive-border">
+                <article key={step.title} className="relative rounded-2xl border border-line bg-surface p-5 transition hover:border-olive-border">
                   <div className="flex items-center gap-3">
                     <div className="relative grid h-12 w-12 place-items-center rounded-2xl bg-olive-soft text-olive">
                       <step.icon size={20} />
@@ -155,7 +155,7 @@ export function LandingPage() {
           </div>
         </section>
 
-        <section className="landing-reveal border-t border-line bg-white py-16 sm:py-20">
+        <section className="landing-reveal border-t border-line bg-surface py-16 sm:py-20">
           <div className="mx-auto max-w-6xl px-4 sm:px-6">
             <h2 className="text-2xl font-semibold tracking-tight text-charcoal sm:text-3xl">A quieter way to see fit</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted sm:text-base">
@@ -179,7 +179,7 @@ export function LandingPage() {
             </div>
             <ul className="space-y-3">
               {whyItems.map((item) => (
-                <li key={item} className="flex gap-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-charcoal">
+                <li key={item} className="flex gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-sm text-charcoal">
                   <Check size={18} className="mt-0.5 shrink-0 text-olive" />
                   {item}
                 </li>
@@ -208,7 +208,7 @@ export function LandingPage() {
         </section>
 
         <section className="landing-reveal mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
-          <div className="rounded-3xl border border-line bg-white p-6 sm:p-10">
+          <div className="rounded-3xl border border-line bg-surface p-6 sm:p-10">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-1 text-olive" size={22} />
               <div>

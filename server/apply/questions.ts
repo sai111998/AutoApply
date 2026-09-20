@@ -1,4 +1,5 @@
 import type { AutoApplyProfile, AutoApplyQuestion } from './types'
+import { lookupApprovedAnswer, rememberApprovedAnswer } from '../application/answers'
 
 function normalizePrompt(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -13,9 +14,20 @@ function authorizationAnswer(value: string | null): string | null {
   return null
 }
 
-export function answerKnownQuestion(prompt: string, profile: AutoApplyProfile): AutoApplyQuestion | null {
+export function answerKnownQuestion(
+  prompt: string,
+  profile: AutoApplyProfile,
+  userId?: string,
+): AutoApplyQuestion | null {
   const text = normalizePrompt(prompt)
   if (!text) return null
+
+  if (userId) {
+    const stored = lookupApprovedAnswer(userId, prompt)
+    if (stored?.answer) {
+      return { id: stored.normalizedQuestion, prompt, answer: stored.answer, source: 'library' }
+    }
+  }
 
   if (/authoriz|work in the united states|legally authorized|eligible to work/.test(text)) {
     const answer = authorizationAnswer(profile.workAuthorization)
@@ -68,16 +80,31 @@ export function answerKnownQuestion(prompt: string, profile: AutoApplyProfile): 
   return null
 }
 
-export function resolveApplicationQuestions(prompts: string[], profile: AutoApplyProfile): {
+export function resolveApplicationQuestions(
+  prompts: string[],
+  profile: AutoApplyProfile,
+  userId?: string,
+): {
   answered: AutoApplyQuestion[]
   unknown: AutoApplyQuestion[]
 } {
   const answered: AutoApplyQuestion[] = []
   const unknown: AutoApplyQuestion[] = []
   for (const prompt of prompts) {
-    const known = answerKnownQuestion(prompt, profile)
+    const known = answerKnownQuestion(prompt, profile, userId)
     if (known?.answer) answered.push(known)
     else unknown.push({ id: `unknown-${unknown.length + 1}`, prompt, answer: null, source: 'user' })
   }
   return { answered, unknown }
+}
+
+export function rememberUserAnswers(
+  userId: string,
+  answers: Array<{ prompt?: string; answer?: string | null }>,
+) {
+  for (const item of answers) {
+    if (item.prompt && item.answer) {
+      rememberApprovedAnswer({ userId, prompt: item.prompt, answer: item.answer, source: 'user' })
+    }
+  }
 }

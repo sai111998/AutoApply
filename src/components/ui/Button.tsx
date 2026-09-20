@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 
 const variants = {
   primary: 'bg-olive text-white hover:bg-olive-dark shadow-[0_8px_18px_rgb(85,99,56,0.16)]',
-  secondary: 'bg-white text-charcoal border border-line hover:bg-olive-soft hover:border-olive-border',
+  secondary: 'bg-surface text-charcoal border border-line hover:bg-olive-soft hover:border-olive-border',
   ghost: 'bg-transparent text-muted hover:bg-olive-soft hover:text-olive-dark',
   danger: 'bg-danger text-white hover:bg-[#7f3f32]',
 }

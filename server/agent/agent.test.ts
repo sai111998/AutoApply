@@ -375,4 +375,34 @@ describe('autonomous campaign agent', () => {
     expect(started.items[0].applicationStatus).toBe('queued')
     expect(started.items[0].resumeVersionName).toMatch(/Tailored/)
   })
+
+  it('excludes blocked companies before queueing', async () => {
+    const started = await startCampaign(
+      config,
+      {
+        ...startInput,
+        config: defaultAutoApplyConfig({
+          maxJobs: 10,
+          minimumMatchRate: 85,
+          autoTailorResume: false,
+          q: 'Java',
+          jobType: 'c2c',
+          excludedCompanies: ['Blocked Corp'],
+        }),
+      },
+      {
+        deps: {
+          delayMs: 0,
+          listJobs: async () => ({
+            jobs: [
+              job({ id: 'blocked', title: 'Java Blocked', company: 'Blocked Corp' }),
+              job({ id: 'ok', title: 'Java Open', company: 'Acme' }),
+            ],
+          }),
+        },
+      },
+    )
+    expect(started.items).toHaveLength(1)
+    expect(started.items[0].company).toBe('Acme')
+  })
 })

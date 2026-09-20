@@ -8,7 +8,7 @@ export function Tabs({
   items: { id: string; label: string; count?: number }[]
 }) {
   return (
-    <div className="inline-flex rounded-xl border border-line bg-white p-1">
+    <div className="inline-flex rounded-xl border border-line bg-surface p-1">
       {items.map((item) => {
         const active = item.id === value
         return (

@@ -22,7 +22,7 @@ export function ResumeFilePreview({
         role="dialog"
         aria-modal="true"
         aria-labelledby="resume-preview-title"
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-card"
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card"
         data-testid="resume-file-preview"
       >
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
@@ -50,13 +50,13 @@ export function ResumeFilePreview({
         </div>
         <div className="min-h-0 flex-1 overflow-auto bg-canvas p-4">
           {preview.kind === 'pdf' && preview.signedUrl ? (
-            <iframe title={`${preview.fileName} preview`} className="h-[70vh] w-full rounded-xl border border-line bg-white" src={preview.signedUrl} />
+            <iframe title={`${preview.fileName} preview`} className="h-[70vh] w-full rounded-xl border border-line bg-surface" src={preview.signedUrl} />
           ) : preview.text ? (
-            <pre className="whitespace-pre-wrap rounded-xl border border-line bg-white p-4 text-sm leading-6 text-charcoal">
+            <pre className="whitespace-pre-wrap rounded-xl border border-line bg-surface p-4 text-sm leading-6 text-charcoal">
               {preview.text}
             </pre>
           ) : (
-            <div className="grid h-48 place-items-center rounded-xl border border-line bg-white px-6 text-center text-sm text-muted">
+            <div className="grid h-48 place-items-center rounded-xl border border-line bg-surface px-6 text-center text-sm text-muted">
               Unable to preview this resume.
             </div>
           )}

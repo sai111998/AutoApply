@@ -13,6 +13,7 @@ import type { FetchLike } from '../jobs/http'
 import { AgentError } from './errors'
 import { recordAgentEvent } from './events'
 import { persistCampaignQueue, wakeApplicationWorker } from './queue'
+import { canSearchAgain } from './policy'
 import {
   createCampaignRecord,
   getCampaign,
@@ -59,6 +60,11 @@ export async function tickCampaign(runId: string, now = Date.now()) {
   if (campaign.status === 'paused') throw new AgentError('CAMPAIGN_PAUSED', 'This Auto Apply campaign is paused.')
   if (campaign.status === 'cancelled' || campaign.status === 'stopped') {
     throw new AgentError('CAMPAIGN_STOPPED', 'This Auto Apply campaign is stopped.')
+  }
+  if (!canSearchAgain(campaign.lastTickAt, now)) {
+    const current = await getAutoApplyRun(runId)
+    if (!current) throw new AgentError('CAMPAIGN_NOT_FOUND', 'Auto Apply campaign was not found.')
+    return { run: current.run, items: current.items, added: 0 }
   }
   recordAgentEvent('search_tick', runId, { tick: campaign.ticks + 1 }, campaign.userId)
   const refreshed = await refreshAutoApplyRun(runId, campaign.serverConfig, campaign.input, campaign.fetchImpl, campaign.deps)

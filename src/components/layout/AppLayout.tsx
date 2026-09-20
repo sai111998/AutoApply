@@ -11,6 +11,7 @@ import {
   Menu,
 } from 'lucide-react'
 import { BrandMark } from '@/components/BrandMark'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { useAuth } from '@/context/AuthContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { useEffect, useState } from 'react'
@@ -49,7 +50,7 @@ export function AppLayout() {
     <div className="app-shell" data-testid="app-shell">
       <aside
         data-testid="app-sidebar"
-        className={`app-sidebar z-20 flex flex-col border-r border-line bg-white px-3 py-5 max-[960px]:fixed max-[960px]:inset-y-0 max-[960px]:left-0 max-[960px]:w-72 max-[960px]:transition-transform ${
+        className={`app-sidebar z-20 flex flex-col border-r border-line bg-surface px-3 py-5 max-[960px]:fixed max-[960px]:inset-y-0 max-[960px]:left-0 max-[960px]:w-72 max-[960px]:transition-transform ${
           open ? 'max-[960px]:translate-x-0' : 'max-[960px]:-translate-x-full'
         }`}
       >
@@ -99,10 +100,10 @@ export function AppLayout() {
       )}
 
       <div className="app-shell-main" data-testid="app-main">
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-white/80 px-4 py-3 backdrop-blur-sm sm:px-8">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-surface/80 px-4 py-3 backdrop-blur-sm sm:px-8">
           <button
             type="button"
-            className="rounded-xl border border-line bg-white px-3 py-2 text-sm font-semibold min-[961px]:hidden"
+            className="rounded-xl border border-line bg-surface px-3 py-2 text-sm font-semibold min-[961px]:hidden"
             onClick={() => setOpen(true)}
           >
             <span className="inline-flex items-center gap-2">
@@ -111,14 +112,17 @@ export function AppLayout() {
             </span>
           </button>
           <div className="hidden text-sm text-muted min-[961px]:block">Job search workspace</div>
-          <div className="ml-auto text-right text-sm">
-            <p className="font-semibold text-charcoal">{profile.location || 'Add a location'}</p>
-            <p className="text-muted">{profile.targetJobTitles[0] || 'Set a target role'}</p>
+          <div className="ml-auto flex items-center gap-3 text-right text-sm">
+            <ThemeToggle compact />
+            <div>
+              <p className="font-semibold text-charcoal">{profile.location || 'Add a location'}</p>
+              <p className="text-muted">{profile.targetJobTitles[0] || 'Set a target role'}</p>
+            </div>
           </div>
         </header>
         <main className="app-shell-content px-4 py-6 sm:px-8 sm:py-8">
           {error && (
-            <div className="mb-4 rounded-2xl border border-[#ead5cf] bg-[#fdf7f5] px-4 py-3 text-sm text-danger">
+            <div className="mb-4 rounded-2xl border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
               {error}
             </div>
           )}
