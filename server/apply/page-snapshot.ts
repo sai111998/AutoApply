@@ -35,7 +35,7 @@ const KEYWORD_PATTERNS: Array<[(typeof APPLICATION_KEYWORD_LABELS)[number], RegE
   ['Apply', /\bapply\b/i],
   ['Apply now', /apply now/i],
   ['Apply to job', /apply to (this )?job/i],
-  ['Start application', /start (your )?application/i],
+  ['Start application', /start (your )?application|apply manually|begin application/i],
   ['Continue', /\bcontinue\b/i],
   ['Next', /\bnext\b/i],
   ['Submit application', /submit application/i],
@@ -87,9 +87,20 @@ export function snapshotFromHtml(html: string, url = ''): PageSnapshot {
 }
 
 export function hasApplyControl(html: string, text = visibleText(html)): boolean {
-  if (/<(button|a)[^>]*>\s*(apply now|apply to (this )?job|start (your )?application|apply)\s*</i.test(html)) return true
-  if (/aria-label=['"][^'"]*\b(apply now|start application|apply)\b/i.test(html)) return true
-  return /\b(apply now|apply to (this )?job|start (your )?application)\b/i.test(text)
+  if (
+    /<(button|a)[^>]*>[\s\S]{0,200}?\b(apply now|apply to (this )?job|start (your )?application|begin application|apply manually|\bapply\b)/i.test(
+      html,
+    )
+  ) {
+    return true
+  }
+  if (/aria-label=['"][^'"]*\b(apply now|start application|begin application|apply)\b/i.test(html)) return true
+  if (
+    /data-automation-id=['"][^'"]*(apply|adventureButton|jobPostingApplyButton|applyManually)[^'"]*['"]/i.test(html)
+  ) {
+    return true
+  }
+  return /\b(apply now|apply to (this )?job|start (your )?application|begin application|apply manually)\b/i.test(text)
 }
 
 export function pageVisibleText(html: string): string {

@@ -3,7 +3,13 @@ import { hostnameOf } from './types'
 
 const workday: ApplicationProvider = {
   id: 'workday',
-  applyNames: [/^\s*apply\s*$/i, /^\s*apply now\s*$/i, /^\s*apply manually\s*$/i, /^\s*start application\s*$/i],
+  applyNames: [
+    /^\s*apply\s*$/i,
+    /^\s*apply now\s*$/i,
+    /^\s*apply manually\s*$/i,
+    /^\s*start application\s*$/i,
+    /^\s*begin application\s*$/i,
+  ],
   match({ hostname, url, html }) {
     return (
       /\.myworkdayjobs\.com$/i.test(hostname) ||

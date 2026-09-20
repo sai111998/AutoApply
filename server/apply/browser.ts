@@ -7,7 +7,7 @@ import {
   type BrowserSubmitContext,
   type ExternalSubmissionResult,
 } from './confirm'
-import { clickApplyControl, clickNextControl } from './apply-action'
+import { clickApplyControl, clickNextControl, clickSecondaryApplyControl, dismissBlockingNotices } from './apply-action'
 import { saveApplyDebugArtifact } from './debug-capture'
 import { inspectApplicationPage } from './detect'
 import { ApplyError, isApplyError } from './errors'
@@ -214,6 +214,7 @@ async function fillKnownFields(page: PlaywrightPage | undefined, input: BrowserP
       'input[name="primary-email"]',
       'input[autocomplete="email"]',
       'input[id*="email" i]',
+      '[data-automation-id="email"]',
     ],
     input.profile.email,
     timeouts,
@@ -303,15 +304,26 @@ async function waitAfterApplyClick(
     try {
       await page.waitForURL(
         (value) => value.href !== previousUrl || /\/apply\b/i.test(value.pathname),
-        { timeout: spaWaitMs },
+        { timeout: Math.min(spaWaitMs, 8_000) },
       )
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 1_200))
+      await clickSecondaryApplyControl(page)
     }
   } else {
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
-  return waitForRenderableSurface(page, fallbackUrl, spaWaitMs, { acceptApplyControl: false })
+  const deadline = Date.now() + spaWaitMs
+  let last = await analyzePage(page, fallbackUrl)
+  while (Date.now() < deadline) {
+    if (last.kind === 'application' || last.kind === 'blocked' || last.code === 'JOB_NOT_FOUND') return last
+    if (last.hasApplyControl && last.kind === 'job_details') {
+      const secondary = await clickSecondaryApplyControl(page)
+      if (secondary.clicked) console.info(`[AutoApply] Apply control: ${secondary.label}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    last = await analyzePage(page, fallbackUrl)
+  }
+  return last
 }
 
 function resultFromAnalysis(input: BrowserPrepareInput, analysis: ApplicationAnalysis): BrowserPrepareResult {
@@ -619,6 +631,8 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
       } catch {
         // Navigation already committed. Continue waiting for the rendered surface.
       }
+      const notice = await dismissBlockingNotices(page)
+      if (notice.dismissed) console.info(`[AutoApply] Blocking notice: ${notice.label}`)
       let analysis = await waitForRenderableSurface(page, input.url, this.timeouts.spaWaitMs)
       analysis.snapshot.finalUrl = pageUrl(page, input.url)
       logEmployerSnapshot(input.url, analysis.snapshot)
@@ -627,10 +641,16 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
         kind: analysis.kind,
         code: analysis.code,
       })
-      if (analysis.kind === 'job_details' && analysis.hasApplyControl) {
+      const canOpenApplication =
+        analysis.hasApplyControl &&
+        (analysis.kind === 'job_details' || analysis.kind === 'unknown' || analysis.code === 'JOB_PAGE_REQUIRES_APPLY_CLICK')
+      if (canOpenApplication && analysis.kind !== 'application' && analysis.kind !== 'blocked') {
         const clicked = await clickApplyControl(page, { url: pageUrl(page, input.url), html: analysis.snapshot.html })
         console.info(`[AutoApply] Apply control: ${clicked.clicked ? clicked.label || 'clicked' : 'not found'}`)
         if (clicked.clicked) {
+          await new Promise((resolve) => setTimeout(resolve, 600))
+          const secondary = await clickSecondaryApplyControl(page)
+          if (secondary.clicked) console.info(`[AutoApply] Apply control: ${secondary.label}`)
           const previousUrl = pageUrl(page, input.url)
           analysis = await waitAfterApplyClick(page, input.url, previousUrl, this.timeouts.spaWaitMs)
           analysis.snapshot.finalUrl = pageUrl(page, input.url)
@@ -658,7 +678,17 @@ export class PlaywrightApplyBrowser implements ApplyBrowser {
         code: analysis.code,
       })
       if (prepared.status !== 'ready_for_submission') {
-        if (prepared.status === 'failed') await saveApplyDebugArtifact(page, analysis.code)
+        if (prepared.status === 'failed') {
+          await saveApplyDebugArtifact(page, analysis.code, undefined, {
+            initialUrl: input.url,
+            finalUrl: analysis.snapshot.finalUrl,
+            frames: analysis.snapshot.iframes,
+            signals: analysis.signals,
+            fields: analysis.fields,
+            provider: analysis.provider,
+            applyControl: analysis.hasApplyControl,
+          })
+        }
         await browser.close()
         return prepared
       }

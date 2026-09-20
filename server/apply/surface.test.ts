@@ -2,7 +2,13 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clickApplyControl, isLegitimateApplyLabel, isLegitimateNextLabel } from './apply-action'
+import {
+  clickApplyControl,
+  clickSecondaryApplyControl,
+  dismissBlockingNotices,
+  isLegitimateApplyLabel,
+  isLegitimateNextLabel,
+} from './apply-action'
 import { PlaywrightApplyBrowser } from './browser'
 import { saveApplyDebugArtifact } from './debug-capture'
 import { analyzeApplicationSurface, mergeSurfaceDocuments } from './surface'
@@ -148,8 +154,53 @@ describe('application surface detection', () => {
     expect(analyzeApplicationSurface('<p>Access denied bot detection</p>').code).toBe('APPLICATION_PAGE_BLOCKED')
   })
 
+  it('detects a Workday job page when Apply is nested and uses data-automation-id', () => {
+    const html = `
+      <div data-automation-id="jobPostingPage">
+        <div data-automation-id="jobPostingHeader">Software Engineer 2 (Java)</div>
+        <div data-automation-id="jobPostingDescription">Job description</div>
+        <button data-automation-id="adventureButton"><span>Apply</span></button>
+      </div>
+    `
+    const analysis = analyzeApplicationSurface(html, {
+      url: 'https://usbank.wd1.myworkdayjobs.com/us_bank_careers/job/Atlanta-GA/Software-Engineer-2--Java-_2026-0022330',
+    })
+    expect(analysis.kind).toBe('job_details')
+    expect(analysis.hasApplyControl).toBe(true)
+    expect(analysis.provider).toBe('workday')
+  })
+
+  it('treats a Workday missing-job page as JOB_NOT_FOUND instead of form not found', () => {
+    const analysis = analyzeApplicationSurface(
+      '<div data-automation-id="errorMessage">The page you are looking for doesn\'t exist.</div>',
+      { url: 'https://usbank.wd1.myworkdayjobs.com/us_bank_careers/job/missing' },
+    )
+    expect(analysis.code).toBe('JOB_NOT_FOUND')
+    expect(analysis.failureReason).toMatch(/no longer available/i)
+  })
+
+  it('treats a Workday create-account step as login required', () => {
+    const analysis = analyzeApplicationSurface(
+      `
+        <h1>Create Account</h1>
+        <p>Sign in If this is your first time applying</p>
+        <form>
+          <label>Email Address</label>
+          <input type="text" data-automation-id="email">
+          <input type="password" data-automation-id="password">
+          <button>Sign In</button>
+        </form>
+      `,
+      { url: 'https://usbank.wd1.myworkdayjobs.com/en-US/us_bank_careers/job/x/apply/applyManually' },
+    )
+    expect(analysis.code).toBe('LOGIN_REQUIRED')
+    expect(analysis.kind).toBe('blocked')
+  })
+
   it('does not treat Easy Apply or social apply labels as legitimate apply actions', () => {
     expect(isLegitimateApplyLabel('Apply Now')).toBe(true)
+    expect(isLegitimateApplyLabel('Apply Manually')).toBe(true)
+    expect(isLegitimateApplyLabel('Begin application')).toBe(true)
     expect(isLegitimateApplyLabel('Start application')).toBe(true)
     expect(isLegitimateApplyLabel('Easy Apply')).toBe(false)
     expect(isLegitimateApplyLabel('Apply with LinkedIn')).toBe(false)
@@ -190,6 +241,43 @@ describe('job page apply click', () => {
     const clicked = await clickApplyControl(page, { url: states[0].url, html: states[0].html })
     expect(clicked).toEqual({ clicked: true, label: 'Apply Now' })
     expect(analyzeApplicationSurface(states[index].html, { url: states[index].url }).kind).toBe('application')
+  })
+
+  it('clicks Apply Manually in a Workday start-application dialog', async () => {
+    const locator = {
+      first() {
+        return locator
+      },
+      async count() {
+        return 1
+      },
+      async innerText() {
+        return 'Apply Manually'
+      },
+      async click() {
+        return undefined
+      },
+    }
+    const clicked = await clickSecondaryApplyControl({ getByRole: () => locator })
+    expect(clicked).toEqual({ clicked: true, label: 'Apply Manually' })
+  })
+
+  it('dismisses a Workday cookie notice without treating it as Apply', async () => {
+    const locator = {
+      first() {
+        return locator
+      },
+      async count() {
+        return 1
+      },
+      async click() {
+        return undefined
+      },
+    }
+    const dismissed = await dismissBlockingNotices({
+      locator: (selector: string) => (selector.includes('legalNoticeAcceptButton') ? locator : { first: () => locator, async count() { return 0 } }),
+    })
+    expect(dismissed.dismissed).toBe(true)
   })
 
   it('prepares a live job page by clicking Apply before scoring the form', async () => {
@@ -252,6 +340,221 @@ describe('job page apply click', () => {
     expect(prepared.status).toBe('ready_for_submission')
     expect(prepared.status).not.toBe('submitted')
     expect(prepared.failureReason).toBeNull()
+  })
+
+  it('pauses for unknown questions instead of guessing', async () => {
+    const browser = new PlaywrightApplyBrowser()
+    const prepared = await browser.prepare({
+      url: 'https://jobs.example.com/apply',
+      profile,
+      resumeText: 'Java engineer',
+      html: `
+        <form>
+          <label>Email Address</label>
+          <input type="email" name="email">
+          <label>When can you start?</label>
+          <input name="availability">
+          <button type="submit">Submit Application</button>
+        </form>
+      `,
+    })
+    expect(prepared.status).toBe('needs_user_input')
+    expect(prepared.questions.some((item) => /start/i.test(item.prompt) && item.answer == null)).toBe(true)
+    expect(prepared.status).not.toBe('submitted')
+  })
+
+  it('fails a missing Workday job as no longer available, not form-not-found', async () => {
+    const browser = new PlaywrightApplyBrowser()
+    const prepared = await browser.prepare({
+      url: 'https://usbank.wd1.myworkdayjobs.com/us_bank_careers/job/missing',
+      profile,
+      resumeText: 'Java engineer',
+      html: '<div data-automation-id="errorMessage">The page you are looking for doesn\'t exist.</div>',
+    })
+    expect(prepared.status).toBe('failed')
+    expect(prepared.failureReason).toMatch(/no longer available/i)
+    expect(prepared.failureReason).not.toMatch(/form could not be found/i)
+  })
+
+  it('pauses when Workday starts at Create Account after Apply Manually', async () => {
+    const browser = new PlaywrightApplyBrowser()
+    const prepared = await browser.prepare({
+      url: 'https://usbank.wd1.myworkdayjobs.com/en-US/us_bank_careers/job/x/apply/applyManually',
+      profile,
+      resumeText: 'Java engineer',
+      html: `
+        <h1>Create Account</h1>
+        <p>Sign in If this is your first time applying</p>
+        <form>
+          <label>Email Address</label>
+          <input type="text" data-automation-id="email">
+          <input type="password" data-automation-id="password">
+          <button>Sign In</button>
+        </form>
+      `,
+    })
+    expect(prepared.status).toBe('login_required')
+    expect(prepared.status).not.toBe('submitted')
+  })
+
+  it('waits for a dynamic application form instead of failing on the first empty render', async () => {
+    let reads = 0
+    const browser = new PlaywrightApplyBrowser({
+      timeouts: { spaWaitMs: 1_200, selectorMs: 20, launchMs: 40, navigationMs: 40, fillMs: 20 },
+      health: async () => ({ available: true, runtime: 'node-server' }),
+      loadPlaywright: async () => ({
+        chromium: {
+          async launch() {
+            return {
+              async close() {
+                return undefined
+              },
+              async newPage() {
+                return {
+                  async goto() {
+                    return undefined
+                  },
+                  async content() {
+                    reads += 1
+                    if (reads < 3) return '<html><body><h1>Loading</h1></body></html>'
+                    return redirectedAts
+                  },
+                  url: () => 'https://boards.greenhouse.io/acme/jobs/1',
+                  async title() {
+                    return 'Acme Application'
+                  },
+                }
+              },
+            }
+          },
+        },
+      }),
+    })
+    const prepared = await browser.prepare({
+      url: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      resumeText: 'Java engineer',
+    })
+    expect(reads).toBeGreaterThan(1)
+    expect(prepared.status).toBe('ready_for_submission')
+    expect(prepared.status).not.toBe('submitted')
+  })
+
+  it('times out a page that never becomes an application', async () => {
+    const browser = new PlaywrightApplyBrowser({
+      timeouts: { spaWaitMs: 20, selectorMs: 20, launchMs: 40, navigationMs: 40, fillMs: 20 },
+      health: async () => ({ available: true, runtime: 'node-server' }),
+      loadPlaywright: async () => ({
+        chromium: {
+          async launch() {
+            return {
+              async close() {
+                return undefined
+              },
+              async newPage() {
+                return {
+                  async goto() {
+                    return undefined
+                  },
+                  async content() {
+                    return '<html><body><p>Welcome to Example</p></body></html>'
+                  },
+                  url: () => 'https://careers.unknown-corp.example/role',
+                  async title() {
+                    return 'Careers'
+                  },
+                }
+              },
+            }
+          },
+        },
+      }),
+    })
+    const prepared = await browser.prepare({
+      url: 'https://careers.unknown-corp.example/role',
+      profile,
+      resumeText: 'Java engineer',
+    })
+    expect(prepared.status).toBe('failed')
+    expect(prepared.failureReason).toMatch(/form could not be found/i)
+    expect(prepared.status).not.toBe('submitted')
+  })
+
+  it('advances a multi-step application with Next without marking submitted', async () => {
+    const states = [
+      {
+        html: applicationPage,
+        url: 'https://jobs.example.com/apply/step-1',
+      },
+      {
+        html: redirectedAts,
+        url: 'https://jobs.example.com/apply/review',
+      },
+    ]
+    let index = 0
+    const locator = {
+      first() {
+        return locator
+      },
+      async count() {
+        return 1
+      },
+      async innerText() {
+        return index === 0 ? 'Next' : 'Submit Application'
+      },
+      async fill() {
+        return undefined
+      },
+      async setInputFiles() {
+        return undefined
+      },
+      async click() {
+        if (index === 0) index = 1
+      },
+    }
+    const browser = new PlaywrightApplyBrowser({
+      timeouts: { spaWaitMs: 20, selectorMs: 20, launchMs: 40, navigationMs: 40, fillMs: 20 },
+      health: async () => ({ available: true, runtime: 'node-server' }),
+      loadPlaywright: async () => ({
+        chromium: {
+          async launch() {
+            return {
+              async close() {
+                return undefined
+              },
+              async newPage() {
+                return {
+                  async goto() {
+                    return undefined
+                  },
+                  async content() {
+                    return states[index].html
+                  },
+                  url: () => states[index].url,
+                  async title() {
+                    return 'Application'
+                  },
+                  getByRole() {
+                    return locator
+                  },
+                  locator() {
+                    return locator
+                  },
+                }
+              },
+            }
+          },
+        },
+      }),
+    })
+    const prepared = await browser.prepare({
+      url: states[0].url,
+      profile,
+      resumeText: 'Java engineer',
+    })
+    expect(index).toBe(1)
+    expect(prepared.status).toBe('ready_for_submission')
+    expect(prepared.status).not.toBe('submitted')
   })
 })
 

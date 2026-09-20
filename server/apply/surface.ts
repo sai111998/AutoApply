@@ -13,6 +13,7 @@ export type ApplicationDetectionCode =
   | 'APPLICATION_FORM_DETECTED'
   | 'UNSUPPORTED_PROVIDER'
   | 'INVALID_APPLICATION_URL'
+  | 'JOB_NOT_FOUND'
 
 export type ApplicationSurfaceKind = 'blocked' | 'job_details' | 'application' | 'unknown'
 
@@ -40,7 +41,7 @@ export interface ApplicationAnalysis {
 
 const CONTROL = '<(input|textarea|select)[^>]*'
 const FIELD_PATTERNS: Array<[string, RegExp]> = [
-  ['email', new RegExp(`${CONTROL}(type=['"]email['"]|autocomplete=['"]email['"]|name=['"][^'"]*email|id=['"][^'"]*email|aria-label=['"][^'"]*email|placeholder=['"][^'"]*email)|<label[^>]*>\\s*email`, 'i')],
+  ['email', new RegExp(`${CONTROL}(type=['"]email['"]|autocomplete=['"]email['"]|name=['"][^'"]*email|id=['"][^'"]*email|aria-label=['"][^'"]*email|placeholder=['"][^'"]*email|data-automation-id=['"]email['"])|<label[^>]*>\\s*email|data-automation-id=['"]formField-email['"]`, 'i')],
   ['first_name', new RegExp(`${CONTROL}(name=['"][^'"]*(first[-_]?name|given)|autocomplete=['"]given-name['"]|aria-label=['"][^'"]*first name)|<label[^>]*>\\s*first name`, 'i')],
   ['last_name', new RegExp(`${CONTROL}(name=['"][^'"]*(last[-_]?name|family|surname)|autocomplete=['"]family-name['"]|aria-label=['"][^'"]*last name)|<label[^>]*>\\s*last name`, 'i')],
   ['full_name', new RegExp(`${CONTROL}(name=['"]([^'"]*full[_-]?name|name)['"]|autocomplete=['"]name['"]|aria-label=['"][^'"]*(full )?name)`, 'i')],
@@ -93,10 +94,20 @@ function blockedCode(status: PageInspection['status']): ApplicationDetectionCode
   return null
 }
 
+export function looksLikeMissingJobPage(html: string, text = pageVisibleText(html)): boolean {
+  return /page you are looking for doesn't exist|this job is no longer available|this job posting is no longer|job has been filled|requisition is closed|errorMessage/i.test(
+    `${html} ${text}`,
+  ) && /doesn't exist|no longer available|has been filled|requisition is closed/i.test(text)
+}
+
 export function looksLikeJobDetailsPage(html: string, score: number, applyControl: boolean): boolean {
   const text = pageVisibleText(html)
-  const jobCopy = /job description|job identification|posting date|view more jobs|job category|locations?/i.test(text)
-  return applyControl && score < APPLICATION_SCORE_THRESHOLD && (jobCopy || /\/job\/\d+/i.test(html))
+  const jobCopy =
+    /job description|job identification|job requisition|posting date|view more jobs|job category|time left to apply|jobPostingDescription|jobPostingHeader/i.test(
+      `${html} ${text}`,
+    )
+  const workdayJob = /data-automation-id=['"]jobPosting(Page|Header|Description)['"]/i.test(html)
+  return applyControl && score < APPLICATION_SCORE_THRESHOLD && (jobCopy || workdayJob || /\/job\/[^/]+/i.test(html))
 }
 
 export function analyzeApplicationSurface(
@@ -113,6 +124,24 @@ export function analyzeApplicationSurface(
   const hasResumeUpload = collected.fields.includes('resume') || inspection.hasFileInput
   const hasNext = /aria-label=['"]next['"]|>\s*next\s*<|continue/i.test(html)
   const hasFinalSubmit = /submit application|send application|>\s*submit\s*</i.test(html)
+  if (looksLikeMissingJobPage(html)) {
+    return {
+      kind: 'unknown',
+      code: 'JOB_NOT_FOUND',
+      score,
+      signals: collected.signals.map((item) => item.id),
+      fields: collected.fields,
+      hasApplyControl: applyControl,
+      hasResumeUpload,
+      hasNext,
+      hasFinalSubmit,
+      inIframe: Boolean(input.inIframe),
+      provider: provider.id,
+      inspection,
+      snapshot,
+      failureReason: 'This job is no longer available.',
+    }
+  }
   const blocked = blockedCode(inspection.status)
   if (blocked) {
     return {

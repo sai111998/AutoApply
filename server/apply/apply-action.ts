@@ -10,16 +10,20 @@ type ClickableHandle = {
 
 type RolePage = {
   getByRole?: (role: 'button' | 'link', options?: { name?: string | RegExp }) => ClickableHandle
+  locator?: (selector: string) => ClickableHandle
 }
 
 export const APPLY_ACTION_NAMES = [
   /^\s*apply now\s*$/i,
   /^\s*apply to (this )?job\s*$/i,
   /^\s*start (your )?application\s*$/i,
+  /^\s*begin application\s*$/i,
   /^\s*apply for this job( online)?\s*$/i,
   /^\s*apply manually\s*$/i,
   /^\s*apply\s*$/i,
 ]
+
+export const SECONDARY_APPLY_NAMES = [/^\s*apply manually\s*$/i, /^\s*start your application\s*$/i]
 
 export const NEXT_ACTION_NAMES = [/^\s*next\s*$/i, /^\s*continue\s*$/i, /^\s*save and continue\s*$/i]
 
@@ -90,4 +94,29 @@ export async function clickApplyControl(
 
 export async function clickNextControl(page: RolePage): Promise<{ clicked: boolean; label: string | null }> {
   return clickNamedControl(page, NEXT_ACTION_NAMES, isLegitimateNextLabel)
+}
+
+export async function dismissBlockingNotices(page: RolePage): Promise<{ dismissed: boolean; label: string | null }> {
+  const selectors = ['[data-automation-id="legalNoticeAcceptButton"]', '[data-automation-id="legalNoticeAccept"]']
+  for (const selector of selectors) {
+    try {
+      const locator = page.locator?.(selector)
+      const target = locator?.first?.() ?? locator
+      if (!target) continue
+      const count = target.count ? await target.count() : 1
+      if (!count) continue
+      await target.click?.({ timeout: 4_000 })
+      return { dismissed: true, label: 'Accept cookies' }
+    } catch {
+      // Try the next known notice control.
+    }
+  }
+  const accepted = await clickNamedControl(page, [/^\s*accept cookies\s*$/i, /^\s*accept all\s*$/i], (label) =>
+    /accept cookies|accept all/i.test(label),
+  )
+  return { dismissed: accepted.clicked, label: accepted.label }
+}
+
+export async function clickSecondaryApplyControl(page: RolePage): Promise<{ clicked: boolean; label: string | null }> {
+  return clickNamedControl(page, SECONDARY_APPLY_NAMES, (label) => SECONDARY_APPLY_NAMES.some((pattern) => pattern.test(label)))
 }
