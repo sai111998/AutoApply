@@ -13,7 +13,6 @@ import {
 import type {
   ApplyBrowser,
   AutoApplyConfig,
-  AutoApplyCounts,
   AutoApplyMutationResult,
   AutoApplyQueueItem,
   AutoApplyRun,
@@ -21,6 +20,7 @@ import type {
   ListedAutoApplyJob,
 } from './types'
 import { ApplyError, isApplyError } from './errors'
+import { emptyCounts, recount, syncRunStatus } from './counts'
 import { getAutomationHealth } from './health'
 import { logApplyEvent, logAutoApplyStep, logQueueItem } from './log'
 import {
@@ -75,48 +75,7 @@ export function suggestedMatchRates(): number[] {
   return [...MATCH_PRESETS]
 }
 
-function emptyCounts(): AutoApplyCounts {
-  return {
-    found: 0,
-    eligible: 0,
-    tailored: 0,
-    ready: 0,
-    needsInput: 0,
-    submitted: 0,
-    skipped: 0,
-    failed: 0,
-  }
-}
-
-export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
-  const counts = emptyCounts()
-  counts.found = items.length
-  for (const item of items) {
-    if (
-      item.applicationStatus !== 'failed' &&
-      item.applicationStatus !== 'skipped' &&
-      item.applicationStatus !== 'cancelled'
-    ) {
-      counts.eligible += 1
-    }
-    if (item.resumeVersionName.toLowerCase().includes('tailored')) counts.tailored += 1
-    if (item.applicationStatus === 'ready' || item.applicationStatus === 'ready_for_submission') counts.ready += 1
-    if (
-      item.applicationStatus === 'needs_user_input' ||
-      item.applicationStatus === 'needs_user_confirmation' ||
-      item.applicationStatus === 'captcha_required' ||
-      item.applicationStatus === 'mfa_required' ||
-      item.applicationStatus === 'login_required' ||
-      item.applicationStatus === 'automation_blocked'
-    ) {
-      counts.needsInput += 1
-    }
-    if (item.applicationStatus === 'submitted') counts.submitted += 1
-    if (item.applicationStatus === 'skipped') counts.skipped += 1
-    if (item.applicationStatus === 'failed' || item.applicationStatus === 'blocked' || item.applicationStatus === 'automation_blocked' || item.applicationStatus === 'extension_not_connected') counts.failed += 1
-  }
-  return counts
-}
+export { recount, emptyCounts, syncRunStatus }
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -150,6 +109,128 @@ export interface AutoApplyEngineDeps {
   timeouts?: Partial<ApplyTimeouts>
 }
 
+async function listCampaignJobs(
+  config: ServerConfig,
+  input: AutoApplyStartInput,
+  fetchImpl: FetchLike | undefined,
+  deps: AutoApplyEngineDeps,
+): Promise<ListedAutoApplyJob[]> {
+  const listJobs =
+    deps.listJobs ??
+    ((request: LiveJobsRequest) => listLiveJobs(config, request, fetchImpl))
+  const listed = await listJobs({
+    q: input.config.q,
+    country: input.config.country || 'US',
+    state: input.config.state,
+    location: input.config.location,
+    remote: input.config.remotePreference,
+    employmentType: 'any',
+    seniority: '',
+    page: 1,
+    limit: 50,
+    resumeText: input.resumeText,
+    resumeVersionId: input.resumeVersionId ?? undefined,
+    sort: 'match',
+    jobType: input.config.jobType,
+  })
+  const keywords = input.config.keywords.map((item) => item.trim().toLowerCase()).filter(Boolean)
+  return listed.jobs.filter((job) => {
+    if (!keywords.length) return true
+    const haystack = `${job.title} ${job.company} ${job.description ?? ''}`.toLowerCase()
+    return keywords.every((keyword) => haystack.includes(keyword))
+  })
+}
+
+function enqueueEligibleJobs(input: {
+  run: AutoApplyRun
+  items: AutoApplyQueueItem[]
+  jobs: ListedAutoApplyJob[]
+  startInput: AutoApplyStartInput
+  previous: StoredRun[]
+}): { added: number; found: number } {
+  const { run, items, jobs, startInput, previous } = input
+  const masterSnapshot = startInput.masterResumeText
+  const queueIdentities = [
+    ...items.map((item) => item.identityKey),
+    ...(startInput.existingQueueIdentities ?? []),
+    ...previous.flatMap((entry) =>
+      entry.items
+        .filter((item) => !['skipped', 'cancelled', 'failed', 'submitted'].includes(item.applicationStatus))
+        .map((item) => item.identityKey),
+    ),
+  ]
+  let added = 0
+  for (const job of jobs) {
+    if (items.length >= run.config.maxJobs) break
+    const initial = job.match?.score ?? job.matchScore ?? null
+    let finalScore = initial
+    let tailoredText: string | null = null
+    let resumeVersionId: string | null = startInput.resumeVersionId
+    let resumeVersionName = 'Master'
+    const timestamp = nowIso()
+
+    if (startInput.config.autoTailorResume) {
+      const identity = applicationIdentity(job)
+      const reused = [...previous.flatMap((entry) => entry.items), ...items].find(
+        (item) =>
+          item.identityKey === identity &&
+          Boolean(item.tailoredResumeText?.trim()) &&
+          /tailored/i.test(item.resumeVersionName),
+      )
+      if (reused?.tailoredResumeText) {
+        finalScore = reused.finalMatchScore ?? initial
+        tailoredText = reused.tailoredResumeText
+        resumeVersionId = reused.resumeVersionId
+        resumeVersionName = reused.resumeVersionName
+      } else {
+        const tailored = tailorForJob({ resumeText: startInput.resumeText, job })
+        finalScore = tailored.score
+        tailoredText = tailored.text
+        resumeVersionId = randomUUID()
+        resumeVersionName = `Tailored v1 — ${job.title}`
+      }
+    }
+
+    const eligibility = isEligibleForAutoApply(job, {
+      minimumMatchRate: run.config.minimumMatchRate,
+      finalMatchScore: finalScore,
+      existingApplications: startInput.existingApplications,
+      existingQueueIdentities: queueIdentities,
+      jobType: run.config.jobType,
+    })
+    if (!eligibility.ok) continue
+
+    const identity = applicationIdentity(job)
+    queueIdentities.push(identity)
+    items.push({
+      id: randomUUID(),
+      runId: run.id,
+      jobId: job.id,
+      identityKey: identity,
+      applicationId: randomUUID(),
+      resumeVersionId,
+      resumeVersionName,
+      title: job.title,
+      company: job.company,
+      applicationUrl: jobApplicationUrl(job),
+      initialMatchScore: initial,
+      finalMatchScore: finalScore,
+      c2cStatus: job.c2cStatus,
+      c2cEvidence: job.c2cEvidence,
+      applicationStatus: 'queued',
+      failureReason: null,
+      questions: [],
+      tailoredResumeText: tailoredText ?? startInput.resumeText,
+      masterResumeUnchanged: masterSnapshot === startInput.masterResumeText,
+      sessionId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+    added += 1
+  }
+  return { added, found: jobs.length }
+}
+
 export async function startAutoApply(
   config: ServerConfig,
   input: AutoApplyStartInput,
@@ -178,122 +259,73 @@ export async function startAutoApply(
     updatedAt: createdAt,
   }
 
-  const listJobs =
-    deps.listJobs ??
-    (async (request: LiveJobsRequest) => listLiveJobs(config, request, fetchImpl))
-  const listed = await listJobs({
-    q: input.config.q,
-    country: input.config.country || 'US',
-    state: input.config.state,
-    location: input.config.location,
-    remote: input.config.remotePreference,
-    employmentType: 'any',
-    seniority: '',
-    page: 1,
-    limit: 50,
-    resumeText: input.resumeText,
-    resumeVersionId: input.resumeVersionId ?? undefined,
-    sort: 'match',
-    jobType: input.config.jobType,
-  })
-
-  const keywords = input.config.keywords.map((item) => item.trim().toLowerCase()).filter(Boolean)
-  const jobs = listed.jobs.filter((job) => {
-    if (!keywords.length) return true
-    const haystack = `${job.title} ${job.company} ${job.description ?? ''}`.toLowerCase()
-    return keywords.every((keyword) => haystack.includes(keyword))
-  })
-
-  const masterSnapshot = input.masterResumeText
+  const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
   const items: AutoApplyQueueItem[] = []
   const previous = await store.list(input.userId)
-  const queueIdentities = [
-    ...(input.existingQueueIdentities ?? []),
-    ...previous.flatMap((entry) =>
-      entry.items
-        .filter((item) => !['skipped', 'cancelled', 'failed', 'submitted'].includes(item.applicationStatus))
-        .map((item) => item.identityKey),
-    ),
-  ]
-  let found = jobs.length
-
-  for (const job of jobs) {
-    if (items.length >= run.config.maxJobs) break
-    const initial = job.match?.score ?? job.matchScore ?? null
-    let finalScore = initial
-    let tailoredText: string | null = null
-    let resumeVersionId: string | null = input.resumeVersionId
-    let resumeVersionName = 'Master'
-    const timestamp = nowIso()
-
-    if (input.config.autoTailorResume) {
-      const identity = applicationIdentity(job)
-      const reused = previous
-        .flatMap((entry) => entry.items)
-        .find(
-          (item) =>
-            item.identityKey === identity &&
-            Boolean(item.tailoredResumeText?.trim()) &&
-            /tailored/i.test(item.resumeVersionName),
-        )
-      if (reused?.tailoredResumeText) {
-        finalScore = reused.finalMatchScore ?? initial
-        tailoredText = reused.tailoredResumeText
-        resumeVersionId = reused.resumeVersionId
-        resumeVersionName = reused.resumeVersionName
-      } else {
-        const tailored = tailorForJob({ resumeText: input.resumeText, job })
-        finalScore = tailored.score
-        tailoredText = tailored.text
-        resumeVersionId = randomUUID()
-        resumeVersionName = `Tailored v1 — ${job.title}`
-      }
-    }
-
-    const eligibility = isEligibleForAutoApply(job, {
-      minimumMatchRate: run.config.minimumMatchRate,
-      finalMatchScore: finalScore,
-      existingApplications: input.existingApplications,
-      existingQueueIdentities: queueIdentities,
-      jobType: run.config.jobType,
-    })
-    if (!eligibility.ok) continue
-
-    const identity = applicationIdentity(job)
-    queueIdentities.push(identity)
-    items.push({
-      id: randomUUID(),
-      runId: run.id,
-      jobId: job.id,
-      identityKey: identity,
-      applicationId: randomUUID(),
-      resumeVersionId,
-      resumeVersionName,
-      title: job.title,
-      company: job.company,
-      applicationUrl: jobApplicationUrl(job),
-      initialMatchScore: initial,
-      finalMatchScore: finalScore,
-      c2cStatus: job.c2cStatus,
-      c2cEvidence: job.c2cEvidence,
-      applicationStatus: 'ready',
-      failureReason: null,
-      questions: [],
-      tailoredResumeText: tailoredText ?? input.resumeText,
-      masterResumeUnchanged: masterSnapshot === input.masterResumeText,
-      sessionId: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    })
-  }
+  const { found } = enqueueEligibleJobs({ run, items, jobs, startInput: input, previous })
 
   run.counts = { ...recount(items), found }
-  run.status = items.length ? 'paused' : 'completed'
+  syncRunStatus(run, items)
   run.updatedAt = nowIso()
   rememberAutoApplyProfile(input.userId, input.profile)
   for (const item of items) rememberQueueResume(input.userId, item)
   await persistRun(store, run, items, config)
+  notifyBrowserWorker()
   return { run, items }
+}
+
+export async function refreshAutoApplyRun(
+  runId: string,
+  config: ServerConfig,
+  input: AutoApplyStartInput,
+  fetchImpl?: FetchLike,
+  deps: AutoApplyEngineDeps = {},
+): Promise<{ run: AutoApplyRun; items: AutoApplyQueueItem[]; added: number } | null> {
+  const store = deps.store ?? memoryStore
+  const current = await loadCurrent(runId, store, config)
+  if (!current) return null
+  if (current.run.status === 'paused' || current.run.status === 'cancelled' || current.run.status === 'stopped') {
+    return { run: current.run, items: current.items, added: 0 }
+  }
+  const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
+  const previous = await store.list(input.userId)
+  const { added, found } = enqueueEligibleJobs({
+    run: current.run,
+    items: current.items,
+    jobs,
+    startInput: input,
+    previous,
+  })
+  current.run.counts = { ...recount(current.items), found: Math.max(current.run.counts.found, found) }
+  syncRunStatus(current.run, current.items)
+  current.run.updatedAt = nowIso()
+  rememberAutoApplyProfile(input.userId, input.profile)
+  for (const item of current.items) rememberQueueResume(input.userId, item)
+  await persistRun(store, current.run, current.items, config)
+  if (added) notifyBrowserWorker()
+  return { run: current.run, items: current.items, added }
+}
+
+export async function pauseRun(runId: string, deps: AutoApplyEngineDeps = {}, config?: ServerConfig) {
+  const store = deps.store ?? memoryStore
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
+  current.run.status = 'paused'
+  current.run.updatedAt = nowIso()
+  await persistRun(store, current.run, current.items, config)
+  return current
+}
+
+export async function resumeRun(runId: string, deps: AutoApplyEngineDeps = {}, config?: ServerConfig) {
+  const store = deps.store ?? memoryStore
+  const current = await loadCurrent(runId, store, config)
+  if (!current) throw new ApplyError(404, 'APPLICATION_NOT_FOUND')
+  current.run.status = 'running'
+  syncRunStatus(current.run, current.items)
+  current.run.updatedAt = nowIso()
+  await persistRun(store, current.run, current.items, config)
+  notifyBrowserWorker()
+  return current
 }
 
 function toResult(current: StoredRun, item: AutoApplyQueueItem): AutoApplyMutationResult {
@@ -335,6 +367,7 @@ async function persistPrepared(
 ) {
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   if (logSteps) logAutoApplyStep(13, 'Saving application state', { itemId: item.id, applicationStatus: item.applicationStatus })
   try {
@@ -534,7 +567,7 @@ async function prepareQueueItemLocked(
   } catch (error) {
     const applyError = applyErrorFromUnknown(error)
     if (current && item) {
-      if (IN_PROGRESS_PREPARE_STATUSES.has(item.applicationStatus) || item.applicationStatus === 'ready') {
+      if (IN_PROGRESS_PREPARE_STATUSES.has(item.applicationStatus) || item.applicationStatus === 'ready' || item.applicationStatus === 'queued') {
         failItem(item, applyError.message)
       }
       try {
@@ -608,6 +641,7 @@ async function submitQueueItemLocked(
   item.sessionId = null
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   if (current.items.every((entry) => ['submitted', 'skipped', 'cancelled', 'failed', 'blocked', 'automation_blocked'].includes(entry.applicationStatus))) {
     current.run.status = 'completed'
@@ -678,6 +712,7 @@ export async function answerQueueItem(
   }
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  syncRunStatus(current.run, current.items)
   await persistRun(store, current.run, current.items, config)
   return toResult(current, item)
 }
@@ -699,6 +734,7 @@ async function setItemStatus(
   item.sessionId = null
   item.updatedAt = nowIso()
   current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   releaseExtensionItem(current.run.userId, item.id)
   await persistRun(store, current.run, current.items, config)
@@ -715,6 +751,7 @@ export async function getAutoApplyRun(runId: string, deps: AutoApplyEngineDeps =
   const after = current.items.map((item) => item.applicationStatus).join('|')
   if (before !== after) {
     current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+    syncRunStatus(current.run, current.items)
     current.run.updatedAt = nowIso()
     await persistRun(store, current.run, current.items, config)
   }

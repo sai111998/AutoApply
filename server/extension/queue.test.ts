@@ -9,6 +9,7 @@ import { emptyLiveMatch } from '../jobs/score'
 import { clearAutoApplyMemory } from '../apply/store'
 import { resetExtensionConnectionsForTests } from './connection'
 import { resetExtensionProfilesForTests } from './profile-store'
+import { resetAgentForTests } from '../agent'
 import { isEligibleForAutoApply } from '../apply/eligibility'
 import type { AutoApplyProfile, ListedAutoApplyJob } from '../apply/types'
 
@@ -66,6 +67,7 @@ function job(partial: Partial<ListedAutoApplyJob> & { id: string; title: string 
 
 afterEach(() => {
   resetAutoApplyEngineForTests()
+  resetAgentForTests()
   clearAutoApplyMemory()
   resetExtensionConnectionsForTests()
   resetExtensionProfilesForTests()
@@ -342,7 +344,7 @@ describe('automation queue', () => {
     expect(started.items).toHaveLength(2)
     await request(app).post('/api/automation/extension/register').send({ userId: 'user-1', extensionId: 'test-ext' })
     const peek = await request(app).get('/api/automation/queue/next').query({ peek: '1' }).set('x-jobpilot-user-id', 'user-1')
-    expect(peek.body.item.status).toBe('ready')
+    expect(peek.body.item.status).toBe('queued')
     const first = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')
     expect(first.body.item.status).toBe('opening')
     const second = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')

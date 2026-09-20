@@ -1,5 +1,6 @@
 import { createApp } from './app'
 import { startEmbeddedWorker } from './browser-worker'
+import { startAgentScheduler } from './agent'
 import { getAutomationHealth } from './apply/health'
 import { getServerConfig } from './config'
 
@@ -12,6 +13,7 @@ app.listen(config.port, '0.0.0.0', () => {
   void getAutomationHealth({ probe: false }).then((health) => {
     console.log(`Browser automation: ${health.available ? 'chromium ready' : health.reason ?? 'unavailable'}`)
   })
+  if (process.env.VITEST !== 'true') startAgentScheduler()
   void startEmbeddedWorker().then((worker) => {
     if (worker) console.log('Browser worker: processing Auto Apply queue with Playwright Chromium')
   })

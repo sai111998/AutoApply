@@ -2,7 +2,7 @@ import { mergeApplyTimeouts } from '../apply/timeouts'
 import { getStoredProfile } from '../extension/profile-store'
 import { memoryStore, persistRun } from '../apply/store'
 import type { AutoApplyQueueItem, BrowserSubmitResult } from '../apply/types'
-import { runApplicationAgent } from './agent'
+import { runApplicationAgent } from '../application/agent'
 import { recoverStuckBrowserJobs } from './recovery'
 import { resolveUserIntervention } from './intervention'
 import { getBrowserApplicationSession, listBrowserApplicationSessions, markBrowserSessionState } from './session'
@@ -87,7 +87,7 @@ async function runClaimedJob(
     item.questions = result.questions
     item.sessionId = result.session.pageId
     await persistBrowserJob(stored, item)
-    if (['captcha_required', 'mfa_required', 'login_required', 'needs_user_input', 'ready_for_submission'].includes(item.applicationStatus)) {
+    if (['captcha_required', 'mfa_required', 'login_required', 'needs_user_input', 'ready_for_submission', 'needs_user_confirmation'].includes(item.applicationStatus)) {
       livePages.set(item.id, opened)
     } else {
       await opened.close()

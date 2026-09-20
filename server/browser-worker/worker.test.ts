@@ -26,6 +26,7 @@ import { detectAtsAdapter, supportedAtsProviders } from './providers'
 import { queueStatusFromSession } from './types'
 import { browserProfileDirectory } from './profile'
 import { createBrowserWorker, resetBrowserWorkerForTests } from './worker'
+import { resetAgentForTests } from '../agent'
 import { startSyntheticEmployer, syntheticEmployerHtml } from './synthetic'
 import { claimNextBrowserJob, resetBrowserWorkerQueueForTests } from './queue'
 import type { AutoApplyProfile, AutoApplyQueueItem, ListedAutoApplyJob } from '../apply/types'
@@ -94,6 +95,7 @@ function queuedItem(overrides: Partial<AutoApplyQueueItem> = {}): AutoApplyQueue
 
 afterEach(async () => {
   resetAutoApplyEngineForTests()
+  resetAgentForTests()
   clearAutoApplyMemory()
   resetExtensionProfilesForTests()
   resetBrowserSessionsForTests()
@@ -252,7 +254,8 @@ describe('browser worker architecture', () => {
           delayMs: 0,
         },
       )
-      await prepareQueueItem(started.run.id, started.items[0].id, { profile, userId: 'user-1' }, { delayMs: 0 })
+      expect(started.items[0].applicationStatus).toBe('queued')
+      expect(started.run.status).toBe('running')
       const processed = await worker.processOnce()
       expect(processed?.applicationStatus).toBe('submitted')
       expect(processed?.failureReason).toBeNull()

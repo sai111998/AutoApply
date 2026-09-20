@@ -216,7 +216,13 @@ export async function runApplicationAgent(input: {
             currentUrl: confirmationUrl,
             failureReason: 'Submission could not be confirmed on the employer site.',
           })
-          return { session, status: 'failed', questions: resolved.answered, failureReason: session.failureReason, confirmationDetected: false }
+          return {
+            session,
+            status: 'needs_user_confirmation',
+            questions: resolved.answered,
+            failureReason: 'Submission could not be confirmed on the employer site.',
+            confirmationDetected: false,
+          }
         }
         session = markBrowserSessionState(session.itemId, 'submitted', { currentUrl: confirmationUrl })
         return { session, status: 'submitted', questions: resolved.answered, failureReason: null, confirmationDetected: true }

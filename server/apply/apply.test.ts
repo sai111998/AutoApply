@@ -17,6 +17,7 @@ import {
 import { hasDuplicateApplication, isEligibleForAutoApply, meetsMatchThreshold } from './eligibility'
 import { answerKnownQuestion } from './questions'
 import { clearAutoApplyMemory } from './store'
+import { resetAgentForTests } from '../agent'
 import type { ApplyBrowser, AutoApplyProfile, ListedAutoApplyJob } from './types'
 import type { ServerConfig } from '../config'
 
@@ -89,6 +90,7 @@ const fakeBrowser: ApplyBrowser = {
 afterEach(() => {
   clearAutoApplyMemory()
   resetAutoApplyEngineForTests()
+  resetAgentForTests()
 })
 
 describe('auto apply eligibility', () => {
@@ -309,10 +311,10 @@ describe('auto apply engine', () => {
       undefined,
       { listJobs: async () => ({ jobs: listed }), browser: fakeBrowser, delayMs: 0 },
     )
-    expect(started.items[0].applicationStatus).toBe('ready')
+    expect(started.items[0].applicationStatus).toBe('queued')
     expect(started.items[0].applicationStatus).not.toBe('submitted')
     const tooEarly = await submitQueueItem(started.run.id, started.items[0].id, { browser: fakeBrowser, delayMs: 0 })
-    expect(tooEarly?.item.applicationStatus).toBe('ready')
+    expect(tooEarly?.item.applicationStatus).toBe('queued')
 
     const captcha = inspectApplicationPage('<div class="g-recaptcha" data-sitekey="x"></div>')
     expect(captcha.status).toBe('captcha_required')

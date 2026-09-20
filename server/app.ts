@@ -24,9 +24,9 @@ import {
   listAutoApplyRuns,
   prepareQueueItem,
   skipQueueItem,
-  startAutoApply,
   submitQueueItem,
 } from './apply/engine'
+import { startCampaign, pauseCampaign, resumeCampaign } from './agent'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
 import { getAutomationHealth, publicAutomationHealth, type AutomationHealth } from './apply/health'
@@ -144,8 +144,8 @@ export function createApp(options: AppOptions): Express {
   app.post('/api/jobs/auto-apply/start', async (req: Request, res: Response) => {
     try {
       const request = parseAutoApplyStart(req.body)
-      const result = await startAutoApply(options.config, request, options.fetchImpl)
-      res.json(result)
+      const started = await startCampaign(options.config, request, { fetchImpl: options.fetchImpl })
+      res.json({ run: started.run, items: started.items })
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500
       const message = error instanceof Error ? error.message : 'Could not start Auto Apply.'
@@ -253,6 +253,24 @@ export function createApp(options: AppOptions): Express {
       res.json(result)
     } catch (error) {
       sendApplyError(res, error, 'Could not save the answer.')
+    }
+  })
+
+  app.post('/api/jobs/auto-apply/:runId/pause', async (req: Request, res: Response) => {
+    try {
+      const result = await pauseCampaign(routeParam(req.params.runId))
+      res.json(result)
+    } catch (error) {
+      sendApplyError(res, error, 'Could not pause Auto Apply.')
+    }
+  })
+
+  app.post('/api/jobs/auto-apply/:runId/resume', async (req: Request, res: Response) => {
+    try {
+      const result = await resumeCampaign(routeParam(req.params.runId))
+      res.json(result)
+    } catch (error) {
+      sendApplyError(res, error, 'Could not resume Auto Apply.')
     }
   })
 

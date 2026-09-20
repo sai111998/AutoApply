@@ -127,6 +127,7 @@ export function autoApplyStatusLabel(status: string): string {
     ready_for_submission: 'Ready',
     submitting: 'Submitting',
     needs_user_confirmation: 'Needs confirmation',
+    needs_confirmation: 'Needs confirmation',
     submitted: 'Submitted',
     failed: 'Preparation Failed',
     skipped: 'Skipped',

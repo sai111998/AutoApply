@@ -1,0 +1,91 @@
+import type { AutoApplyCounts, AutoApplyQueueItem, AutoApplyRun } from './types'
+
+const FAILED_STATUSES = new Set(['failed', 'blocked', 'automation_blocked', 'extension_not_connected'])
+const TERMINAL_STATUSES = new Set([
+  'submitted',
+  'skipped',
+  'cancelled',
+  'failed',
+  'blocked',
+  'automation_blocked',
+])
+const ATTENTION_STATUSES = new Set([
+  'needs_user_input',
+  'needs_user_confirmation',
+  'needs_confirmation',
+  'captcha_required',
+  'mfa_required',
+  'login_required',
+])
+const ACTIVE_STATUSES = new Set([
+  'queued',
+  'ready',
+  'preparing',
+  'tailoring',
+  'opening',
+  'filling',
+  'submitting',
+  'ready_for_submission',
+])
+
+export function emptyCounts(): AutoApplyCounts {
+  return {
+    found: 0,
+    eligible: 0,
+    tailored: 0,
+    ready: 0,
+    needsInput: 0,
+    submitted: 0,
+    skipped: 0,
+    failed: 0,
+    queued: 0,
+    processing: 0,
+    captcha: 0,
+  }
+}
+
+export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
+  const counts = emptyCounts()
+  counts.found = items.length
+  for (const item of items) {
+    if (!FAILED_STATUSES.has(item.applicationStatus) && item.applicationStatus !== 'skipped' && item.applicationStatus !== 'cancelled') {
+      counts.eligible += 1
+    }
+    if (item.resumeVersionName.toLowerCase().includes('tailored')) counts.tailored += 1
+    if (item.applicationStatus === 'queued') counts.queued += 1
+    if (item.applicationStatus === 'ready' || item.applicationStatus === 'ready_for_submission') counts.ready += 1
+    if (['opening', 'filling', 'preparing', 'tailoring', 'submitting'].includes(item.applicationStatus)) {
+      counts.processing += 1
+    }
+    if (ATTENTION_STATUSES.has(item.applicationStatus)) counts.needsInput += 1
+    if (item.applicationStatus === 'captcha_required') counts.captcha += 1
+    if (item.applicationStatus === 'submitted') counts.submitted += 1
+    if (item.applicationStatus === 'skipped') counts.skipped += 1
+    if (FAILED_STATUSES.has(item.applicationStatus)) counts.failed += 1
+  }
+  return counts
+}
+
+export function syncRunStatus(run: AutoApplyRun, items: AutoApplyQueueItem[]): AutoApplyRun {
+  if (run.status === 'cancelled' || run.status === 'paused' || run.status === 'stopped') return run
+  if (!items.length) {
+    run.status = 'completed'
+    return run
+  }
+  const attention = items.some((item) => ATTENTION_STATUSES.has(item.applicationStatus))
+  const active = items.some((item) => ACTIVE_STATUSES.has(item.applicationStatus))
+  const allTerminal = items.every((item) => TERMINAL_STATUSES.has(item.applicationStatus))
+  const allFailed = items.every((item) => FAILED_STATUSES.has(item.applicationStatus) || item.applicationStatus === 'cancelled')
+  if (allFailed && !items.some((item) => item.applicationStatus === 'submitted')) {
+    run.status = 'failed'
+  } else if (allTerminal) {
+    run.status = 'completed'
+  } else if (attention && !active) {
+    run.status = 'needs_attention'
+  } else {
+    run.status = 'running'
+  }
+  return run
+}
+
+export { ATTENTION_STATUSES, TERMINAL_STATUSES, ACTIVE_STATUSES, FAILED_STATUSES }

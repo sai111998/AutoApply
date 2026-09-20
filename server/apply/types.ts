@@ -19,12 +19,20 @@ export type AutoApplyQueueStatus =
   | 'ready_for_submission'
   | 'submitting'
   | 'needs_user_confirmation'
+  | 'needs_confirmation'
   | 'submitted'
   | 'failed'
   | 'skipped'
   | 'cancelled'
 
-export type AutoApplyRunStatus = 'running' | 'paused' | 'completed' | 'cancelled'
+export type AutoApplyRunStatus =
+  | 'stopped'
+  | 'running'
+  | 'paused'
+  | 'needs_attention'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
 
 export interface AutoApplyConfig {
   maxJobs: number
@@ -93,6 +101,9 @@ export interface AutoApplyCounts {
   submitted: number
   skipped: number
   failed: number
+  queued: number
+  processing: number
+  captcha: number
 }
 
 export interface AutoApplyRun {

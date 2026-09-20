@@ -12,13 +12,17 @@ import { useWorkspace } from '@/context/WorkspaceContext'
 import {
   answerAutoApplyItemRequest,
   cancelAutoApplyItemRequest,
+  cancelAutoApplyRunRequest,
+  getAutoApplyRunRequest,
   getLiveJobRequest,
   listAutoApplyRunsRequest,
   listLiveJobsRequest,
   PREPARE_PERSIST_TIMEOUT_MS,
+  pauseAutoApplyRunRequest,
   prepareAutoApplyItemRequest,
   previewLiveJobRequest,
   withClientTimeout,
+  resumeAutoApplyRunRequest,
   skipAutoApplyItemRequest,
   startAutoApplyRequest,
   submitAutoApplyItemRequest,
@@ -220,13 +224,37 @@ export function JobDiscoveryPage() {
     if (!user?.id) return
     void listAutoApplyRunsRequest(user.id)
       .then((runs) => {
-        const current = runs.find((item) => item.run.status === 'paused' || item.run.status === 'running') ?? runs[0]
+        const current =
+          runs.find(
+            (item) =>
+              item.run.status === 'paused' ||
+              item.run.status === 'running' ||
+              item.run.status === 'needs_attention',
+          ) ?? runs[0]
         if (!current) return
         setAutoRun(current.run)
         setAutoItems(current.items)
       })
       .catch(() => undefined)
   }, [user?.id])
+
+  useEffect(() => {
+    if (!autoRun?.id) return
+    if (autoRun.status !== 'running' && autoRun.status !== 'needs_attention') return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void getAutoApplyRunRequest(autoRun.id)
+        .then((current) => {
+          if (cancelled) return
+          setAutoResult(current)
+        })
+        .catch(() => undefined)
+    }, 4000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [autoRun?.id, autoRun?.status])
 
   function applyProfile(): AutoApplyProfilePayload {
     return {
@@ -376,6 +404,9 @@ export function JobDiscoveryPage() {
       setAutoResult(result)
       rememberExtensionSession({ userId: user.id })
       if (result.items.length) requestExtensionQueueProcessing()
+      for (const item of result.items) {
+        await persistQueueApplication(item).catch(() => undefined)
+      }
       notify(
         result.items.length
           ? `Auto Apply queued ${result.items.length} job${result.items.length === 1 ? '' : 's'} for review.`
@@ -480,6 +511,33 @@ export function JobDiscoveryPage() {
       notify(cancelError instanceof Error ? cancelError.message : 'Could not cancel the application.', 'error')
     } finally {
       setAutoBusyId(null)
+    }
+  }
+
+  async function onPauseCampaign() {
+    if (!autoRun) return
+    try {
+      setAutoResult(await pauseAutoApplyRunRequest(autoRun.id))
+    } catch (pauseError) {
+      notify(pauseError instanceof Error ? pauseError.message : 'Could not pause Auto Apply.', 'error')
+    }
+  }
+
+  async function onResumeCampaign() {
+    if (!autoRun) return
+    try {
+      setAutoResult(await resumeAutoApplyRunRequest(autoRun.id))
+    } catch (resumeError) {
+      notify(resumeError instanceof Error ? resumeError.message : 'Could not resume Auto Apply.', 'error')
+    }
+  }
+
+  async function onCancelCampaign() {
+    if (!autoRun) return
+    try {
+      setAutoResult(await cancelAutoApplyRunRequest(autoRun.id))
+    } catch (cancelError) {
+      notify(cancelError instanceof Error ? cancelError.message : 'Could not cancel Auto Apply.', 'error')
     }
   }
 
@@ -686,10 +744,27 @@ export function JobDiscoveryPage() {
             {autoRun.config.autoTailorResume ? 'ON' : 'OFF'} · C2C: {autoRun.config.jobType === 'c2c' ? 'YES' : 'NO'}
           </p>
           <p className="mt-2 text-sm text-muted">
-            Found {autoRun.counts.found} · Eligible {autoRun.counts.eligible} · Tailored {autoRun.counts.tailored} · Ready{' '}
+            Status: {autoRun.status} · Found {autoRun.counts.found} · Eligible {autoRun.counts.eligible} · Tailored {autoRun.counts.tailored} · Ready{' '}
             {autoRun.counts.ready} · Needs Input {autoRun.counts.needsInput} · Submitted {autoRun.counts.submitted} · Skipped{' '}
             {autoRun.counts.skipped} · Failed {autoRun.counts.failed}
           </p>
+          {(autoRun.status === 'running' || autoRun.status === 'needs_attention' || autoRun.status === 'paused') && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(autoRun.status === 'running' || autoRun.status === 'needs_attention') && (
+                <Button type="button" variant="secondary" onClick={() => void onPauseCampaign()}>
+                  Pause
+                </Button>
+              )}
+              {autoRun.status === 'paused' && (
+                <Button type="button" onClick={() => void onResumeCampaign()}>
+                  Resume
+                </Button>
+              )}
+              <Button type="button" variant="ghost" onClick={() => void onCancelCampaign()}>
+                Cancel queued
+              </Button>
+            </div>
+          )}
           <div className="mt-4 space-y-3">
             {autoItems.map((item) => {
               const terminal = ['submitted', 'skipped', 'cancelled', 'failed', 'blocked'].includes(item.applicationStatus)

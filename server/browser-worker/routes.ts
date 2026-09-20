@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from 'express'
+import { resumeIntervention } from '../agent'
 import { importPlaywright } from '../apply/health'
-import { claimNextBrowserJob, notifyBrowserWorker } from './queue'
-import { resolveUserIntervention } from './intervention'
+import { claimNextBrowserJob } from './queue'
 import { syntheticEmployerHtml } from './synthetic'
 
 export function registerBrowserWorkerRoutes(app: Express) {
@@ -28,10 +28,9 @@ export function registerBrowserWorkerRoutes(app: Express) {
     res.json({ item: claimed?.item ?? null, userId: claimed?.stored.run.userId ?? null })
   })
 
-  app.post('/api/browser-worker/resume', (req: Request, res: Response) => {
+  app.post('/api/browser-worker/resume', async (req: Request, res: Response) => {
     const itemId = typeof req.body?.itemId === 'string' ? req.body.itemId : ''
-    const intervention = itemId ? resolveUserIntervention(itemId) : null
-    notifyBrowserWorker()
-    res.json({ ok: Boolean(intervention), intervention })
+    const result = itemId ? await resumeIntervention(itemId) : { intervention: null, item: null }
+    res.json({ ok: Boolean(result.intervention || result.item), intervention: result.intervention, item: result.item })
   })
 }

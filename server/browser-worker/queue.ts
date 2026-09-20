@@ -1,9 +1,11 @@
 import { getStoredProfile, getStoredResume } from '../extension/profile-store'
 import { memoryStore, persistRun, type StoredRun } from '../apply/store'
+import { recount, syncRunStatus } from '../apply/counts'
 import type { AutoApplyQueueItem } from '../apply/types'
 import { isRetryableBrowserJob } from './recovery'
 
 const CLAIMABLE = new Set(['queued', 'ready', 'extension_not_connected'])
+const PROCESSABLE_RUN = new Set(['running', 'needs_attention'])
 
 let activeItemId: string | null = null
 const waiters = new Map<string, Array<(item: AutoApplyQueueItem) => void>>()
@@ -60,17 +62,21 @@ async function allRuns(): Promise<StoredRun[]> {
 export async function claimNextBrowserJob(): Promise<{ stored: StoredRun; item: AutoApplyQueueItem } | null> {
   const runs = await allRuns()
   for (const stored of runs) {
+    if (!PROCESSABLE_RUN.has(stored.run.status)) continue
     const active = activeItemId ? stored.items.find((item) => item.id === activeItemId) : undefined
     if (active && ['opening', 'filling', 'submitting', 'preparing'].includes(active.applicationStatus)) {
       return { stored, item: active }
     }
   }
   for (const stored of runs) {
+    if (!PROCESSABLE_RUN.has(stored.run.status)) continue
     const item = stored.items.find((entry) => CLAIMABLE.has(entry.applicationStatus) || isRetryableBrowserJob(entry))
     if (!item) continue
     item.applicationStatus = 'opening'
     item.failureReason = null
     item.updatedAt = new Date().toISOString()
+    stored.run.counts = { ...recount(stored.items), found: stored.run.counts.found }
+    stored.run = syncRunStatus(stored.run, stored.items)
     stored.run.updatedAt = item.updatedAt
     await persistRun(memoryStore, stored.run, stored.items)
     activeItemId = item.id
@@ -81,6 +87,8 @@ export async function claimNextBrowserJob(): Promise<{ stored: StoredRun; item: 
 
 export async function persistBrowserJob(stored: StoredRun, item: AutoApplyQueueItem) {
   item.updatedAt = new Date().toISOString()
+  stored.run.counts = { ...recount(stored.items), found: stored.run.counts.found }
+  stored.run = syncRunStatus(stored.run, stored.items)
   stored.run.updatedAt = item.updatedAt
   await persistRun(memoryStore, stored.run, stored.items)
   completeBrowserJob(item)

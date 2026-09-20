@@ -503,6 +503,7 @@ export type AutoApplyQueueStatus =
   | 'ready_for_submission'
   | 'submitting'
   | 'needs_user_confirmation'
+  | 'needs_confirmation'
   | 'submitted'
   | 'failed'
   | 'skipped'
@@ -576,7 +577,7 @@ export interface AutoApplyCounts {
 export interface AutoApplyRun {
   id: string
   userId: string
-  status: 'running' | 'paused' | 'completed' | 'cancelled'
+  status: 'stopped' | 'running' | 'paused' | 'needs_attention' | 'completed' | 'failed' | 'cancelled'
   config: AutoApplyConfigPayload
   counts: AutoApplyCounts
   createdAt: string
@@ -798,6 +799,22 @@ export async function answerAutoApplyItemRequest(
     },
   )
   return readAutoApplyResult(response, 'Could not save the answer.')
+}
+
+export async function pauseAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/pause`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return readAutoApplyResult(response, 'Could not pause Auto Apply.')
+}
+
+export async function resumeAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/resume`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return readAutoApplyResult(response, 'Could not resume Auto Apply.')
 }
 
 export async function cancelAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {

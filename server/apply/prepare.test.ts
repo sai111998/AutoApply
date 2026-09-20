@@ -10,6 +10,7 @@ import {
   resetAutoApplyEngineForTests,
   startAutoApply,
 } from './engine'
+import { resetAgentForTests } from '../agent'
 import { assertCanPrepareItem, assertSupportedProvider, inspectApplicationUrl } from './validate'
 import { clearAutoApplyMemory, memoryStore } from './store'
 import type { AutoApplyProfile, AutoApplyQueueItem } from './types'
@@ -117,6 +118,7 @@ async function startReadyRun() {
 afterEach(() => {
   clearAutoApplyMemory()
   resetAutoApplyEngineForTests()
+  resetAgentForTests()
 })
 
 describe('application preparation validation', () => {
@@ -160,7 +162,7 @@ describe('application preparation validation', () => {
 describe('application preparation flow', () => {
   it('prepares a ready queue item and returns items without marking Applied', async () => {
     const started = await startReadyRun()
-    expect(started.items[0].applicationStatus).toBe('ready')
+    expect(started.items[0].applicationStatus).toBe('queued')
     const prepared = await prepareQueueItem(
       started.run.id,
       started.items[0].id,
