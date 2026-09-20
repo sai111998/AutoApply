@@ -1,4 +1,10 @@
+import { readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
 const CONNECTION_TTL_MS = 45_000
+const persistFile = path.join(tmpdir(), 'jobpilot-extension-connections.json')
+const persistEnabled = process.env.VITEST !== 'true'
 
 export interface ExtensionConnection {
   userId: string
@@ -9,6 +15,30 @@ export interface ExtensionConnection {
 }
 
 const connections = new Map<string, ExtensionConnection>()
+
+function saveConnections() {
+  if (!persistEnabled) return
+  try {
+    writeFileSync(persistFile, JSON.stringify([...connections.values()]))
+  } catch {
+    // Best-effort across server restarts.
+  }
+}
+
+function loadConnections() {
+  if (!persistEnabled) return
+  try {
+    const rows = JSON.parse(readFileSync(persistFile, 'utf8')) as ExtensionConnection[]
+    if (!Array.isArray(rows)) return
+    for (const row of rows) {
+      if (row?.userId && row.lastSeenAt) connections.set(row.userId, row)
+    }
+  } catch {
+    // No previous connection file.
+  }
+}
+
+loadConnections()
 
 export function resetExtensionConnectionsForTests() {
   connections.clear()
@@ -24,6 +54,7 @@ export function registerExtensionConnection(userId: string, extensionId = 'unpac
     activeItemId: connections.get(userId)?.activeItemId ?? null,
   }
   connections.set(userId, current)
+  saveConnections()
   return current
 }
 
@@ -32,6 +63,7 @@ export function heartbeatExtensionConnection(userId: string): ExtensionConnectio
   if (!current) return null
   current.lastSeenAt = new Date().toISOString()
   connections.set(userId, current)
+  saveConnections()
   return current
 }
 
@@ -41,6 +73,7 @@ export function setActiveExtensionItem(userId: string, itemId: string | null) {
   current.activeItemId = itemId
   current.lastSeenAt = new Date().toISOString()
   connections.set(userId, current)
+  saveConnections()
 }
 
 export function isExtensionConnected(userId: string, now = Date.now()): boolean {
@@ -62,5 +95,6 @@ export function releaseExtensionItem(userId: string, itemId?: string | null) {
   if (!itemId || current.activeItemId === itemId) {
     current.activeItemId = null
     connections.set(userId, current)
+    saveConnections()
   }
 }

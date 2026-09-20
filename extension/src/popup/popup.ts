@@ -34,6 +34,32 @@ function failed(reason: string) {
   setRow('session', 'failed')
 }
 
+function connectFromTab(tabId: number): Promise<void> {
+  return chrome.scripting
+    ?.executeScript({
+      target: { tabId },
+      func: () => ({
+        userId:
+          document.documentElement.dataset.jobpilotUserId ||
+          sessionStorage.getItem('jobpilot.userId') ||
+          (sessionStorage.getItem('jobpilot.demo') === '1' ? '11111111-1111-4111-8111-111111111111' : ''),
+        backendOrigin: document.documentElement.dataset.jobpilotBackend || sessionStorage.getItem('jobpilot.backendOrigin') || location.origin,
+      }),
+    })
+    .then(async (results) => {
+      const value = Array.isArray(results) ? (results[0] as { result?: { userId?: string; backendOrigin?: string } } | undefined)?.result : undefined
+      if (value?.userId) {
+        chrome.runtime.sendMessage({
+          type: 'CONNECT_SESSION',
+          userId: value.userId,
+          backendOrigin: value.backendOrigin,
+        })
+      }
+      await chrome.scripting?.executeScript({ target: { tabId }, files: ['bridge.js'] }).catch(() => undefined)
+    })
+    .catch(() => undefined)
+}
+
 function requestInspection() {
   if (!chrome.tabs?.query) {
     failed('This popup must run inside the JobPilot extension.')
@@ -45,6 +71,7 @@ function requestInspection() {
       failed('No active tab.')
       return
     }
+    void connectFromTab(tab.id)
     chrome.tabs.sendMessage?.(tab.id, { type: 'INSPECT_PAGE' }, (response) => {
       if (chrome.runtime.lastError || !response) {
         void chrome.scripting
@@ -67,13 +94,20 @@ function requestInspection() {
 
 requestInspection()
 document.getElementById('process')?.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'PEEK_QUEUE' }, (peeked) => {
-    const origin = peeked && typeof peeked === 'object' ? (peeked as { origin?: string }).origin : undefined
-    const continueProcess = () => chrome.runtime.sendMessage({ type: 'PROCESS_QUEUE' }, () => requestInspection())
-    if (origin && chrome.permissions?.request) {
-      chrome.permissions.request({ origins: [origin] }, () => continueProcess())
-      return
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tabId = tabs[0]?.id
+    const afterConnect = () => {
+      chrome.runtime.sendMessage({ type: 'PEEK_QUEUE' }, (peeked) => {
+        const origin = peeked && typeof peeked === 'object' ? (peeked as { origin?: string }).origin : undefined
+        const continueProcess = () => chrome.runtime.sendMessage({ type: 'PROCESS_QUEUE' }, () => requestInspection())
+        if (origin && chrome.permissions?.request) {
+          chrome.permissions.request({ origins: [origin] }, () => continueProcess())
+          return
+        }
+        continueProcess()
+      })
     }
-    continueProcess()
+    if (tabId) void connectFromTab(tabId).then(afterConnect)
+    else afterConnect()
   })
 })

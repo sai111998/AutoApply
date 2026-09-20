@@ -44,7 +44,9 @@ declare const chrome: {
     }
   }
   scripting?: {
-    executeScript: (options: { target: { tabId: number }; files?: string[] }) => Promise<unknown>
+    executeScript: (
+      options: { target: { tabId: number }; files?: string[]; func?: () => unknown },
+    ) => Promise<Array<{ result?: unknown }>>
   }
   permissions?: {
     request: (options: { origins?: string[] }, callback?: (granted: boolean) => void) => void

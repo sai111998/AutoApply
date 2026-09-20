@@ -168,6 +168,28 @@ describe('automation queue', () => {
     expect(prepared.item.applicationStatus).not.toBe('submitted')
   })
 
+  it('queues Apply for the Chrome extension when it is connected', async () => {
+    const app = createApp({ config })
+    const started = await startAutoApply(
+      config,
+      {
+        userId: 'user-1',
+        resumeId: 'resume-1',
+        resumeVersionId: 'resume-1',
+        resumeText: JAVA_RESUME_TEXT,
+        masterResumeText: JAVA_RESUME_TEXT,
+        profile,
+        config: defaultAutoApplyConfig({ maxJobs: 1, minimumMatchRate: 70, autoTailorResume: false, q: 'Java' }),
+      },
+      undefined,
+      { listJobs: async () => ({ jobs: [job({ id: 'java', title: 'Java Engineer', matchScore: 90 })] }), delayMs: 0 },
+    )
+    await request(app).post('/api/automation/extension/register').send({ userId: 'user-1', extensionId: 'test-ext' })
+    const prepared = await prepareQueueItem(started.run.id, started.items[0].id, { profile, userId: 'user-1' }, { delayMs: 0 })
+    expect(prepared.item.applicationStatus).toBe('queued')
+    expect(prepared.item.applicationStatus).not.toBe('extension_not_connected')
+  })
+
   it('returns profile values and authorized resume text after a run starts', async () => {
     const app = createApp({ config })
     const started = await startAutoApply(

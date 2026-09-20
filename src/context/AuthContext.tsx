@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
 import { DEMO_USER_ID } from '@/data/sample'
+import { rememberExtensionSession } from '@/lib/extension-session'
 
 const DEMO_FLAG = 'jobpilot.demo'
 
@@ -31,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isDemo) {
       setUser({ id: DEMO_USER_ID, email: 'alex.rivera@example.com', fullName: 'Alex Rivera' })
-      sessionStorage.setItem('jobpilot.userId', DEMO_USER_ID)
+      rememberExtensionSession({ userId: DEMO_USER_ID })
       setLoading(false)
       return
     }
@@ -55,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           : null,
       )
-      if (sessionUser?.id) sessionStorage.setItem('jobpilot.userId', sessionUser.id)
+      if (sessionUser?.id) rememberExtensionSession({ userId: sessionUser.id })
       else sessionStorage.removeItem('jobpilot.userId')
       setLoading(false)
     })
@@ -74,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? current
           : next,
       )
-      if (next?.id) sessionStorage.setItem('jobpilot.userId', next.id)
+      if (next?.id) rememberExtensionSession({ userId: next.id })
       else sessionStorage.removeItem('jobpilot.userId')
     })
 
@@ -92,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       enterDemo: () => {
         sessionStorage.setItem(DEMO_FLAG, '1')
-        sessionStorage.setItem('jobpilot.userId', DEMO_USER_ID)
+        rememberExtensionSession({ userId: DEMO_USER_ID })
         setIsDemo(true)
         setUser({ id: DEMO_USER_ID, email: 'alex.rivera@example.com', fullName: 'Alex Rivera' })
       },
