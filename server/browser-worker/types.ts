@@ -69,11 +69,14 @@ export interface BrowserJobRequest {
 export interface AtsProviderAdapter {
   id: ApplicationProviderId | 'unknown'
   detect(input: { url: string; html: string }): boolean
+  preflight(input: { url: string; html?: string; applicationUrl?: string }): import('../apply/preflight').ApplicationPreflightResult
   openApplication(page: BrowserPageLike): Promise<boolean>
+  findForm(html: string): boolean
   detectFields(html: string): string[]
   fillFields(page: BrowserPageLike, values: Record<string, string>): Promise<string[]>
   uploadResume(page: BrowserPageLike, resume: { fileName: string; mimeType: string; buffer: Buffer }): Promise<boolean>
   advanceStep(page: BrowserPageLike): Promise<boolean>
+  nextStep(page: BrowserPageLike): Promise<boolean>
   detectBlockingState(html: string): InterventionReason | 'APPLICATION_PAGE_BLOCKED' | null
   detectReview(html: string): boolean
   submit(page: BrowserPageLike): Promise<boolean>

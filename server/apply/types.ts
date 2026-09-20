@@ -1,6 +1,8 @@
 import type { C2cEvidence, C2cStatus, JobTypeFilter } from '../jobs/c2c'
 import type { LiveJob } from '../jobs/list'
 import type { EmploymentFilter, RemoteFilter } from '../jobs/types'
+import type { ApplicationCapability } from './capability'
+import type { ApplicationPreflightResult } from './preflight'
 
 export type AutoApplyQueueStatus =
   | 'queued'
@@ -99,11 +101,22 @@ export interface AutoApplyQueueItem {
   sessionId: string | null
   createdAt: string
   updatedAt: string
+  applicationCapability?: ApplicationCapability
+  discoverySource?: string | null
+  applicationSource?: string | null
+  applicationProvider?: string | null
+  initialUrl?: string | null
+  redirectUrls?: string[]
+  finalApplicationUrl?: string | null
+  preflight?: ApplicationPreflightResult | null
+  captchaDetectionConfidence?: string | null
+  captchaEvidence?: string[]
 }
 
 export interface AutoApplyCounts {
   found: number
   eligible: number
+  autoApplyCapable: number
   tailored: number
   ready: number
   needsInput: number
@@ -112,6 +125,8 @@ export interface AutoApplyCounts {
   failed: number
   queued: number
   processing: number
+  processed: number
+  blocked: number
   captcha: number
 }
 

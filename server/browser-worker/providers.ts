@@ -2,6 +2,7 @@ import { clickApplyControl, clickNextControl, isLegitimateApplyLabel } from '../
 import { inspectApplicationPage } from '../apply/detect'
 import { detectSubmissionConfirmation } from '../apply/confirm'
 import { detectApplicationProvider } from '../apply/providers'
+import { preflightApplication } from '../apply/preflight'
 import { analyzeApplicationSurface } from '../apply/surface'
 import type { ApplicationProviderId } from '../apply/providers/types'
 import type { AtsProviderAdapter, BrowserPageLike, InterventionReason } from './types'
@@ -58,6 +59,12 @@ function createAdapter(id: ApplicationProviderId): AtsProviderAdapter {
     detect(input) {
       return detectApplicationProvider(input).id === id
     },
+    preflight(input) {
+      return preflightApplication({ url: input.url, applicationUrl: input.applicationUrl ?? input.url, html: input.html })
+    },
+    findForm(html) {
+      return analyzeApplicationSurface(html).kind === 'application'
+    },
     async openApplication(page) {
       const clicked = await clickApplyControl(page)
       return clicked.clicked && isLegitimateApplyLabel(clicked.label || 'Apply')
@@ -90,6 +97,10 @@ function createAdapter(id: ApplicationProviderId): AtsProviderAdapter {
       }
     },
     async advanceStep(page) {
+      const clicked = await clickNextControl(page)
+      return clicked.clicked
+    },
+    async nextStep(page) {
       const clicked = await clickNextControl(page)
       return clicked.clicked
     },

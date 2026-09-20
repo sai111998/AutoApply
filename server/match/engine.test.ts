@@ -361,4 +361,50 @@ describe('match engine scoring', () => {
     expect(report.matchScore).not.toBe(49)
     expect(report.recommendation).not.toBe('APPLY')
   })
+
+  it('does not treat empty or N/A dimensions as a 100% match', () => {
+    const report = scoreMatch(strongResume, emptyJobProfile(), 'Developed Java and Spring Boot applications.')
+    expect(report.matchScore).toBe(0)
+    expect(report.matchScore).not.toBe(100)
+    expect(report.matchScore).not.toBe(93)
+    expect(report.matchScore).not.toBe(95)
+    expect(report.recommendation).toBe('SKIP')
+  })
+
+  it('scores two different jobs differently against the same resume', () => {
+    const rustJob: JobProfile = {
+      ...emptyJobProfile(),
+      requiredSkills: [{ name: 'Rust' }, { name: 'Embedded Linux' }],
+      yearsOfExperience: 5,
+    }
+    const java = scoreMatch(strongResume, strongJob, 'Developed Java and Spring Boot applications. 4 years Java. B.S., Computer Science.')
+    const rust = scoreMatch(strongResume, rustJob, 'Developed Java and Spring Boot applications. 4 years Java. B.S., Computer Science.')
+    expect(java.matchScore).not.toBe(rust.matchScore)
+    expect(rust.matchScore).toBeLessThan(java.matchScore)
+  })
+
+  it('scores two different resumes differently against the same job', () => {
+    const weak: ResumeProfile = {
+      ...emptyResumeProfile(),
+      skills: [{ name: 'Python', evidence: 'Wrote Python scripts.' }],
+    }
+    const strong = scoreMatch(strongResume, strongJob, 'Developed Java and Spring Boot applications. 4 years Java. B.S., Computer Science.')
+    const other = scoreMatch(weak, strongJob, 'Wrote Python scripts.')
+    expect(strong.matchScore).not.toBe(other.matchScore)
+    expect(other.matchScore).toBeLessThan(strong.matchScore)
+  })
+
+  it('does not let tailoring imply a 100% score when required skills are still missing', () => {
+    const job: JobProfile = {
+      ...strongJob,
+      requiredSkills: [{ name: 'Java' }, { name: 'Kubernetes' }, { name: 'Terraform' }],
+    }
+    const report = scoreMatch(
+      strongResume,
+      job,
+      'Developed Java and Spring Boot applications for payments APIs. 4 years Java. B.S., Computer Science.',
+    )
+    expect(report.requiredSkills.missing.length).toBeGreaterThan(0)
+    expect(report.matchScore).toBeLessThan(100)
+  })
 })

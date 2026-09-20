@@ -1,5 +1,5 @@
 import { persistRun, memoryStore, type AutoApplyStore, type StoredRun } from '../apply/store'
-import { recount, syncRunStatus } from '../apply/counts'
+import { recountWithDiscovery, syncRunStatus } from '../apply/counts'
 import type { ServerConfig } from '../config'
 import { notifyBrowserWorker } from '../browser-worker/queue'
 
@@ -11,7 +11,7 @@ export async function persistCampaignQueue(
   stored: StoredRun,
   options: { store?: AutoApplyStore; config?: ServerConfig } = {},
 ) {
-  stored.run.counts = { ...recount(stored.items), found: stored.run.counts.found }
+  stored.run.counts = recountWithDiscovery(stored.items, stored.run.counts)
   stored.run = syncRunStatus(stored.run, stored.items)
   stored.run.updatedAt = new Date().toISOString()
   await persistRun(options.store ?? memoryStore, stored.run, stored.items, options.config)

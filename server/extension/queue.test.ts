@@ -402,8 +402,7 @@ describe('automation queue', () => {
         delayMs: 0,
       },
     )
-    expect(started.items).toHaveLength(1)
-    expect(started.items[0].applicationUrl).toBe('http://localhost:5173/jobs')
+    expect(started.items).toHaveLength(0)
     await request(app).post('/api/automation/extension/register').send({ userId: 'user-1' })
     const next = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')
     expect(next.body.item).toBeNull()
@@ -425,7 +424,7 @@ describe('automation queue', () => {
       undefined,
       { listJobs: async () => ({ jobs: [job({ id: 'bad', title: 'Java Bad', matchScore: 90, url: 'javascript:alert(1)', jobUrl: 'javascript:alert(1)' })] }), delayMs: 0 },
     )
-    expect(started.items).toHaveLength(1)
+    expect(started.items).toHaveLength(0)
     await request(app).post('/api/automation/extension/register').send({ userId: 'user-1' })
     const next = await request(app).get('/api/automation/queue/next').set('x-jobpilot-user-id', 'user-1')
     expect(next.body.item).toBeNull()

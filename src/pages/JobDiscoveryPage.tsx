@@ -728,9 +728,11 @@ export function JobDiscoveryPage() {
             {autoRun.config.autoTailorResume ? 'ON' : 'OFF'} · C2C: {autoRun.config.jobType === 'c2c' ? 'YES' : 'NO'}
           </p>
           <p className="mt-2 text-sm text-muted">
-            Status: {autoRun.status} · Found {autoRun.counts.found} · Eligible {autoRun.counts.eligible} · Tailored {autoRun.counts.tailored} · Ready{' '}
-            {autoRun.counts.ready} · Needs Input {autoRun.counts.needsInput} · Submitted {autoRun.counts.submitted} · Skipped{' '}
-            {autoRun.counts.skipped} · Failed {autoRun.counts.failed}
+            Status: {autoRun.status} · Found {autoRun.counts.found} · Eligible {autoRun.counts.eligible} · Auto-Apply Capable{' '}
+            {autoRun.counts.autoApplyCapable ?? 0} · Queued {autoRun.counts.queued ?? 0} · Processed {autoRun.counts.processed ?? 0} ·
+            Blocked {autoRun.counts.blocked ?? 0} · Tailored {autoRun.counts.tailored} · Ready {autoRun.counts.ready} · Needs Input{' '}
+            {autoRun.counts.needsInput} · Submitted {autoRun.counts.submitted} · Skipped {autoRun.counts.skipped} · Failed{' '}
+            {autoRun.counts.failed}
           </p>
           {(autoRun.status === 'running' || autoRun.status === 'needs_attention' || autoRun.status === 'paused') && (
             <div className="mt-3 flex flex-wrap gap-2">

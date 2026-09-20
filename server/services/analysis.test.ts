@@ -179,7 +179,9 @@ describe('analyzeJobDescription with supplied profiles', () => {
     )
     expect(persistCalled).toBe(false)
     expect(result.persist.persisted).toBe(false)
-    expect(result.result.matchScore).toBeGreaterThan(70)
+    expect(result.result.matchScore).toBeGreaterThan(50)
+    expect(result.result.matchScore).toBeLessThan(100)
+    expect(result.result.matchScore).not.toBe(93)
     expect(result.result.requiredSkills.missing).toHaveLength(0)
   })
 

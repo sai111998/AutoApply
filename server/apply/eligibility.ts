@@ -1,3 +1,4 @@
+import { canEnterAutonomousApply, classifyApplicationCapability } from './capability'
 import type { ExistingApplicationRecord, ListedAutoApplyJob } from './types'
 
 const FAILED_ATTEMPT = new Set(['failed', 'blocked', 'cancelled'])
@@ -82,6 +83,24 @@ export function isEligibleForAutoApply(
   }
   if (hasDuplicateQueueEntry(job, options.existingQueueIdentities)) {
     return { ok: false, reason: 'This job is already in the Auto Apply queue.' }
+  }
+  const capability = classifyApplicationCapability({
+    url: job.url,
+    applicationUrl: jobApplicationUrl(job),
+    discoveryProvider: job.provider,
+  })
+  if (!canEnterAutonomousApply(capability.capability)) {
+    return {
+      ok: false,
+      reason:
+        capability.capability === 'unsupported'
+          ? 'This listing is not Auto-Apply capable.'
+          : capability.capability === 'blocked'
+            ? 'This application is blocked from autonomous apply.'
+            : capability.capability === 'assisted_apply'
+              ? 'This application needs user input and cannot run autonomously.'
+              : 'Application capability is unknown, so this job stays discovery-only.',
+    }
   }
   return { ok: true, reason: null }
 }

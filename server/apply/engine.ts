@@ -13,6 +13,8 @@ import {
   jobApplicationUrl,
   meetsMatchThreshold,
 } from './eligibility'
+import { canEnterAutonomousApply, classifyApplicationCapability } from './capability'
+import { preflightApplication } from './preflight'
 import type {
   ApplyBrowser,
   AutoApplyConfig,
@@ -23,7 +25,7 @@ import type {
   ListedAutoApplyJob,
 } from './types'
 import { ApplyError, isApplyError } from './errors'
-import { emptyCounts, recount, syncRunStatus } from './counts'
+import { emptyCounts, recount, recountWithDiscovery, syncRunStatus } from './counts'
 import { getAutomationHealth } from './health'
 import { logApplyEvent, logAutoApplyStep, logQueueItem } from './log'
 import {
@@ -82,7 +84,7 @@ export function suggestedMatchRates(): number[] {
   return [...MATCH_PRESETS]
 }
 
-export { recount, emptyCounts, syncRunStatus }
+export { recount, recountWithDiscovery, emptyCounts, syncRunStatus }
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -131,7 +133,7 @@ function enqueueEligibleJobs(input: {
   jobs: ListedAutoApplyJob[]
   startInput: AutoApplyStartInput
   previous: StoredRun[]
-}): { added: number; found: number } {
+}): { added: number; found: number; eligible: number; autoApplyCapable: number } {
   const { run, items, jobs, startInput, previous } = input
   const masterSnapshot = startInput.masterResumeText
   const day = utcDayKey()
@@ -148,6 +150,8 @@ function enqueueEligibleJobs(input: {
     ),
   ]
   let added = 0
+  let eligible = 0
+  let autoApplyCapable = 0
   for (const job of jobs) {
     if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) break
     if (c2cOnly(run.config) && job.c2cStatus !== 'confirmed') continue
@@ -186,6 +190,29 @@ function enqueueEligibleJobs(input: {
     }
 
     if (!meetsMatchThreshold(finalScore, run.config.minimumMatchRate)) continue
+    eligible += 1
+
+    const applicationUrl = jobApplicationUrl(job)
+    const capability = classifyApplicationCapability({
+      url: job.url,
+      applicationUrl,
+      discoveryProvider: job.provider,
+    })
+    const staticPreflight = preflightApplication({
+      url: job.url,
+      applicationUrl,
+      provider: job.provider,
+    })
+    if (!canEnterAutonomousApply(capability.capability) || !canEnterAutonomousApply(staticPreflight.capability)) {
+      logApplyEvent('capability-skip', {
+        jobId: job.id,
+        applicationUrl,
+        matchScore: finalScore,
+        code: capability.capability,
+      })
+      continue
+    }
+    autoApplyCapable += 1
 
     const identity = applicationIdentity(job)
     queueIdentities.push(identity)
@@ -200,7 +227,7 @@ function enqueueEligibleJobs(input: {
       sourceResumeId: startInput.resumeId,
       title: job.title,
       company: job.company,
-      applicationUrl: jobApplicationUrl(job),
+      applicationUrl,
       initialMatchScore: initial,
       finalMatchScore: finalScore,
       c2cStatus: job.c2cStatus,
@@ -218,10 +245,18 @@ function enqueueEligibleJobs(input: {
       sessionId: null,
       createdAt: timestamp,
       updatedAt: timestamp,
+      applicationCapability: capability.capability,
+      discoverySource: capability.discoverySource,
+      applicationSource: capability.applicationSource,
+      applicationProvider: capability.provider,
+      initialUrl: applicationUrl,
+      redirectUrls: [],
+      finalApplicationUrl: null,
+      preflight: staticPreflight,
     })
     added += 1
   }
-  return { added, found: jobs.length }
+  return { added, found: jobs.length, eligible, autoApplyCapable }
 }
 
 export async function startAutoApply(
@@ -255,9 +290,14 @@ export async function startAutoApply(
   const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
   const items: AutoApplyQueueItem[] = []
   const previous = await store.list(input.userId)
-  const { found } = enqueueEligibleJobs({ run, items, jobs, startInput: input, previous })
+  const queued = enqueueEligibleJobs({ run, items, jobs, startInput: input, previous })
 
-  run.counts = { ...recount(items), found }
+  run.counts = {
+    ...recount(items),
+    found: queued.found,
+    eligible: queued.eligible,
+    autoApplyCapable: queued.autoApplyCapable,
+  }
   syncRunStatus(run, items)
   run.updatedAt = nowIso()
   rememberAutoApplyProfile(input.userId, input.profile)
@@ -282,14 +322,19 @@ export async function refreshAutoApplyRun(
   }
   const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
   const previous = await store.list(input.userId)
-  const { added, found } = enqueueEligibleJobs({
+  const { added, found, eligible, autoApplyCapable } = enqueueEligibleJobs({
     run: current.run,
     items: current.items,
     jobs,
     startInput: input,
     previous,
   })
-  current.run.counts = { ...recount(current.items), found: Math.max(current.run.counts.found, found) }
+  current.run.counts = {
+    ...recount(current.items),
+    found: Math.max(current.run.counts.found, found),
+    eligible: Math.max(current.run.counts.eligible, eligible),
+    autoApplyCapable: Math.max(current.run.counts.autoApplyCapable, autoApplyCapable),
+  }
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   rememberAutoApplyProfile(input.userId, input.profile)
@@ -359,7 +404,7 @@ async function persistPrepared(
   logSteps = false,
 ) {
   item.updatedAt = nowIso()
-  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  current.run.counts = recountWithDiscovery(current.items, current.run.counts)
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   if (logSteps) logAutoApplyStep(13, 'Saving application state', { itemId: item.id, applicationStatus: item.applicationStatus })
@@ -646,7 +691,7 @@ async function submitQueueItemLocked(
       await persistConfirmedSubmission({ userId: current.run.userId, item, config })
     }
   }
-  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  current.run.counts = recountWithDiscovery(current.items, current.run.counts)
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   await persistRun(store, current.run, current.items, config)
@@ -687,7 +732,7 @@ export async function cancelRun(
     }
   }
   current.run.status = 'cancelled'
-  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  current.run.counts = recountWithDiscovery(current.items, current.run.counts)
   current.run.updatedAt = nowIso()
   for (const item of current.items) releaseExtensionItem(current.run.userId, item.id)
   await persistRun(store, current.run, current.items, config)
@@ -715,7 +760,7 @@ export async function answerQueueItem(
     item.applicationStatus = 'ready_for_submission'
   }
   item.updatedAt = nowIso()
-  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  current.run.counts = recountWithDiscovery(current.items, current.run.counts)
   syncRunStatus(current.run, current.items)
   await persistRun(store, current.run, current.items, config)
   return toResult(current, item)
@@ -737,7 +782,7 @@ async function setItemStatus(
   item.applicationStatus = status
   item.sessionId = null
   item.updatedAt = nowIso()
-  current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+  current.run.counts = recountWithDiscovery(current.items, current.run.counts)
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   releaseExtensionItem(current.run.userId, item.id)
@@ -754,7 +799,7 @@ export async function getAutoApplyRun(runId: string, deps: AutoApplyEngineDeps =
   failStuckPreparations(current.items, timeouts.stuckMs)
   const after = current.items.map((item) => item.applicationStatus).join('|')
   if (before !== after) {
-    current.run.counts = { ...recount(current.items), found: current.run.counts.found }
+    current.run.counts = recountWithDiscovery(current.items, current.run.counts)
     syncRunStatus(current.run, current.items)
     current.run.updatedAt = nowIso()
     await persistRun(store, current.run, current.items, config)

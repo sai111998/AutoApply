@@ -574,12 +574,16 @@ export interface AutoApplyQueueItem {
 export interface AutoApplyCounts {
   found: number
   eligible: number
+  autoApplyCapable?: number
   tailored: number
   ready: number
   needsInput: number
   submitted: number
   skipped: number
   failed: number
+  queued?: number
+  processed?: number
+  blocked?: number
 }
 
 export interface AutoApplyRun {

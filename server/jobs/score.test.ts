@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { emptyNormalizedJob } from './normalize'
 import { previewLiveJobTailor, clearLivePreviewCache } from './preview'
-import { clearLiveScoreCache, liveScoreCacheStats, scoreJobAgainstResume } from './score'
+import {
+  clearLiveScoreCache,
+  liveScoreCacheKey,
+  liveScoreCacheStats,
+  normalizedJobHash,
+  scoreJobAgainstResume,
+} from './score'
 import { JAVA_BACKEND_JD, JAVA_RESUME_TEXT, MISSING_STACK_JD } from '../tailor/fixtures'
 
 const javaJob = emptyNormalizedJob({
@@ -85,5 +91,65 @@ describe('live job Match Engine scoring', () => {
     })
     expect(again.cached).toBe(true)
     expect(again.tailored.score).toBe(preview.tailored.score)
+  })
+
+  it('uses a cache identity of jobId + resumeVersionId + normalizedJobHash', () => {
+    const jobA = liveScoreCacheKey('job-a', 'resume-1', normalizedJobHash(javaJob))
+    const jobB = liveScoreCacheKey('job-b', 'resume-1', normalizedJobHash(javaJob))
+    const resume2 = liveScoreCacheKey('job-a', 'resume-2', normalizedJobHash(javaJob))
+    const changedJob = liveScoreCacheKey('job-a', 'resume-1', normalizedJobHash(kubernetesJob))
+    expect(jobA).not.toBe(jobB)
+    expect(jobA).not.toBe(resume2)
+    expect(jobA).not.toBe(changedJob)
+    expect(jobA.split('|')).toHaveLength(3)
+  })
+
+  it('does not reuse Job A + Resume 1 for Job B + Resume 1', () => {
+    const first = scoreJobAgainstResume(javaJob, JAVA_RESUME_TEXT, 'resume-1')
+    const second = scoreJobAgainstResume(kubernetesJob, JAVA_RESUME_TEXT, 'resume-1')
+    expect(second.cached).toBe(false)
+    expect(second.score).not.toBe(first.score)
+    expect(liveScoreCacheStats().misses).toBe(2)
+  })
+
+  it('does not reuse Job A + Resume 1 for Job A + Resume 2', () => {
+    const first = scoreJobAgainstResume(javaJob, JAVA_RESUME_TEXT, 'resume-1')
+    const second = scoreJobAgainstResume(javaJob, 'Python developer with Django and Flask.', 'resume-2')
+    expect(second.cached).toBe(false)
+    expect(second.score).not.toBe(first.score)
+    expect(second.resumeVersionId).toBe('resume-2')
+  })
+
+  it('never defaults a missing score to 100', () => {
+    const empty = scoreJobAgainstResume(
+      emptyNormalizedJob({
+        id: 'empty',
+        provider: 'job-opportunities',
+        providerJobId: 'empty',
+        title: 'Role',
+        company: 'Co',
+        description: '',
+      }),
+      JAVA_RESUME_TEXT,
+      'resume-1',
+    )
+    expect(empty.score).toBeNull()
+    expect(empty.score).not.toBe(100)
+    const thin = scoreJobAgainstResume(
+      emptyNormalizedJob({
+        id: 'thin',
+        provider: 'job-opportunities',
+        providerJobId: 'thin',
+        title: 'Role',
+        company: 'Co',
+        description: 'We are hiring. Apply today. Great team.',
+      }),
+      JAVA_RESUME_TEXT,
+      'resume-1',
+    )
+    expect(thin.score).not.toBe(100)
+    expect(thin.score).not.toBe(93)
+    expect(thin.score).not.toBe(95)
+    if (thin.score != null) expect(thin.score).toBeLessThan(90)
   })
 })

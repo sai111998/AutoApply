@@ -114,7 +114,7 @@ export interface MatchReport {
   missingEvidence: string[]
   summary: string
   scoring: {
-    weights: typeof SCORE_WEIGHTS
+    weights: Record<keyof typeof SCORE_WEIGHTS, number>
     components: Record<keyof typeof SCORE_WEIGHTS, number>
   }
 }

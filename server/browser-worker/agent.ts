@@ -1,5 +1,7 @@
 import { inspectApplicationUrl } from '../apply/validate'
 import { clickApplyControl } from '../apply/apply-action'
+import { canEnterAutonomousApply } from '../apply/capability'
+import { logApplyEvent } from '../apply/log'
 import { analyzeApplicationSurface } from '../apply/surface'
 import { resolveApplicationQuestions } from '../apply/questions'
 import { detectSubmissionConfirmation, isFinalSubmitLabel } from '../apply/confirm'
@@ -109,12 +111,77 @@ export async function runApplicationAgent(input: {
     return { session, status: 'failed', questions: [], failureReason: session.failureReason }
   }
   const initialUrl = inspected.url.toString()
+  input.item.initialUrl = input.item.initialUrl || initialUrl
   await input.page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 16_000 })
   await input.page.waitForLoadState?.('domcontentloaded', { timeout: 8_000 }).catch(() => undefined)
   let currentUrl = pageUrl(input.page, initialUrl)
   session = recordBrowserRedirect(session, currentUrl)
+  input.item.redirectUrls = [...(input.item.redirectUrls ?? []), currentUrl].filter((value, index, all) => all.indexOf(value) === index)
   let html = await input.page.content()
   let adapter = detectAtsAdapter({ url: currentUrl, html })
+  const livePreflight = adapter.preflight({ url: currentUrl, html, applicationUrl: initialUrl })
+  input.item.preflight = livePreflight
+  input.item.applicationProvider = adapter.id
+  input.item.applicationCapability = livePreflight.capability
+  input.item.captchaDetectionConfidence = livePreflight.captchaDetectionConfidence
+  input.item.captchaEvidence = livePreflight.captchaEvidence
+  logApplyEvent('application-preflight', {
+    jobId: input.item.jobId,
+    applicationId: input.item.applicationId,
+    itemId: input.item.id,
+    resumeVersionId: input.item.resumeVersionId,
+    applicationUrl: currentUrl,
+    matchScore: input.item.finalMatchScore,
+    applicationStatus: input.item.applicationStatus,
+    code: livePreflight.capability,
+  })
+  if (!canEnterAutonomousApply(livePreflight.capability)) {
+    if (livePreflight.capability === 'blocked' && livePreflight.captcha) {
+      recordUserIntervention({
+        applicationId: input.item.applicationId || input.item.id,
+        itemId: input.item.id,
+        reason: 'CAPTCHA_REQUIRED',
+        currentUrl,
+      })
+      session = markBrowserSessionState(session.itemId, 'captcha_required', { currentUrl, provider: adapter.id })
+      return { session, status: 'captcha_required', questions: [], failureReason: null }
+    }
+    if (livePreflight.capability === 'blocked' && /login/i.test(livePreflight.blockers.join(' '))) {
+      recordUserIntervention({
+        applicationId: input.item.applicationId || input.item.id,
+        itemId: input.item.id,
+        reason: 'LOGIN_REQUIRED',
+        currentUrl,
+      })
+      session = markBrowserSessionState(session.itemId, 'login_required', { currentUrl, provider: adapter.id })
+      return { session, status: 'login_required', questions: [], failureReason: null }
+    }
+    if (livePreflight.capability === 'blocked' && /multi-factor|mfa/i.test(livePreflight.blockers.join(' '))) {
+      recordUserIntervention({
+        applicationId: input.item.applicationId || input.item.id,
+        itemId: input.item.id,
+        reason: 'MFA_REQUIRED',
+        currentUrl,
+      })
+      session = markBrowserSessionState(session.itemId, 'mfa_required', { currentUrl, provider: adapter.id })
+      return { session, status: 'mfa_required', questions: [], failureReason: null }
+    }
+    if (livePreflight.capability === 'assisted_apply') {
+      recordUserIntervention({
+        applicationId: input.item.applicationId || input.item.id,
+        itemId: input.item.id,
+        reason: 'UNKNOWN_REQUIRED_QUESTION',
+        currentUrl,
+      })
+      session = markBrowserSessionState(session.itemId, 'needs_user_input', { currentUrl, provider: adapter.id })
+      return { session, status: 'needs_user_input', questions: [], failureReason: null }
+    }
+    session = markBrowserSessionState(session.itemId, 'failed', {
+      currentUrl,
+      failureReason: livePreflight.blockers[0] || livePreflight.reasons[0] || 'This application is not Auto-Apply capable.',
+    })
+    return { session, status: 'skipped', questions: [], failureReason: session.failureReason }
+  }
   session = markBrowserSessionState(session.itemId, adapter.id === 'unknown' ? 'job_page' : 'provider_detected', {
     provider: adapter.id,
     currentUrl,
@@ -168,6 +235,8 @@ export async function runApplicationAgent(input: {
     html = await input.page.content()
     currentUrl = pageUrl(input.page, currentUrl)
     session = recordBrowserRedirect(session, currentUrl)
+    input.item.redirectUrls = [...(input.item.redirectUrls ?? []), currentUrl].filter((value, index, all) => all.indexOf(value) === index)
+    input.item.finalApplicationUrl = currentUrl
     const pause = adapter.detectBlockingState(html)
     if (pause === 'CAPTCHA_REQUIRED' || pause === 'MFA_REQUIRED' || pause === 'LOGIN_REQUIRED') {
       const state = pause === 'CAPTCHA_REQUIRED' ? 'captcha_required' : pause === 'MFA_REQUIRED' ? 'mfa_required' : 'login_required'
@@ -236,6 +305,8 @@ export async function runApplicationAgent(input: {
           }
         }
         session = markBrowserSessionState(session.itemId, 'submitted', { currentUrl: confirmationUrl })
+        input.item.finalApplicationUrl = confirmationUrl
+        input.item.applicationUrl = confirmationUrl
         return {
           session,
           status: 'submitted',

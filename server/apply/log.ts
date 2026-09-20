@@ -27,6 +27,10 @@ export function logApplyEvent(
     identityKey?: string | null
     matchScore?: number | null
     applicationStatus?: string | null
+    capability?: string | null
+    provider?: string | null
+    currentUrl?: string | null
+    state?: string | null
     code?: string | null
     error?: unknown
   },
@@ -43,9 +47,11 @@ export function logApplyEvent(
     itemId: details.itemId ?? null,
     resumeVersionId: details.resumeVersionId ?? null,
     urlHost: urlHost(details.applicationUrl),
-    provider: providerFromIdentity(details.identityKey),
+    provider: details.provider ?? providerFromIdentity(details.identityKey),
+    capability: details.capability ?? details.code ?? null,
     matchScore: details.matchScore ?? null,
-    applicationStatus: details.applicationStatus ?? null,
+    applicationStatus: details.applicationStatus ?? details.state ?? null,
+    currentHost: urlHost(details.currentUrl ?? details.applicationUrl),
     code: details.code ?? null,
     error: message && SECRET_RE.test(message) ? '[redacted]' : safe(message),
     stack: stack && !SECRET_RE.test(stack) ? stack : undefined,

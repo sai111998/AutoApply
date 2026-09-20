@@ -12,22 +12,31 @@ export interface LiveJobMatch {
   cached: boolean
 }
 
-const cache = new Map<string, Omit<LiveJobMatch, 'cached'>>()
+interface CachedLiveJobMatch extends Omit<LiveJobMatch, 'cached'> {
+  resumeHash: string
+}
+
+const cache = new Map<string, CachedLiveJobMatch>()
 let hits = 0
 let misses = 0
 
 export function jobContentHash(job: Pick<NormalizedJob, 'title' | 'company' | 'description'>): string {
-  return createHash('sha256')
-    .update(`${job.title}\n${job.company}\n${job.description ?? ''}`)
-    .digest('hex')
+  return normalizedJobHash(job)
+}
+
+export function normalizedJobHash(job: Pick<NormalizedJob, 'title' | 'company' | 'description'>): string {
+  const title = job.title.trim().toLowerCase()
+  const company = job.company.trim().toLowerCase()
+  const description = (job.description ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+  return createHash('sha256').update(`${title}\n${company}\n${description}`).digest('hex')
 }
 
 export function resumeContentHash(resumeText: string): string {
   return createHash('sha256').update(resumeText.trim()).digest('hex')
 }
 
-export function liveScoreCacheKey(jobId: string, resumeVersionId: string, jobHash: string, resumeHash = ''): string {
-  return `${jobId}|${resumeVersionId}|${jobHash}|${resumeHash}`
+export function liveScoreCacheKey(jobId: string, resumeVersionId: string, jobHash: string): string {
+  return `${jobId}|${resumeVersionId}|${jobHash}`
 }
 
 export function resumeIdentity(resumeText: string, resumeVersionId?: string | null): string {
@@ -55,21 +64,18 @@ export function scoreJobAgainstResume(
   const description = job.description?.trim() ?? ''
   if (!resumeText.trim() || !description) return emptyLiveMatch(resumeVersionId ?? null)
 
-  const key = liveScoreCacheKey(
-    job.providerJobId || job.id,
-    versionId,
-    jobContentHash(job),
-    resumeContentHash(resumeText),
-  )
+  const resumeHash = resumeContentHash(resumeText)
+  const key = liveScoreCacheKey(job.providerJobId || job.id, versionId, normalizedJobHash(job))
   const hit = cache.get(key)
-  if (hit) {
+  if (hit && hit.resumeHash === resumeHash) {
     hits += 1
-    return { ...hit, cached: true }
+    const { resumeHash: _resumeHash, ...value } = hit
+    return { ...value, cached: true }
   }
 
   misses += 1
   const report = scoreMatch(extractResumeLocal(resumeText), extractJobLocal(description), resumeText)
-  const result: Omit<LiveJobMatch, 'cached'> = {
+  const result: CachedLiveJobMatch = {
     score: report.matchScore,
     matchedSkills: [
       ...report.requiredSkills.matched.map((item) => item.name),
@@ -85,13 +91,15 @@ export function scoreJobAgainstResume(
       .slice(0, 6),
     resumeVersionId: resumeVersionId?.trim() || null,
     scoreUpdatedAt: new Date().toISOString(),
+    resumeHash,
   }
   if (cache.size >= 500) {
     const oldest = cache.keys().next().value
     if (oldest) cache.delete(oldest)
   }
   cache.set(key, result)
-  return { ...result, cached: false }
+  const { resumeHash: _resumeHash, ...value } = result
+  return { ...value, cached: false }
 }
 
 export function liveScoreCacheStats() {

@@ -69,8 +69,7 @@ export function previewLiveJobTailor(input: {
     input.job.providerJobId || input.job.id,
     versionId,
     jobContentHash(input.job),
-    resumeContentHash(resumeText),
-  )}`
+  )}|${resumeContentHash(resumeText)}`
   const hit = previewCache.get(key)
   if (hit) return { ...hit, cached: true }
 

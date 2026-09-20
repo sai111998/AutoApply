@@ -68,8 +68,8 @@ function bucket(items: SkillAssessment[]) {
   }
 }
 
-function coverage(items: SkillAssessment[]): number {
-  if (items.length === 0) return 1
+function coverage(items: SkillAssessment[]): number | null {
+  if (items.length === 0) return null
   const points = items.reduce((sum, item) => {
     if (item.classification === 'strong') return sum + 1
     if (item.classification === 'partial') return sum + 0.5
@@ -284,10 +284,11 @@ function analyzeResponsibilities(resume: ResumeProfile, job: JobProfile, resumeT
   return { strongMatches, partialMatches, gaps }
 }
 
-function statusScore(status: FitStatus): number {
+function statusScore(status: FitStatus): number | null {
   switch (status) {
-    case 'match':
     case 'not_applicable':
+      return null
+    case 'match':
       return 1
     case 'partial':
       return 0.55
@@ -299,6 +300,53 @@ function statusScore(status: FitStatus): number {
       return 0.15
     default:
       return 0.4
+  }
+}
+
+function educationCertsScore(
+  education: { status: FitStatus },
+  missingRequiredCerts: number,
+  requiredCertCount: number,
+): number | null {
+  const educationScore = statusScore(education.status)
+  const certsApplicable = requiredCertCount > 0
+  if (educationScore == null && !certsApplicable) return null
+  const certScore = !certsApplicable ? null : missingRequiredCerts === 0 ? 1 : Math.max(0, 1 - missingRequiredCerts * 0.4)
+  if (educationScore == null) return certScore
+  if (certScore == null) return educationScore
+  return (educationScore + certScore) / 2
+}
+
+function weightedMatchScore(components: Record<keyof typeof SCORE_WEIGHTS, number | null>): {
+  matchScore: number
+  weights: Record<keyof typeof SCORE_WEIGHTS, number>
+  values: Record<keyof typeof SCORE_WEIGHTS, number>
+} {
+  let weightSum = 0
+  let total = 0
+  const weights = { ...SCORE_WEIGHTS } as Record<keyof typeof SCORE_WEIGHTS, number>
+  const values = { ...SCORE_WEIGHTS } as Record<keyof typeof SCORE_WEIGHTS, number>
+  for (const key of Object.keys(SCORE_WEIGHTS) as Array<keyof typeof SCORE_WEIGHTS>) {
+    const value = components[key]
+    if (value == null) {
+      weights[key] = 0
+      values[key] = 0
+      continue
+    }
+    weightSum += SCORE_WEIGHTS[key]
+    total += SCORE_WEIGHTS[key] * value * 100
+    values[key] = value
+  }
+  if (weightSum === 0) {
+    return { matchScore: 0, weights, values }
+  }
+  for (const key of Object.keys(SCORE_WEIGHTS) as Array<keyof typeof SCORE_WEIGHTS>) {
+    if (components[key] != null) weights[key] = SCORE_WEIGHTS[key] / weightSum
+  }
+  return {
+    matchScore: Math.max(0, Math.min(100, Math.round(total / weightSum))),
+    weights,
+    values,
   }
 }
 
@@ -358,19 +406,13 @@ export function scoreMatch(resume: ResumeProfile, job: JobProfile, resumeText: s
       ...responsibilities.partialMatches,
       ...responsibilities.gaps,
     ]),
-    educationCerts:
-      (statusScore(education.status) + (certs.missing.length === 0 ? 1 : Math.max(0, 1 - certs.missing.length * 0.4))) / 2,
+    educationCerts: educationCertsScore(education, certs.missing.length, job.certifications.required.length),
     preferredSkills: coverage(preferredAssessed),
     location: statusScore(location.status),
   }
 
-  let matchScore = Math.round(
-    Object.entries(SCORE_WEIGHTS).reduce((sum, [key, weight]) => {
-      return sum + weight * components[key as keyof typeof SCORE_WEIGHTS] * 100
-    }, 0),
-  )
-
-  matchScore = Math.max(0, Math.min(100, matchScore))
+  const scored = weightedMatchScore(components)
+  const matchScore = scored.matchScore
 
   const missingEvidence: string[] = []
   if (experience.status === 'insufficient_evidence') missingEvidence.push('Years of experience are not stated clearly enough to compare.')
@@ -427,7 +469,7 @@ export function scoreMatch(resume: ResumeProfile, job: JobProfile, resumeText: s
     concerns: concerns.length ? concerns : ['No major concerns were identified from the supplied texts.'],
     missingEvidence,
     summary,
-    scoring: { weights: SCORE_WEIGHTS, components },
+    scoring: { weights: scored.weights, components: scored.values },
   }
 }
 

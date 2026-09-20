@@ -1,6 +1,26 @@
 import type { AutoApplyCounts, AutoApplyQueueItem, AutoApplyRun } from './types'
 
 const FAILED_STATUSES = new Set(['failed', 'blocked', 'automation_blocked', 'extension_not_connected'])
+const BLOCKED_STATUSES = new Set(['captcha_required', 'mfa_required', 'login_required', 'blocked', 'automation_blocked'])
+const PROCESSED_STATUSES = new Set([
+  'opening',
+  'filling',
+  'preparing',
+  'tailoring',
+  'submitting',
+  'ready_for_submission',
+  'needs_user_input',
+  'needs_user_confirmation',
+  'needs_confirmation',
+  'captcha_required',
+  'mfa_required',
+  'login_required',
+  'submitted',
+  'failed',
+  'blocked',
+  'automation_blocked',
+  'skipped',
+])
 const TERMINAL_STATUSES = new Set([
   'submitted',
   'skipped',
@@ -32,6 +52,7 @@ export function emptyCounts(): AutoApplyCounts {
   return {
     found: 0,
     eligible: 0,
+    autoApplyCapable: 0,
     tailored: 0,
     ready: 0,
     needsInput: 0,
@@ -40,6 +61,8 @@ export function emptyCounts(): AutoApplyCounts {
     failed: 0,
     queued: 0,
     processing: 0,
+    processed: 0,
+    blocked: 0,
     captcha: 0,
   }
 }
@@ -62,8 +85,21 @@ export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
     if (item.applicationStatus === 'submitted') counts.submitted += 1
     if (item.applicationStatus === 'skipped') counts.skipped += 1
     if (FAILED_STATUSES.has(item.applicationStatus)) counts.failed += 1
+    if (item.applicationCapability === 'auto_apply_supported') counts.autoApplyCapable += 1
+    if (PROCESSED_STATUSES.has(item.applicationStatus)) counts.processed += 1
+    if (BLOCKED_STATUSES.has(item.applicationStatus)) counts.blocked += 1
   }
   return counts
+}
+
+export function recountWithDiscovery(items: AutoApplyQueueItem[], previous?: AutoApplyCounts | null): AutoApplyCounts {
+  const counts = recount(items)
+  return {
+    ...counts,
+    found: Math.max(counts.found, previous?.found ?? 0),
+    eligible: Math.max(counts.eligible, previous?.eligible ?? 0),
+    autoApplyCapable: Math.max(counts.autoApplyCapable, previous?.autoApplyCapable ?? 0),
+  }
 }
 
 export function syncRunStatus(run: AutoApplyRun, items: AutoApplyQueueItem[]): AutoApplyRun {

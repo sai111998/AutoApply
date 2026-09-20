@@ -1,6 +1,6 @@
 import { getStoredProfile, getStoredResume } from '../extension/profile-store'
 import { memoryStore, persistRun, type StoredRun } from '../apply/store'
-import { recount, syncRunStatus } from '../apply/counts'
+import { recountWithDiscovery, syncRunStatus } from '../apply/counts'
 import type { AutoApplyQueueItem } from '../apply/types'
 import { isRetryableBrowserJob } from './recovery'
 
@@ -75,7 +75,7 @@ export async function claimNextBrowserJob(): Promise<{ stored: StoredRun; item: 
     item.applicationStatus = 'opening'
     item.failureReason = null
     item.updatedAt = new Date().toISOString()
-    stored.run.counts = { ...recount(stored.items), found: stored.run.counts.found }
+    stored.run.counts = recountWithDiscovery(stored.items, stored.run.counts)
     stored.run = syncRunStatus(stored.run, stored.items)
     stored.run.updatedAt = item.updatedAt
     await persistRun(memoryStore, stored.run, stored.items)
@@ -87,7 +87,7 @@ export async function claimNextBrowserJob(): Promise<{ stored: StoredRun; item: 
 
 export async function persistBrowserJob(stored: StoredRun, item: AutoApplyQueueItem) {
   item.updatedAt = new Date().toISOString()
-  stored.run.counts = { ...recount(stored.items), found: stored.run.counts.found }
+  stored.run.counts = recountWithDiscovery(stored.items, stored.run.counts)
   stored.run = syncRunStatus(stored.run, stored.items)
   stored.run.updatedAt = item.updatedAt
   await persistRun(memoryStore, stored.run, stored.items)

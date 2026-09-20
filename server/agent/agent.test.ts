@@ -115,6 +115,34 @@ describe('autonomous campaign agent', () => {
     expect(canSearchAgain(null)).toBe(true)
   })
 
+  it('does not queue discovery-only job board listings', async () => {
+    const started = await startCampaign(
+      config,
+      startInput,
+      {
+        deps: {
+          delayMs: 0,
+          listJobs: async () => ({
+            jobs: [
+              job({
+                id: 'indeed',
+                title: 'Java Engineer',
+                url: 'https://www.indeed.com/viewjob?jk=1',
+                jobUrl: 'https://www.indeed.com/viewjob?jk=1',
+                matchScore: 96,
+              }),
+              job({ id: 'ready', title: 'Java Engineer', matchScore: 90 }),
+            ],
+          }),
+        },
+      },
+    )
+    expect(started.items.map((item) => item.jobId)).toEqual(['ready'])
+    expect(started.items[0].applicationCapability).toBe('auto_apply_supported')
+    expect(started.run.counts.found).toBe(2)
+    expect(started.run.counts.autoApplyCapable).toBe(1)
+  })
+
   it('applies match threshold and C2C-only without changing scores', () => {
     expect(meetsMatchThreshold(85, 85)).toBe(true)
     expect(meetsMatchThreshold(82, 85)).toBe(false)
