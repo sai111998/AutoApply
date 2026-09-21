@@ -29,6 +29,16 @@ export function logApplyEvent(
     applicationStatus?: string | null
     capability?: string | null
     provider?: string | null
+    discoveryProvider?: string | null
+    applicationProvider?: string | null
+    initialUrl?: string | null
+    finalUrl?: string | null
+    pageType?: string | null
+    detectedFields?: string[] | null
+    questionMappings?: string[] | null
+    blockingReason?: string | null
+    submissionResult?: string | null
+    confirmationResult?: string | null
     currentUrl?: string | null
     state?: string | null
     code?: string | null
@@ -48,9 +58,19 @@ export function logApplyEvent(
     resumeVersionId: details.resumeVersionId ?? null,
     urlHost: urlHost(details.applicationUrl),
     provider: details.provider ?? providerFromIdentity(details.identityKey),
+    discoveryProvider: details.discoveryProvider ?? null,
+    applicationProvider: details.applicationProvider ?? details.provider ?? null,
     capability: details.capability ?? details.code ?? null,
     matchScore: details.matchScore ?? null,
     applicationStatus: details.applicationStatus ?? details.state ?? null,
+    initialUrl: details.initialUrl ?? null,
+    finalUrl: details.finalUrl ?? details.currentUrl ?? null,
+    pageType: details.pageType ?? null,
+    detectedFields: details.detectedFields ?? null,
+    questionMappings: details.questionMappings ?? null,
+    blockingReason: details.blockingReason ?? null,
+    submissionResult: details.submissionResult ?? null,
+    confirmationResult: details.confirmationResult ?? null,
     currentHost: urlHost(details.currentUrl ?? details.applicationUrl),
     code: details.code ?? null,
     error: message && SECRET_RE.test(message) ? '[redacted]' : safe(message),

@@ -15,6 +15,9 @@ import { logApplyEvent } from '../apply/log'
 import { mergeSurfaceDocuments } from '../apply/surface'
 import { resolveApplicationQuestions } from '../apply/questions'
 import { detectSubmissionConfirmation, isFinalSubmitLabel } from '../apply/confirm'
+import { buildCandidateApplicationProfile, candidateFillValues } from '../application/profile'
+import { selectedResumeForUpload } from '../application/resume'
+import { persistStepState } from '../application/navigation'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus } from '../apply/types'
 import { allowUnattendedSubmit } from './profile'
 import { detectAtsAdapter } from './providers'
@@ -53,27 +56,16 @@ function pageUrl(page: BrowserPageLike, fallback: string): string {
   return typeof page.url === 'function' ? page.url() : page.url
 }
 
-function profileValues(profile: AutoApplyProfile): Record<string, string> {
-  const [firstName, ...rest] = profile.fullName.trim().split(/\s+/)
-  const lastName = rest.join(' ')
-  const values: Record<string, string> = {
-    fullName: profile.fullName,
-    firstName: firstName || '',
-    lastName,
-    email: profile.email,
-    city: profile.location,
-  }
-  if (profile.yearsOfExperience != null) values.yearsExperience = String(profile.yearsOfExperience)
-  if (profile.workAuthorization === 'us_citizen' || profile.workAuthorization === 'us_permanent_resident' || profile.workAuthorization === 'work_visa') {
-    values.workAuthorization = 'Yes'
-  } else if (profile.workAuthorization === 'needs_sponsorship') {
-    values.workAuthorization = 'No'
-  }
-  values.sponsorship = profile.sponsorshipRequired ? 'Yes' : 'No'
-  if (profile.targetSalaryMin != null || profile.targetSalaryMax != null) {
-    values.salary = [profile.targetSalaryMin, profile.targetSalaryMax].filter((value) => value != null).join('-')
-  }
-  return values
+function profileValues(profile: AutoApplyProfile, extras?: { userId?: string; resumeText?: string | null; resumeVersionId?: string | null; resumeVersionName?: string }): Record<string, string> {
+  return candidateFillValues(
+    buildCandidateApplicationProfile({
+      userId: extras?.userId,
+      profile,
+      resumeText: extras?.resumeText,
+      resumeVersionId: extras?.resumeVersionId,
+      resumeVersionName: extras?.resumeVersionName,
+    }),
+  )
 }
 
 export interface AgentRunResult {
@@ -308,8 +300,13 @@ export async function runApplicationAgent(input: {
   }
 
   session = markBrowserSessionState(session.itemId, 'application_page', { currentUrl, provider: adapter.id })
-  const values = profileValues(input.profile)
-  const resumeText = input.item.tailoredResumeText
+  const values = profileValues(input.profile, {
+    userId: input.userId,
+    resumeText: input.item.tailoredResumeText,
+    resumeVersionId: input.item.resumeVersionId,
+    resumeVersionName: input.item.resumeVersionName,
+  })
+  const resumeUpload = selectedResumeForUpload(input.item)
   let advanced = 0
   while (advanced < 8) {
     html = await input.page.content()
@@ -331,6 +328,16 @@ export async function runApplicationAgent(input: {
     }
     const surface = mergeSurfaceDocuments(await documentsFromEvidencePage(input.page, currentUrl))
     const resolved = resolveApplicationQuestions(surface.inspection.questions, input.profile, input.userId)
+    logApplyEvent('question-mapping', {
+      jobId: input.item.jobId,
+      applicationId: input.item.applicationId,
+      itemId: input.item.id,
+      resumeVersionId: input.item.resumeVersionId,
+      matchScore: input.item.finalMatchScore,
+      provider: adapter.id,
+      capability: input.item.applicationCapability,
+      code: resolved.unknown.length ? 'needs_user_input' : 'mapped',
+    })
     if (resolved.unknown.length && surface.kind === 'application') {
       recordUserIntervention({
         applicationId: input.item.applicationId || input.item.id,
@@ -347,12 +354,13 @@ export async function runApplicationAgent(input: {
       }
     }
     session = markBrowserSessionState(session.itemId, 'filling', { currentUrl, provider: adapter.id })
+    persistStepState({ step: advanced + 1, pageType: surface.kind, url: currentUrl })
     await adapter.fillFields(input.page, values)
-    if (resumeText?.trim()) {
+    if (resumeUpload) {
       await adapter.uploadResume(input.page, {
-        fileName: `${input.item.resumeVersionName || 'resume'}.txt`,
-        mimeType: 'text/plain',
-        buffer: Buffer.from(resumeText),
+        fileName: resumeUpload.fileName,
+        mimeType: resumeUpload.mimeType,
+        buffer: resumeUpload.buffer,
       })
     }
     const labels = await visibleControlLabels(input.page)

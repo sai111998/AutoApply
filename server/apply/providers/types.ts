@@ -1,4 +1,13 @@
-export const APPLICATION_PROVIDER_IDS = ['workday', 'greenhouse', 'lever', 'ashby', 'icims', 'oraclecloud', 'generic'] as const
+export const APPLICATION_PROVIDER_IDS = [
+  'workday',
+  'greenhouse',
+  'lever',
+  'ashby',
+  'icims',
+  'smartrecruiters',
+  'oraclecloud',
+  'generic',
+] as const
 
 export type ApplicationProviderId = (typeof APPLICATION_PROVIDER_IDS)[number]
 

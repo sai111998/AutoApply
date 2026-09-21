@@ -5,14 +5,8 @@ import type { LiveJobsRequest } from '../jobs/list'
 import type { ServerConfig } from '../config'
 import type { FetchLike } from '../jobs/http'
 import { createApplyBrowser } from './browser'
-import {
-  applicationIdentity,
-  hasDuplicateQueueEntry,
-  isEligibleForAutoApply,
-  jobApplicationUrl,
-  meetsMatchThreshold,
-} from './eligibility'
-import { canEnterAutonomousApply, classifyApplicationCapability } from './capability'
+import { hasDuplicateQueueEntry } from './eligibility'
+import { classifyApplicationCapability } from './capability'
 import { preflightApplication } from './preflight'
 import type {
   ApplyBrowser,
@@ -48,8 +42,7 @@ import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitFor
 import { remainingDailySlots, utcDayKey } from '../agent/policy'
 import { discoverCampaignJobs } from '../agent/discovery'
 import { rememberUserAnswers } from './questions'
-import { resolveGreenhouseQuestions } from './greenhouse-questions'
-import type { GreenhouseQuestion } from '../jobs/providers/greenhouse'
+import { evaluateJobEligibility } from '../agent/pipeline'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -155,55 +148,33 @@ function enqueueEligibleJobs(input: {
   let autoApplyCapable = 0
   for (const job of jobs) {
     if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) break
-    if (
-      !isEligibleForAutoApply(job, {
-        minimumMatchRate: run.config.minimumMatchRate,
-        finalMatchScore: job.match?.score ?? job.matchScore ?? null,
-        existingApplications: startInput.existingApplications,
-        existingQueueIdentities: queueIdentities,
-        jobType: run.config.jobType,
-        excludedCompanies: run.config.excludedCompanies,
-        profile: startInput.profile,
-        skipScoreCheck: true,
-      }).ok
-    ) {
+    const evaluated = evaluateJobEligibility(job, {
+      startInput: { ...startInput, config: run.config },
+      existingIdentities: queueIdentities,
+      previousItems: [...previous.flatMap((entry) => entry.items), ...items],
+    })
+    if (!evaluated.ok) {
+      if (evaluated.stage === 'application_capability' || evaluated.stage === 'final_eligibility') {
+        logApplyEvent('capability-skip', {
+          jobId: job.id,
+          applicationUrl: evaluated.applicationUrl,
+          matchScore: evaluated.finalScore,
+          code: evaluated.capability,
+        })
+      }
       continue
     }
     if (hasDuplicateQueueEntry(job, queueIdentities)) continue
 
-    const initial = job.match?.score ?? job.matchScore ?? null
-    let finalScore = initial
-    let tailoredText: string | null = null
-    let resumeVersionId: string | null = randomUUID()
-    let resumeVersionName = 'Master'
+    const initial = evaluated.initialScore
+    const finalScore = evaluated.finalScore
+    const tailoredText = evaluated.tailoredText
+    const resumeVersionId = randomUUID()
+    const resumeVersionName = evaluated.resumeVersionName
     const timestamp = nowIso()
-
-    if (startInput.config.autoTailorResume) {
-      const identity = applicationIdentity(job)
-      const reused = [...previous.flatMap((entry) => entry.items), ...items].find(
-        (item) =>
-          item.identityKey === identity &&
-          Boolean(item.tailoredResumeText?.trim()) &&
-          /tailored/i.test(item.resumeVersionName),
-      )
-      if (reused?.tailoredResumeText) {
-        finalScore = reused.finalMatchScore ?? initial
-        tailoredText = reused.tailoredResumeText
-        resumeVersionId = reused.resumeVersionId
-        resumeVersionName = reused.resumeVersionName
-      } else {
-        const tailored = tailorForJob({ resumeText: startInput.resumeText, job })
-        finalScore = tailored.score
-        tailoredText = tailored.text
-        resumeVersionId = randomUUID()
-        resumeVersionName = `Tailored v1 — ${job.title}`
-      }
-    }
-
-    if (!meetsMatchThreshold(finalScore, run.config.minimumMatchRate)) continue
     eligible += 1
 
-    const applicationUrl = jobApplicationUrl(job)
+    const applicationUrl = evaluated.applicationUrl
     const capability = classifyApplicationCapability({
       url: job.url,
       applicationUrl,
@@ -214,31 +185,8 @@ function enqueueEligibleJobs(input: {
       applicationUrl,
       provider: job.provider,
     })
-    if (!canEnterAutonomousApply(capability.capability) || !canEnterAutonomousApply(staticPreflight.capability)) {
-      logApplyEvent('capability-skip', {
-        jobId: job.id,
-        applicationUrl,
-        matchScore: finalScore,
-        code: capability.capability,
-      })
-      continue
-    }
     autoApplyCapable += 1
-
-    const structured = Array.isArray(job.rawMetadata?.applicationQuestions)
-      ? resolveGreenhouseQuestions(job.rawMetadata.applicationQuestions as GreenhouseQuestion[], startInput.profile, startInput.userId)
-      : { answered: [] as AutoApplyQueueItem['questions'], unknown: [] as AutoApplyQueueItem['questions'] }
-    if (structured.unknown.length) {
-      logApplyEvent('capability-skip', {
-        jobId: job.id,
-        applicationUrl,
-        matchScore: finalScore,
-        code: 'assisted_apply',
-      })
-      continue
-    }
-
-    const identity = applicationIdentity(job)
+    const identity = evaluated.identity
     queueIdentities.push(identity)
     items.push({
       id: randomUUID(),
@@ -258,7 +206,7 @@ function enqueueEligibleJobs(input: {
       c2cEvidence: job.c2cEvidence,
       applicationStatus: 'queued',
       failureReason: null,
-      questions: structured.answered,
+      questions: evaluated.questions,
       tailoredResumeText: tailoredText ?? startInput.resumeText,
       jobDescriptionSnapshot: job.description ?? null,
       location: job.location ?? null,

@@ -130,6 +130,7 @@ const ADAPTERS: AtsProviderAdapter[] = [
   createAdapter('lever'),
   createAdapter('ashby'),
   createAdapter('icims'),
+  createAdapter('smartrecruiters'),
   createAdapter('oraclecloud'),
   createAdapter('generic'),
 ]
