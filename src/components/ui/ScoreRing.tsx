@@ -7,7 +7,7 @@ export function ScoreRing({ score, size = 132 }: { score: number | null; size?: 
   const progress = score == null ? 0 : Math.max(0, Math.min(100, score)) / 100
   const tone = scoreTone(score)
   const color =
-    tone === 'strong' ? '#556338' : tone === 'review' ? '#a4843c' : tone === 'skip' ? '#9a4f3e' : '#4d6a78'
+    tone === 'strong' ? 'var(--accent)' : tone === 'review' ? 'var(--warning)' : tone === 'skip' ? 'var(--danger)' : 'var(--color-info)'
 
   return (
     <div className="relative grid place-items-center" style={{ width: size, height: size }}>
@@ -17,7 +17,7 @@ export function ScoreRing({ score, size = 132 }: { score: number | null; size?: 
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#e2dfd6"
+          stroke="var(--color-line)"
           strokeWidth={stroke}
         />
         <circle

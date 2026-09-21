@@ -48,6 +48,13 @@ import { discoverCampaignJobs } from '../agent/discovery'
 import { rememberUserAnswers } from './questions'
 import { evaluateJobEligibility, emptyEligibilityFunnel, type EligibilityFunnel } from '../agent/pipeline'
 import { normalizeMinimumMatchRate } from './threshold'
+import {
+  DEFAULT_AUTO_TAILOR_RESUME,
+  DEFAULT_JOB_TYPE,
+  DEFAULT_MAX_JOBS,
+  DEFAULT_MINIMUM_MATCH_RATE,
+  DEFAULT_REMOTE_PREFERENCE,
+} from './defaults'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -391,7 +398,7 @@ export async function startAutoApply(
     config: {
       ...input.config,
       minimumMatchRate: normalizeMinimumMatchRate(input.config.minimumMatchRate),
-      maxJobs: Math.min(25, Math.max(1, Math.round(input.config.maxJobs || 10))),
+      maxJobs: Math.min(25, Math.max(1, Math.round(input.config.maxJobs || DEFAULT_MAX_JOBS))),
       concurrency: 1,
     },
     counts: emptyCounts(),
@@ -965,11 +972,11 @@ export async function listAutoApplyRuns(userId: string, deps: AutoApplyEngineDep
 
 export function defaultAutoApplyConfig(partial: Partial<AutoApplyConfig> = {}): AutoApplyConfig {
   return {
-    maxJobs: 10,
-    minimumMatchRate: 85,
-    autoTailorResume: true,
-    jobType: 'all',
-    remotePreference: 'any',
+    maxJobs: DEFAULT_MAX_JOBS,
+    minimumMatchRate: DEFAULT_MINIMUM_MATCH_RATE,
+    autoTailorResume: DEFAULT_AUTO_TAILOR_RESUME,
+    jobType: DEFAULT_JOB_TYPE,
+    remotePreference: DEFAULT_REMOTE_PREFERENCE,
     employmentType: 'any',
     keywords: [],
     jobTitles: [],

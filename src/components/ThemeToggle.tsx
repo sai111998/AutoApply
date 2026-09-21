@@ -20,14 +20,14 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
     <div className="inline-flex rounded-xl border border-line bg-surface p-1" role="group" aria-label="Color theme">
       <button
         type="button"
-        className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${theme === 'light' ? 'bg-olive text-white' : 'text-muted'}`}
+        className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors duration-200 ${theme === 'light' ? 'bg-olive text-white' : 'text-muted'}`}
         onClick={() => setTheme('light')}
       >
         Light
       </button>
       <button
         type="button"
-        className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${theme === 'dark' ? 'bg-olive text-white' : 'text-muted'}`}
+        className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors duration-200 ${theme === 'dark' ? 'bg-olive text-white' : 'text-muted'}`}
         onClick={() => setTheme('dark')}
       >
         Dark

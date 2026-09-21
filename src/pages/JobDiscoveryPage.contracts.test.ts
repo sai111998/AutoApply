@@ -56,7 +56,7 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/function onTailorResume/)
   })
 
-  it('adds a C2C filter and compact Auto Apply controls without replacing Apply Now', () => {
+  it('adds Auto Apply controls with All/Any defaults and optional C2C', () => {
     expect(page).toMatch(/Job type/)
     expect(page).toMatch(/C2C/)
     expect(page).toMatch(/Auto Apply/)
@@ -65,7 +65,9 @@ describe('live jobs contracts', () => {
     expect(page).toMatch(/Jobs per day/)
     expect(page).toMatch(/Auto-update resume/)
     expect(page).toMatch(/startAutoApplyRequest/)
-    expect(page).toMatch(/jobType/)
+    expect(page).toMatch(/DEFAULT_AUTO_APPLY/)
+    expect(page).toMatch(/setAutoJobType\(jobType\)/)
+    expect(page).not.toMatch(/jobType === 'all' \? 'c2c'/)
     expect(client).toMatch(/\/api\/jobs\/auto-apply\/start/)
     expect(page).toMatch(/Apply Now/)
     expect(page).not.toMatch(/submit application/i)

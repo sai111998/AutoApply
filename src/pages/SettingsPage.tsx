@@ -51,10 +51,10 @@ export function SettingsPage() {
       />
 
       <form className="grid gap-6 lg:grid-cols-2" onSubmit={(event) => void onSubmit(event)}>
-        <Card className="p-6">
+        <Card className="self-start p-4">
           <h2 className="text-lg font-semibold text-charcoal">Appearance</h2>
-          <p className="mt-2 text-sm text-muted">Light is the default. Dark mode is stored on this device.</p>
-          <div className="mt-4">
+          <p className="mt-1 text-sm text-muted">Light is the default. Dark mode is stored on this device.</p>
+          <div className="mt-3">
             <ThemeToggle />
           </div>
         </Card>

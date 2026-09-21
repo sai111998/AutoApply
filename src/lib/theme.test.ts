@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { applyTheme, persistTheme, readStoredTheme, THEME_STORAGE_KEY, type ThemeMode } from './theme'
 
 function memoryStorage(initial: Record<string, string> = {}): Storage {
@@ -69,5 +71,11 @@ describe('theme persistence', () => {
     applyTheme(readStoredTheme(storage), root)
     expect(root.classList.contains('dark')).toBe(true)
     expect(readStoredTheme(storage)).toBe('dark' as ThemeMode)
+  })
+
+  it('does not animate layout when the theme changes', () => {
+    const css = readFileSync(path.resolve(process.cwd(), 'src/index.css'), 'utf8')
+    expect(css).toMatch(/\nbody \{\n  margin: 0;[\s\S]*?transition: background-color 200ms ease, color 200ms ease;\n\}/)
+    expect(css).toMatch(/\.card \{[\s\S]*?transition: background-color 200ms ease, border-color 200ms ease/)
   })
 })

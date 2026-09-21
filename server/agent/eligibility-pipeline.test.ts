@@ -138,9 +138,43 @@ describe('eligibility vs capability pipeline', () => {
   })
 
   it('does not require C2C when C2C is off and does require it when C2C is on', () => {
+    const confirmed = job({ id: 'c2c', title: 'C2C Java', description: 'Corp to Corp Java C2C', c2cStatus: 'confirmed' })
     const w2 = job({ id: 'w2', title: 'W2 Java', description: 'W2 only. No C2C.', c2cStatus: 'not_allowed' })
-    expect(evaluateJobEligibility(w2, { startInput: start({ jobType: 'all', autoTailorResume: false }) }).ok).toBe(true)
-    expect(evaluateJobEligibility(w2, { startInput: start({ jobType: 'c2c', autoTailorResume: false }) }).ok).toBe(false)
+    const unknown = job({ id: 'unk', title: 'Java Engineer', description: 'Java Spring Boot services.', c2cStatus: 'unknown' })
+    const off = start({ jobType: 'all', autoTailorResume: false })
+    const on = start({ jobType: 'c2c', autoTailorResume: false })
+    expect(evaluateJobEligibility(confirmed, { startInput: off }).ok).toBe(true)
+    expect(evaluateJobEligibility(w2, { startInput: off }).ok).toBe(true)
+    expect(evaluateJobEligibility(unknown, { startInput: off }).ok).toBe(true)
+    expect(evaluateJobEligibility(confirmed, { startInput: on }).ok).toBe(true)
+    expect(evaluateJobEligibility(w2, { startInput: on }).ok).toBe(false)
+    expect(evaluateJobEligibility(unknown, { startInput: on }).ok).toBe(false)
+  })
+
+  it('uses product defaults of 5 jobs, 70% match, All, Any, and C2C off', () => {
+    const defaults = defaultAutoApplyConfig()
+    expect(defaults.maxJobs).toBe(5)
+    expect(defaults.minimumMatchRate).toBe(70)
+    expect(defaults.autoTailorResume).toBe(true)
+    expect(defaults.jobType).toBe('all')
+    expect(defaults.remotePreference).toBe('any')
+    const parsed = parseAutoApplyStart({
+      userId: 'user-1',
+      resumeText: JAVA_RESUME_TEXT,
+      config: {},
+    })
+    expect(parsed.config.maxJobs).toBe(5)
+    expect(parsed.config.minimumMatchRate).toBe(70)
+    expect(parsed.config.autoTailorResume).toBe(true)
+    expect(parsed.config.jobType).toBe('all')
+    expect(parsed.config.remotePreference).toBe('any')
+    expect(parsed.config.jobType === 'c2c').toBe(false)
+    const forced = parseAutoApplyStart({
+      userId: 'user-1',
+      resumeText: JAVA_RESUME_TEXT,
+      config: { c2cOnly: true },
+    })
+    expect(forced.config.jobType).toBe('c2c')
   })
 
   it('does not filter empty keywords, job type all, or remote any', async () => {

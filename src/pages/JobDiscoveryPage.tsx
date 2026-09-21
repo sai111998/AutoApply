@@ -46,6 +46,7 @@ import {
   type LiveJobSort,
 } from '@/lib/live-job'
 import { matchBandLabel, matchBandTone } from '@/lib/match-band'
+import { DEFAULT_AUTO_APPLY } from '@/lib/auto-apply-defaults'
 
 const US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
@@ -167,11 +168,11 @@ export function JobDiscoveryPage() {
   const [autoApplyOpen, setAutoApplyOpen] = useState(false)
   const [autoStarting, setAutoStarting] = useState(false)
   const [autoBusyId, setAutoBusyId] = useState<string | null>(null)
-  const [autoMaxJobs, setAutoMaxJobs] = useState(10)
-  const [autoMinMatch, setAutoMinMatch] = useState(85)
-  const [autoTailor, setAutoTailor] = useState(true)
-  const [autoJobType, setAutoJobType] = useState<AutoApplyJobType>('c2c')
-  const [autoRemote, setAutoRemote] = useState('any')
+  const [autoMaxJobs, setAutoMaxJobs] = useState(DEFAULT_AUTO_APPLY.maxJobs)
+  const [autoMinMatch, setAutoMinMatch] = useState(DEFAULT_AUTO_APPLY.minimumMatchRate)
+  const [autoTailor, setAutoTailor] = useState(DEFAULT_AUTO_APPLY.autoTailorResume)
+  const [autoJobType, setAutoJobType] = useState<AutoApplyJobType>(DEFAULT_AUTO_APPLY.jobType)
+  const [autoRemote, setAutoRemote] = useState<string>(DEFAULT_AUTO_APPLY.remotePreference)
   const [autoKeywords, setAutoKeywords] = useState('')
   const [autoRun, setAutoRun] = useState<AutoApplyRun | null>(null)
   const [autoItems, setAutoItems] = useState<AutoApplyQueueItem[]>([])
@@ -644,7 +645,7 @@ export function JobDiscoveryPage() {
               variant="secondary"
               onClick={() => {
                 setAutoApplyOpen((open) => !open)
-                setAutoJobType(jobType === 'all' ? 'c2c' : jobType)
+                setAutoJobType(jobType)
                 setAutoRemote(remote)
               }}
             >

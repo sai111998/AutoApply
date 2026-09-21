@@ -1,4 +1,5 @@
 import type { AutoApplyConfig, AutoApplyQueueItem } from '../apply/types'
+import { DEFAULT_MAX_JOBS } from '../apply/defaults'
 
 export const DEFAULT_AGENT_INTERVAL_MS = 5 * 60 * 1000
 export const MIN_AGENT_INTERVAL_MS = 30_000
@@ -12,7 +13,7 @@ export function agentIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 export function campaignMaxJobs(config: Pick<AutoApplyConfig, 'maxJobs'>): number {
-  return Math.min(MAX_JOBS_PER_CAMPAIGN, Math.max(1, Math.round(config.maxJobs || 10)))
+  return Math.min(MAX_JOBS_PER_CAMPAIGN, Math.max(1, Math.round(config.maxJobs || DEFAULT_MAX_JOBS)))
 }
 
 export function c2cOnly(config: Pick<AutoApplyConfig, 'jobType'>): boolean {

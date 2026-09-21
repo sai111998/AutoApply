@@ -12,10 +12,10 @@ export function Pill({
   const tones: Record<typeof tone, string> = {
     neutral: 'bg-fog text-charcoal',
     strong: 'bg-olive-soft text-olive-dark',
-    review: 'bg-[#f7f1e3] text-warning',
-    skip: 'bg-[#f7ece8] text-danger',
-    pending: 'bg-[#e8eef1] text-info',
-    info: 'bg-[#e8eef1] text-info',
+    review: 'bg-warning-soft text-warning',
+    skip: 'bg-danger-soft text-danger',
+    pending: 'bg-info-soft text-info',
+    info: 'bg-info-soft text-info',
   }
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${tones[tone]}`}>

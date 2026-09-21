@@ -3,6 +3,7 @@ import type { AutoApplyProfile, AutoApplyStartInput } from './types'
 import type { JobTypeFilter } from '../jobs/c2c'
 import type { EmploymentFilter, RemoteFilter } from '../jobs/types'
 import { normalizeMinimumMatchRate } from './threshold'
+import { DEFAULT_MAX_JOBS, DEFAULT_MINIMUM_MATCH_RATE } from './defaults'
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -74,10 +75,17 @@ export function parseAutoApplyStart(body: unknown): AutoApplyStartInput {
     masterResumeText: asString(record.masterResumeText) || resumeText,
     profile: asProfile(record.profile),
     config: {
-      maxJobs: asNumber(configRecord.maxJobs ?? configRecord.maxApplications, 10),
-      minimumMatchRate: normalizeMinimumMatchRate(asNumber(configRecord.minimumMatchRate ?? configRecord.minimumMatch, 85)),
+      maxJobs: asNumber(configRecord.maxJobs ?? configRecord.maxApplications, DEFAULT_MAX_JOBS),
+      minimumMatchRate: normalizeMinimumMatchRate(
+        asNumber(configRecord.minimumMatchRate ?? configRecord.minimumMatch, DEFAULT_MINIMUM_MATCH_RATE),
+      ),
       autoTailorResume: asBoolean(configRecord.autoTailorResume ?? configRecord.autoTailor, true),
-      jobType: ['all', 'c2c', 'contract', 'w2'].includes(jobType) ? jobType : 'all',
+      jobType:
+        configRecord.c2cOnly === true || configRecord.c2cOnly === 'true' || configRecord.c2cOnly === 'on'
+          ? 'c2c'
+          : ['all', 'c2c', 'contract', 'w2'].includes(jobType)
+            ? jobType
+            : 'all',
       remotePreference: ['any', 'remote', 'onsite', 'hybrid'].includes(remote) ? remote : 'any',
       employmentType: ['any', 'full-time', 'part-time', 'contract', 'temporary', 'internship'].includes(employmentType)
         ? employmentType
