@@ -131,9 +131,6 @@ function composedLocation(request: LiveJobsRequest): string {
 }
 
 function providerParams(request: LiveJobsRequest, overrides: Partial<ProviderSearchParams> = {}): ProviderSearchParams {
-  const jobType = request.jobType || 'all'
-  const employmentType =
-    jobType === 'c2c' && request.employmentType === 'any' ? 'contract' : request.employmentType
   return {
     keywords: '',
     q: request.q,
@@ -141,7 +138,7 @@ function providerParams(request: LiveJobsRequest, overrides: Partial<ProviderSea
     country: request.country || 'US',
     state: '',
     remote: request.remote,
-    employmentType,
+    employmentType: request.employmentType,
     experienceLevel: request.seniority,
     datePostedDays: 0,
     page: request.page,

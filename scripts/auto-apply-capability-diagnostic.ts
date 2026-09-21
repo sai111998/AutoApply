@@ -6,6 +6,7 @@ import { defaultAutoApplyConfig } from '../server/apply/engine'
 import { evaluateJobEligibility } from '../server/agent/pipeline'
 import { getApplicationCapability } from '../server/application/capability'
 import { detectRegisteredProvider } from '../server/application/providers/registry'
+import { isAutoApplyCandidateHost, classifyApplicationCapability } from '../server/apply/capability'
 import { liveCapabilityPreflight, type LiveCapabilityPage } from '../server/apply/live-capability'
 import type { AutoApplyProfile, ListedAutoApplyJob } from '../server/apply/types'
 
@@ -21,24 +22,8 @@ const profile: AutoApplyProfile = {
   targetSalaryMax: null,
 }
 
-async function main() {
-  const config = getServerConfig()
-  const listed = await listLiveJobs(config, {
-    q: 'Java',
-    country: 'US',
-    state: '',
-    remote: 'any',
-    employmentType: 'any',
-    seniority: '',
-    page: 1,
-    limit: 50,
-    resumeText: JAVA_RESUME_TEXT,
-    resumeVersionId: 'resume-1',
-    sort: 'match',
-    jobType: 'c2c',
-  })
-
-  const startInput = {
+function startInput(jobType: 'c2c' | 'all') {
+  return {
     userId: 'diagnostic',
     resumeId: 'resume-1',
     resumeVersionId: 'resume-1',
@@ -50,15 +35,58 @@ async function main() {
       minimumMatchRate: 70,
       autoTailorResume: true,
       q: 'Java',
-      jobType: 'c2c',
+      jobType,
     }),
   }
+}
 
-  const eligible: ListedAutoApplyJob[] = []
-  for (const job of listed.jobs) {
-    if (evaluateJobEligibility(job, { startInput }).ok) eligible.push(job)
+async function listJava(jobType: 'c2c' | 'all') {
+  return listLiveJobs(getServerConfig(), {
+    q: 'Java',
+    country: 'US',
+    state: '',
+    remote: 'any',
+    employmentType: 'any',
+    seniority: '',
+    page: 1,
+    limit: 50,
+    resumeText: JAVA_RESUME_TEXT,
+    resumeVersionId: 'resume-1',
+    sort: 'match',
+    jobType,
+  })
+}
+
+async function main() {
+  const c2cListed = await listJava('c2c')
+  const allListed = await listJava('all')
+  const c2cInput = startInput('c2c')
+  const allInput = startInput('all')
+  const c2cEligible = c2cListed.jobs.filter((job) => evaluateJobEligibility(job, { startInput: c2cInput }).ok)
+  const allEligible = allListed.jobs.filter((job) => evaluateJobEligibility(job, { startInput: allInput }).ok)
+
+  const seen = new Set<string>()
+  const sample: ListedAutoApplyJob[] = []
+  for (const job of [...c2cEligible, ...allEligible, ...allListed.jobs]) {
+    const url = job.jobUrl || job.url || ''
+    if (!url || seen.has(url)) continue
+    const classified = classifyApplicationCapability({
+      url: job.url,
+      applicationUrl: url,
+      discoveryProvider: job.discoveryProvider || job.provider,
+    })
+    const ats =
+      evaluateJobEligibility(job, { startInput: allInput }).ok ||
+      isAutoApplyCandidateHost(classified) ||
+      ['workday', 'greenhouse', 'lever', 'ashby', 'icims', 'smartrecruiters', 'oraclecloud'].includes(
+        String(classified.provider),
+      )
+    if (!ats) continue
+    seen.add(url)
+    sample.push(job)
+    if (sample.length >= 14) break
   }
-  const sample = eligible.slice(0, 14)
+
   const rows: Array<{
     title: string
     company: string
@@ -67,6 +95,10 @@ async function main() {
     capability: string
     confidence: string
     reason: string | null
+    c2cStatus: string
+    eligibleC2c: boolean
+    eligibleAll: boolean
+    matchScore: number | null
   }> = []
 
   let playwright: typeof import('playwright') | null = null
@@ -112,6 +144,10 @@ async function main() {
         capability: decision.capability,
         confidence: decision.confidence,
         reason: decision.reason,
+        c2cStatus: job.c2cStatus,
+        eligibleC2c: evaluateJobEligibility(job, { startInput: c2cInput }).ok,
+        eligibleAll: evaluateJobEligibility(job, { startInput: allInput }).ok,
+        matchScore: job.matchScore,
       })
     }
   } finally {
@@ -119,14 +155,18 @@ async function main() {
   }
 
   const report = {
-    found: listed.jobs.length,
-    eligible: eligible.length,
-    warning: listed.warning ?? null,
+    foundC2c: c2cListed.jobs.length,
+    foundAll: allListed.jobs.length,
+    eligibleC2c: c2cEligible.length,
+    eligibleAll: allEligible.length,
+    warning: allListed.warning ?? c2cListed.warning ?? null,
     autoApplySupported: rows.filter((row) => row.capability === 'auto_apply_supported').length,
     rows,
   }
   writeFileSync('/tmp/auto-apply-capability-diagnostic.json', JSON.stringify(report, null, 2))
-  console.log(`Found ${report.found} · Eligible ${report.eligible} · Auto-apply supported ${report.autoApplySupported}`)
+  console.log(
+    `C2C found ${report.foundC2c} eligible ${report.eligibleC2c} · All found ${report.foundAll} eligible ${report.eligibleAll} · Sample ${rows.length} · auto_apply_supported ${report.autoApplySupported}`,
+  )
   console.log('Job | Company | Provider | Capability | Reason')
   for (const row of rows) {
     console.log(`${row.title} | ${row.company} | ${row.provider} | ${row.capability} | ${row.reason ?? ''}`)

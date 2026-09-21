@@ -953,7 +953,7 @@ describe('GET /api/jobs live catalog', () => {
     }
     const fetchImpl = vi.fn(async (url: string) => {
       expect(url).toMatch(/C2C|corp\+to\+corp|corp%20to%20corp/i)
-      expect(url).toContain('employment_type=Contract')
+      expect(url).not.toContain('employment_type=Contract')
       return jsonResponse({ data: [confirmed, blocked, generic] })
     })
     const app = createApp({
