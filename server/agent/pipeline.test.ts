@@ -59,11 +59,11 @@ describe('job eligibility pipeline', () => {
       'deduplicate',
       'validate',
       'current_match',
-      'c2c',
-      'application_capability',
       'auto_tailor',
       're_score',
       'final_eligibility',
+      'c2c',
+      'application_capability',
       'queue',
     ])
   })
@@ -71,13 +71,13 @@ describe('job eligibility pipeline', () => {
   it('marks ATS candidate hosts eligible without treating them as auto-apply capable', () => {
     const ready = evaluateJobEligibility(job({ id: 'ready', title: 'Java Engineer' }), { startInput })
     expect(ready.ok).toBe(true)
-    expect(ready.stage).toBe('queue')
+    expect(ready.stage).toBe('final_eligibility')
     const board = evaluateJobEligibility(
       job({ id: 'indeed', title: 'Java Engineer', url: 'https://www.indeed.com/viewjob?jk=1', jobUrl: 'https://www.indeed.com/viewjob?jk=1' }),
       { startInput },
     )
-    expect(board.ok).toBe(false)
-    expect(board.stage).toBe('application_capability')
+    expect(board.ok).toBe(true)
+    expect(board.capability).toBe('unsupported')
     const w2 = evaluateJobEligibility(job({ id: 'w2', title: 'W2 Java', description: 'W2 only. No C2C.' }), { startInput })
     expect(w2.ok).toBe(false)
     expect(w2.stage).toBe('c2c')

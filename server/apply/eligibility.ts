@@ -1,4 +1,4 @@
-import { classifyApplicationCapability, isAutoApplyCandidateHost } from './capability'
+import { inspectApplicationUrl } from './validate'
 import type { AutoApplyProfile, ExistingApplicationRecord, ListedAutoApplyJob } from './types'
 
 const MAX_LIVE_JOB_AGE_MS = 90 * 24 * 60 * 60 * 1000
@@ -104,6 +104,9 @@ export function isEligibleForAutoApply(
   if (!jobApplicationUrl(job)) {
     return { ok: false, reason: 'This listing does not include a valid application URL.' }
   }
+  if (!inspectApplicationUrl(jobApplicationUrl(job)).ok) {
+    return { ok: false, reason: 'This listing does not include a valid application URL.' }
+  }
   if (!isJobLive(job)) {
     return { ok: false, reason: 'This job is no longer live.' }
   }
@@ -118,26 +121,6 @@ export function isEligibleForAutoApply(
   }
   if (hasDuplicateQueueEntry(job, options.existingQueueIdentities)) {
     return { ok: false, reason: 'This job is already in the Auto Apply queue.' }
-  }
-  const capability = classifyApplicationCapability({
-    url: job.url,
-    applicationUrl: jobApplicationUrl(job),
-    discoveryProvider: job.discoveryProvider || job.provider,
-  })
-  if (capability.capability === 'unsupported' || capability.capability === 'blocked') {
-    return {
-      ok: false,
-      reason:
-        capability.capability === 'blocked'
-          ? 'This application is blocked from autonomous apply.'
-          : 'This listing is not Auto-Apply capable.',
-    }
-  }
-  if (!isAutoApplyCandidateHost(capability)) {
-    return {
-      ok: false,
-      reason: 'Application capability is unknown, so this job stays discovery-only until preflight.',
-    }
   }
   return { ok: true, reason: null }
 }

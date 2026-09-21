@@ -296,7 +296,7 @@ describe('eligibility across providers', () => {
     expect(isEligibleForAutoApply({ ...ready, c2cStatus: 'unknown' }, { minimumMatchRate: 80, finalMatchScore: 90, jobType: 'c2c' }).ok).toBe(false)
     expect(isEligibleForAutoApply(ready, { minimumMatchRate: 80, finalMatchScore: 90, existingApplications: [{ jobId: '1', status: 'applied' }] }).ok).toBe(false)
     expect(isEligibleForAutoApply(ready, { minimumMatchRate: 80, finalMatchScore: 90, existingQueueIdentities: ['greenhouse:1'] }).ok).toBe(false)
-    expect(isEligibleForAutoApply(job({ id: '2', url: 'https://www.indeed.com/viewjob?jk=1' }), { minimumMatchRate: 80, finalMatchScore: 90 }).ok).toBe(false)
+    expect(isEligibleForAutoApply(job({ id: '2', url: 'https://www.indeed.com/viewjob?jk=1' }), { minimumMatchRate: 80, finalMatchScore: 90 }).ok).toBe(true)
     expect(isEligibleForAutoApply(job({ id: '3', url: 'javascript:alert(1)' }), { minimumMatchRate: 80, finalMatchScore: 90 }).ok).toBe(false)
     expect(
       isEligibleForAutoApply(job({ id: '4', url: 'https://job-boards.greenhouse.io/gitlab/jobs/4', postedAt: '2020-01-01T00:00:00.000Z' }), {

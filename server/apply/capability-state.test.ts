@@ -136,7 +136,7 @@ describe('capability state machine', () => {
       },
     )
     expect(started.run.counts.found).toBe(3)
-    expect(started.run.counts.eligible).toBeGreaterThanOrEqual(1)
+    expect(started.run.counts.eligible).toBe(3)
     expect(started.items.map((item) => item.jobId)).toEqual(['ready'])
     expect(started.items[0]?.applicationCapability).toBe('auto_apply_supported')
     expect(started.run.counts.autoApplyCapable).toBe(1)

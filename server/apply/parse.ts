@@ -2,12 +2,17 @@ import { HttpError } from '../types'
 import type { AutoApplyProfile, AutoApplyStartInput } from './types'
 import type { JobTypeFilter } from '../jobs/c2c'
 import type { EmploymentFilter, RemoteFilter } from '../jobs/types'
+import { normalizeMinimumMatchRate } from './threshold'
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
 function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === 'string' && value.trim().endsWith('%')) {
+    const parsed = Number(value.trim().slice(0, -1))
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
   const parsed = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
@@ -70,7 +75,7 @@ export function parseAutoApplyStart(body: unknown): AutoApplyStartInput {
     profile: asProfile(record.profile),
     config: {
       maxJobs: asNumber(configRecord.maxJobs ?? configRecord.maxApplications, 10),
-      minimumMatchRate: asNumber(configRecord.minimumMatchRate ?? configRecord.minimumMatch, 85),
+      minimumMatchRate: normalizeMinimumMatchRate(asNumber(configRecord.minimumMatchRate ?? configRecord.minimumMatch, 85)),
       autoTailorResume: asBoolean(configRecord.autoTailorResume ?? configRecord.autoTailor, true),
       jobType: ['all', 'c2c', 'contract', 'w2'].includes(jobType) ? jobType : 'all',
       remotePreference: ['any', 'remote', 'onsite', 'hybrid'].includes(remote) ? remote : 'any',

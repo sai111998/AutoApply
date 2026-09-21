@@ -72,7 +72,8 @@ describe('application capability', () => {
 
   it('does not treat a capable discovery source as automatically applicable', () => {
     const listed = job({ id: 'board', url: 'https://www.linkedin.com/jobs/view/1' })
-    expect(isEligibleForAutoApply(listed, { minimumMatchRate: 80, finalMatchScore: 90 }).ok).toBe(false)
+    expect(isEligibleForAutoApply(listed, { minimumMatchRate: 80, finalMatchScore: 90 }).ok).toBe(true)
+    expect(canEnterAutonomousApply(classifyApplicationCapability({ url: listed.url }).capability)).toBe(false)
     const greenhouse = job({ id: 'gh', url: 'https://boards.greenhouse.io/acme/jobs/1' })
     expect(isEligibleForAutoApply(greenhouse, { minimumMatchRate: 80, finalMatchScore: 90 }).ok).toBe(true)
   })

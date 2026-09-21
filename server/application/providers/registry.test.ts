@@ -238,6 +238,7 @@ describe('auto apply queue vs provider support', () => {
     )
     expect(started.items.map((item) => item.jobId)).toEqual(['ready'])
     expect(started.items[0]?.applicationCapability).toBe('auto_apply_supported')
+    expect(started.run.counts.eligible).toBe(3)
     expect(started.run.counts.autoApplyCapable).toBe(1)
     const claimed = await claimNextBrowserJob()
     expect(claimed?.item.jobId).toBe('ready')

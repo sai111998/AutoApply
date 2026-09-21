@@ -46,7 +46,8 @@ import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitFor
 import { remainingDailySlots, utcDayKey } from '../agent/policy'
 import { discoverCampaignJobs } from '../agent/discovery'
 import { rememberUserAnswers } from './questions'
-import { evaluateJobEligibility } from '../agent/pipeline'
+import { evaluateJobEligibility, emptyEligibilityFunnel, type EligibilityFunnel } from '../agent/pipeline'
+import { normalizeMinimumMatchRate } from './threshold'
 
 const MATCH_PRESETS = [70, 75, 80, 85, 90, 95]
 const DEFAULT_DELAY_MS = 250
@@ -73,11 +74,7 @@ export function resetAutoApplyEngineForTests() {
   resetCapabilityCacheForTests()
 }
 
-export function normalizeMinimumMatchRate(value: number): number {
-  if (!Number.isFinite(value)) return 85
-  const rounded = Math.round(value)
-  return Math.min(99, Math.max(50, rounded))
-}
+export { normalizeMinimumMatchRate } from './threshold'
 
 export function suggestedMatchRates(): number[] {
   return [...MATCH_PRESETS]
@@ -123,7 +120,7 @@ async function listCampaignJobs(
   input: AutoApplyStartInput,
   fetchImpl: FetchLike | undefined,
   deps: AutoApplyEngineDeps,
-): Promise<ListedAutoApplyJob[]> {
+) {
   return discoverCampaignJobs(config, input, fetchImpl, deps)
 }
 
@@ -203,7 +200,17 @@ async function enqueueEligibleJobs(input: {
   startInput: AutoApplyStartInput
   previous: StoredRun[]
   deps: AutoApplyEngineDeps
-}): Promise<{ added: number; found: number; eligible: number; autoApplyCapable: number }> {
+}): Promise<{
+  added: number
+  found: number
+  eligible: number
+  autoApplyCapable: number
+  duplicateSkips: number
+  matchPasses: number
+  c2cPasses: number
+  matchErrors: number
+  capabilityErrors: number
+}> {
   const { run, items, jobs, startInput, previous, deps } = input
   const masterSnapshot = startInput.masterResumeText
   const day = utcDayKey()
@@ -222,29 +229,69 @@ async function enqueueEligibleJobs(input: {
   let added = 0
   let eligible = 0
   let autoApplyCapable = 0
+  let duplicateSkips = 0
+  let matchPasses = 0
+  let c2cPasses = 0
+  let matchErrors = 0
+  let capabilityErrors = 0
   for (const job of jobs) {
-    if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) break
     const evaluated = evaluateJobEligibility(job, {
       startInput: { ...startInput, config: run.config },
       existingIdentities: queueIdentities,
       previousItems: [...previous.flatMap((entry) => entry.items), ...items],
     })
+    logAutoApplyStep(2, 'job-eligibility', {
+      jobId: job.id,
+      title: job.title,
+      currentScore: evaluated.initialScore,
+      tailoredScore: evaluated.tailoredScore,
+      resumeVersionId: evaluated.resumeVersionId,
+      eligible: evaluated.ok,
+      reason: evaluated.reason,
+      stage: evaluated.stage,
+      capability: evaluated.capability,
+      code: evaluated.code,
+    })
     if (!evaluated.ok) {
-      if (evaluated.stage === 'application_capability' || evaluated.stage === 'final_eligibility') {
-        logApplyEvent('capability-skip', {
-          jobId: job.id,
-          applicationUrl: evaluated.applicationUrl,
-          matchScore: evaluated.finalScore,
-          code: evaluated.capability,
-        })
-      }
+      logApplyEvent('eligibility-skip', {
+        jobId: job.id,
+        applicationUrl: evaluated.applicationUrl,
+        matchScore: evaluated.finalScore,
+        resumeVersionId: evaluated.resumeVersionId,
+        code: evaluated.code ?? evaluated.stage,
+        blockingReason: evaluated.reason,
+      })
+      if (evaluated.stage === 'deduplicate') duplicateSkips += 1
+      if (evaluated.stage === 'c2c') matchPasses += 1
+      if (evaluated.code === 'MATCH_ERROR') matchErrors += 1
       continue
     }
-    if (hasDuplicateQueueEntry(job, queueIdentities)) continue
-
+    matchPasses += 1
+    c2cPasses += 1
     eligible += 1
+    logApplyEvent('eligibility-pass', {
+      jobId: job.id,
+      applicationUrl: evaluated.applicationUrl,
+      matchScore: evaluated.initialScore,
+      resumeVersionId: evaluated.resumeVersionId,
+      capability: evaluated.capability,
+    })
     const applicationUrl = evaluated.applicationUrl
-    const decision = await resolveWorkflowPreflight(job, applicationUrl, deps)
+    let decision
+    try {
+      decision = await resolveWorkflowPreflight(job, applicationUrl, deps)
+    } catch (error) {
+      capabilityErrors += 1
+      logApplyEvent('capability-skip', {
+        jobId: job.id,
+        applicationUrl,
+        matchScore: evaluated.finalScore,
+        resumeVersionId: evaluated.resumeVersionId,
+        code: 'CAPABILITY_ERROR',
+        error: error instanceof Error ? error.message : 'CAPABILITY_ERROR',
+      })
+      continue
+    }
     const staticPreflight = preflightApplication({
       url: job.url,
       applicationUrl,
@@ -256,6 +303,7 @@ async function enqueueEligibleJobs(input: {
         jobId: job.id,
         applicationUrl,
         matchScore: evaluated.finalScore,
+        resumeVersionId: evaluated.resumeVersionId,
         capability: decision.capability,
         code: decision.capability,
         blockingReason: decision.reason,
@@ -263,6 +311,8 @@ async function enqueueEligibleJobs(input: {
       continue
     }
     autoApplyCapable += 1
+    if (remainingDailySlots([...items, ...priorToday], run.config.maxJobs, day) <= 0) continue
+    if (hasDuplicateQueueEntry(job, queueIdentities)) continue
     const identity = evaluated.identity
     queueIdentities.push(identity)
     const timestamp = nowIso()
@@ -272,7 +322,7 @@ async function enqueueEligibleJobs(input: {
       jobId: job.id,
       identityKey: identity,
       applicationId: randomUUID(),
-      resumeVersionId: randomUUID(),
+      resumeVersionId: evaluated.resumeVersionId || randomUUID(),
       resumeVersionName: evaluated.resumeVersionName,
       sourceResumeId: startInput.resumeId,
       title: job.title,
@@ -308,7 +358,17 @@ async function enqueueEligibleJobs(input: {
     })
     added += 1
   }
-  return { added, found: jobs.length, eligible, autoApplyCapable }
+  return {
+    added,
+    found: jobs.length,
+    eligible,
+    autoApplyCapable,
+    duplicateSkips,
+    matchPasses,
+    c2cPasses,
+    matchErrors,
+    capabilityErrors,
+  }
 }
 
 export async function startAutoApply(
@@ -316,7 +376,7 @@ export async function startAutoApply(
   input: AutoApplyStartInput,
   fetchImpl?: FetchLike,
   deps: AutoApplyEngineDeps = {},
-): Promise<{ run: AutoApplyRun; items: AutoApplyQueueItem[] }> {
+): Promise<{ run: AutoApplyRun; items: AutoApplyQueueItem[]; funnel: EligibilityFunnel }> {
   const store = deps.store ?? memoryStore
   const automation = await getAutomationHealth({ probe: false })
   logApplyEvent('automation-health', {
@@ -339,24 +399,60 @@ export async function startAutoApply(
     updatedAt: createdAt,
   }
 
-  const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
+  const discovered = await listCampaignJobs(config, input, fetchImpl, deps)
   const items: AutoApplyQueueItem[] = []
   const previous = await store.list(input.userId)
-  const queued = await enqueueEligibleJobs({ run, items, jobs, startInput: input, previous, deps })
+  const queued = await enqueueEligibleJobs({
+    run,
+    items,
+    jobs: discovered.jobs,
+    startInput: input,
+    previous,
+    deps,
+  })
+  const now = nowIso()
+  const funnelCode: EligibilityFunnel['code'] =
+    queued.matchErrors > 0 && queued.eligible === 0 && queued.matchPasses === 0 && discovered.jobs.length > 0
+      ? 'MATCH_ERROR'
+      : queued.capabilityErrors > 0 && queued.autoApplyCapable === 0 && queued.eligible > 0
+        ? 'CAPABILITY_ERROR'
+        : 'OK'
+  const funnel = emptyEligibilityFunnel({
+    ...discovered.funnel,
+    afterDuplicates: discovered.jobs.length - queued.duplicateSkips,
+    afterMatch: queued.matchPasses,
+    afterC2c: queued.c2cPasses,
+    eligible: queued.eligible,
+    autoApplyCapable: queued.autoApplyCapable,
+    threshold: run.config.minimumMatchRate,
+    autoTailor: run.config.autoTailorResume,
+    jobType: run.config.jobType,
+    remote: run.config.remotePreference,
+    keywords: run.config.keywords,
+    lastDiscoveryAt: now,
+    lastEligibilityAt: now,
+    matchErrors: queued.matchErrors,
+    capabilityErrors: queued.capabilityErrors,
+    code: funnelCode,
+  })
+  logAutoApplyStep(1, 'eligibility-funnel', { ...funnel })
+  if (funnelCode === 'MATCH_ERROR') {
+    throw new ApplyError(503, 'MATCH_ERROR', 'MATCH_ERROR', { funnel })
+  }
 
   run.counts = {
     ...recount(items),
-    found: queued.found,
+    found: Math.max(discovered.funnel.discovered, queued.found),
     eligible: queued.eligible,
     autoApplyCapable: queued.autoApplyCapable,
   }
   syncRunStatus(run, items)
-  run.updatedAt = nowIso()
+  run.updatedAt = now
   rememberAutoApplyProfile(input.userId, input.profile)
   for (const item of items) rememberQueueResume(input.userId, item)
   await persistRun(store, run, items, config)
   notifyBrowserWorker()
-  return { run, items }
+  return { run, items, funnel }
 }
 
 export async function refreshAutoApplyRun(
@@ -372,20 +468,21 @@ export async function refreshAutoApplyRun(
   if (current.run.status === 'paused' || current.run.status === 'cancelled' || current.run.status === 'stopped') {
     return { run: current.run, items: current.items, added: 0 }
   }
-  const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
+  const discovered = await listCampaignJobs(config, input, fetchImpl, deps)
   const previous = await store.list(input.userId)
-  const { added, found, eligible } = await enqueueEligibleJobs({
+  const { added, found, eligible, autoApplyCapable } = await enqueueEligibleJobs({
     run: current.run,
     items: current.items,
-    jobs,
+    jobs: discovered.jobs,
     startInput: input,
     previous,
     deps,
   })
   current.run.counts = {
     ...recount(current.items),
-    found: Math.max(current.run.counts.found, found),
+    found: Math.max(current.run.counts.found, discovered.funnel.discovered, found),
     eligible: Math.max(current.run.counts.eligible, eligible),
+    autoApplyCapable,
   }
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()

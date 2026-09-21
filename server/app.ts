@@ -157,9 +157,7 @@ export function createApp(options: AppOptions): Express {
       const started = await startCampaign(options.config, request, { fetchImpl: options.fetchImpl })
       res.json({ run: started.run, items: started.items })
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500
-      const message = error instanceof Error ? error.message : 'Could not start Auto Apply.'
-      res.status(status).json({ error: /key|secret|service.role/i.test(message) ? 'Could not start Auto Apply.' : message })
+      sendApplyError(res, error, 'Could not start Auto Apply.')
     }
   })
 
