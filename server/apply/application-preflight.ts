@@ -4,7 +4,7 @@ import { inspectApplicationUrl } from './validate'
 import { hostnameOf, type ApplicationProviderId } from './providers/types'
 import { analyzeApplicationSurface } from './surface'
 import { logApplyEvent } from './log'
-import { decideWorkflowCapability, WORKFLOW_PROVIDERS } from './workflow-capability'
+import { decideWorkflowCapability } from './workflow-capability'
 import { isSyntheticApplicationHost } from './capability'
 import type { AutoApplyQueueItem } from './types'
 
@@ -128,7 +128,7 @@ export function decisionFromLivePreflight(
   )
   return {
     capability,
-    provider: (WORKFLOW_PROVIDERS.has(live.provider) ? live.provider : 'unknown') as ApplicationProviderId | 'unknown',
+    provider: (live.provider || 'unknown') as ApplicationProviderId | 'unknown',
     initialUrl: extras.initialUrl ?? live.applicationUrl,
     finalUrl: live.finalUrl,
     pageType: live.pageType,

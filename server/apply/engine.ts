@@ -7,7 +7,8 @@ import type { FetchLike } from '../jobs/http'
 import { createApplyBrowser } from './browser'
 import { hasDuplicateQueueEntry } from './eligibility'
 import { canEnterAutonomousApply } from './capability'
-import { applicationPreflight, logApplicationPreflightReport, type ApplicationPreflightDecision } from './application-preflight'
+import { logApplicationPreflightReport, type ApplicationPreflightDecision } from './application-preflight'
+import { applyRegistryToCapabilityDecision, getApplicationCapability } from '../application/capability'
 import { lookupCapability, rememberDecision, resetCapabilityCacheForTests, shouldRevalidateCapability } from './capability-cache'
 import { livePreflightApplicationUrl, shouldRunLiveCapabilityPreflight } from './live-capability'
 import { preflightApplication } from './preflight'
@@ -160,7 +161,7 @@ async function resolveWorkflowPreflight(
     return decision
   }
   const html = typeof job.rawMetadata?.applicationHtml === 'string' ? job.rawMetadata.applicationHtml : null
-  let decision = applicationPreflight({
+  let decision = getApplicationCapability({
     url: job.url,
     applicationUrl,
     html,
@@ -173,12 +174,15 @@ async function resolveWorkflowPreflight(
     decision.capability !== 'blocked' &&
     shouldRunLiveCapabilityPreflight()
   ) {
-    decision = await livePreflightApplicationUrl({
-      jobId: job.id,
-      title: job.title,
-      company: job.company,
-      applicationUrl: url,
-    })
+    decision = applyRegistryToCapabilityDecision(
+      await livePreflightApplicationUrl({
+        jobId: job.id,
+        title: job.title,
+        company: job.company,
+        applicationUrl: url,
+      }),
+      { url },
+    )
   }
   rememberDecision(identity, url, decision)
   logApplicationPreflightReport({

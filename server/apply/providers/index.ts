@@ -60,6 +60,14 @@ const smartrecruiters: ApplicationProvider = {
   },
 }
 
+const workable: ApplicationProvider = {
+  id: 'workable',
+  applyNames: [/^\s*apply\s*$/i, /^\s*apply now\s*$/i],
+  match({ hostname, url }) {
+    return /(?:^|\.)workable\.com$/i.test(hostname) || /workable\.com/i.test(url)
+  },
+}
+
 const oraclecloud: ApplicationProvider = {
   id: 'oraclecloud',
   applyNames: [/^\s*apply now\s*$/i, /^\s*apply\s*$/i, /^\s*start application\s*$/i],
@@ -85,7 +93,7 @@ const generic: ApplicationProvider = {
   },
 }
 
-const PROVIDERS: ApplicationProvider[] = [workday, greenhouse, lever, ashby, icims, smartrecruiters, oraclecloud, generic]
+const PROVIDERS: ApplicationProvider[] = [workday, greenhouse, lever, ashby, icims, smartrecruiters, workable, oraclecloud, generic]
 
 export function detectApplicationProvider(input: { url?: string | null; html?: string | null }): ApplicationProvider {
   const url = input.url?.trim() || ''

@@ -65,6 +65,9 @@ function createAdapter(id: ApplicationProviderId): AtsProviderAdapter {
     findForm(html) {
       return analyzeApplicationSurface(html).kind === 'application'
     },
+    findApplication(html) {
+      return analyzeApplicationSurface(html).kind === 'application'
+    },
     async openApplication(page) {
       const clicked = await clickApplyControl(page)
       return clicked.clicked && isLegitimateApplyLabel(clicked.label || 'Apply')
@@ -131,6 +134,7 @@ const ADAPTERS: AtsProviderAdapter[] = [
   createAdapter('ashby'),
   createAdapter('icims'),
   createAdapter('smartrecruiters'),
+  createAdapter('workable'),
   createAdapter('oraclecloud'),
   createAdapter('generic'),
 ]

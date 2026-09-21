@@ -73,6 +73,7 @@ export interface AtsProviderAdapter {
   preflight(input: { url: string; html?: string; applicationUrl?: string }): import('../apply/preflight').ApplicationPreflightResult
   openApplication(page: BrowserPageLike): Promise<boolean>
   findForm(html: string): boolean
+  findApplication(html: string): boolean
   detectFields(html: string): string[]
   fillFields(page: BrowserPageLike, values: Record<string, string>): Promise<string[]>
   uploadResume(page: BrowserPageLike, resume: { fileName: string; mimeType: string; buffer: Buffer }): Promise<boolean>

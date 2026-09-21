@@ -113,7 +113,9 @@ export function createLeverProvider(options: { enabled: boolean; sites: string[]
     },
     async search(params) {
       if (!options.enabled) return warning('disabled', params, 'Lever is turned off.')
-      if (!sites.length) return warning('empty', params, 'No Lever sites are configured.')
+      if (!sites.length) {
+        return { provider: 'lever', jobs: [], total: 0, page: params.page, pageSize: params.pageSize, hasMore: false }
+      }
       const jobs: NormalizedJob[] = []
       for (const site of sites) {
         try {

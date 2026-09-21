@@ -188,7 +188,9 @@ export function createGreenhouseProvider(options: {
     },
     async search(params) {
       if (!options.enabled) return warning('disabled', params, 'Greenhouse is turned off.')
-      if (!tokens.length) return warning('empty', params, 'No Greenhouse board tokens are configured.')
+      if (!tokens.length) {
+        return { provider: 'greenhouse', jobs: [], total: 0, page: params.page, pageSize: params.pageSize, hasMore: false }
+      }
       const jobs: NormalizedJob[] = []
       let invalidBoard = false
       for (const token of tokens) {

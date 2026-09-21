@@ -69,7 +69,7 @@ export async function discoverJobs(
   const providers = selectProviders(allProviders, request.providers)
   const params = providerParams(request)
   const results = await Promise.all(providers.map((provider) => searchProviderJobs(provider, params)))
-  const warnings: ProviderWarning[] = results.flatMap((item) => (item.warning ? [item.warning] : []))
+  const warnings: ProviderWarning[] = results.flatMap((item) => (item.warning && item.warning.code !== 'empty' ? [item.warning] : []))
   const merged = deduplicateJobs(results.flatMap((item) => item.jobs)).map(annotateCanonicalJob)
     .filter((job) => matchesRemote(job, request.remote))
     .filter((job) => matchesEmployment(job, request.employmentType))

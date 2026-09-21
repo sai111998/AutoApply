@@ -5,9 +5,12 @@ export const APPLICATION_PROVIDER_IDS = [
   'ashby',
   'icims',
   'smartrecruiters',
+  'workable',
   'oraclecloud',
   'generic',
 ] as const
+
+export const WORKFLOW_SUPPORTED_PROVIDER_IDS = ['workday', 'greenhouse', 'lever', 'ashby', 'icims'] as const
 
 export type ApplicationProviderId = (typeof APPLICATION_PROVIDER_IDS)[number]
 

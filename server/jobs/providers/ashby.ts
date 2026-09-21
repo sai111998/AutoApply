@@ -114,7 +114,9 @@ export function createAshbyProvider(options: { enabled: boolean; boards: string[
     },
     async search(params) {
       if (!options.enabled) return warning('disabled', params, 'Ashby is turned off.')
-      if (!boards.length) return warning('empty', params, 'No Ashby boards are configured.')
+      if (!boards.length) {
+        return { provider: 'ashby', jobs: [], total: 0, page: params.page, pageSize: params.pageSize, hasMore: false }
+      }
       const jobs: NormalizedJob[] = []
       for (const board of boards) {
         try {

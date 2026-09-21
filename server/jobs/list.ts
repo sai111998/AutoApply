@@ -245,6 +245,7 @@ export async function listLiveJobs(
     request,
   )
   const joa = results.find((item) => item.provider === 'job-opportunities')
+  const nonEmptyWarning = (warning?: { code: string } | null) => warning && warning.code !== 'empty'
   return {
     jobs,
     page: request.page,
@@ -252,6 +253,8 @@ export async function listLiveJobs(
     total: Math.max(joa?.total ?? 0, jobs.length),
     hasMore: results.some((item) => item.hasMore),
     source: 'Job Opportunities API',
-    warning: joa?.warning ?? results.find((item) => item.warning)?.warning,
+    warning:
+      (nonEmptyWarning(joa?.warning) ? joa?.warning : undefined) ??
+      results.find((item) => nonEmptyWarning(item.warning))?.warning,
   }
 }

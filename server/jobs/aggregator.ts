@@ -51,7 +51,7 @@ export async function aggregateProviderJobs(
   params: ProviderSearchParams,
 ): Promise<AggregatedJobs> {
   const results = await Promise.all(providers.map((provider) => searchProviderJobs(provider, params)))
-  const warnings = results.flatMap((item) => (item.warning ? [item.warning] : []))
+  const warnings = results.flatMap((item) => (item.warning && item.warning.code !== 'empty' ? [item.warning] : []))
   const jobs = deduplicateJobs(results.flatMap((item) => item.jobs)).map(annotateCanonicalJob)
   const named = providers.map((item) => item.label())
   const source = named.includes('Job Opportunities API') ? 'Job Opportunities API' : named[0] || 'Live jobs'

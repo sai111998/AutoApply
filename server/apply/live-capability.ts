@@ -1,5 +1,6 @@
 import { clickApplyControl } from './apply-action'
 import { applicationPreflight, decisionFromLivePreflight, type ApplicationPreflightDecision } from './application-preflight'
+import { applyRegistryToCapabilityDecision } from '../application/capability'
 import { diagnoseLivePage, logBrowserNavigation, printApplicationDiagnostic, responseUrlFromGoto, uniqueUrls } from './diagnose'
 import { documentsFromEvidencePage } from './page-evidence'
 import type { BrowserEvidencePage } from './page-evidence'
@@ -131,7 +132,11 @@ export async function liveCapabilityPreflight(input: {
     }
   }
 
-  return decisionFromLivePreflight(diagnostic.preflight, { initialUrl, applyFollowed })
+  const html = (await input.page.content?.().catch(() => '')) || ''
+  return applyRegistryToCapabilityDecision(decisionFromLivePreflight(diagnostic.preflight, { initialUrl, applyFollowed }), {
+    url: currentUrl || initialUrl,
+    html,
+  })
 }
 
 export async function livePreflightApplicationUrl(input: {
