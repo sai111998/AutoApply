@@ -83,6 +83,7 @@ export async function discoverCampaignJobs(
   let afterLocation: ListedAutoApplyJob[]
   let afterRemote: ListedAutoApplyJob[]
   let afterEmploymentType: ListedAutoApplyJob[]
+  let enriched: ListedAutoApplyJob[]
   try {
     const keywords = input.config.keywords.map((item) => item.trim().toLowerCase()).filter(Boolean)
     const titles = (input.config.jobTitles ?? []).map((item) => item.trim().toLowerCase()).filter(Boolean)
@@ -100,30 +101,30 @@ export async function discoverCampaignJobs(
     afterLocation = afterKeywords.filter((job) => matchesLocation(job, input.config.location, input.config.state))
     afterRemote = afterLocation.filter((job) => matchesRemote(job, input.config.remotePreference))
     afterEmploymentType = afterRemote.filter((job) => matchesEmployment(job, input.config.employmentType || 'any'))
+    enriched = await Promise.all(
+      afterEmploymentType.map(async (job) => {
+        const discovery = job.discoveryProvider || job.provider
+        if (discovery !== 'greenhouse') return job
+        const existing = job.rawMetadata?.applicationQuestions
+        if (Array.isArray(existing) && existing.length) return job
+        const token = typeof job.rawMetadata?.boardToken === 'string' ? job.rawMetadata.boardToken : null
+        const id = job.providerJobId
+        if (!token || !id) return job
+        const detail = await fetchProviderJob(config, 'greenhouse', `${token}:${id}`, fetchImpl)
+        if (!detail) return job
+        return {
+          ...job,
+          description: job.description || detail.description,
+          rawMetadata: { ...job.rawMetadata, ...detail.rawMetadata },
+        }
+      }),
+    )
   } catch (error) {
+    if (error instanceof ApplyError) throw error
     throw new ApplyError(500, 'FILTER_ERROR', 'FILTER_ERROR', {
       error: error instanceof Error ? error.message : 'unknown',
     })
   }
-
-  const enriched = await Promise.all(
-    afterEmploymentType.map(async (job) => {
-      const discovery = job.discoveryProvider || job.provider
-      if (discovery !== 'greenhouse') return job
-      const existing = job.rawMetadata?.applicationQuestions
-      if (Array.isArray(existing) && existing.length) return job
-      const token = typeof job.rawMetadata?.boardToken === 'string' ? job.rawMetadata.boardToken : null
-      const id = job.providerJobId
-      if (!token || !id) return job
-      const detail = await fetchProviderJob(config, 'greenhouse', `${token}:${id}`, fetchImpl)
-      if (!detail) return job
-      return {
-        ...job,
-        description: job.description || detail.description,
-        rawMetadata: { ...job.rawMetadata, ...detail.rawMetadata },
-      }
-    }),
-  )
 
   return {
     jobs: enriched,
