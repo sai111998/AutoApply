@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { detectAtsAdapter } from '../browser-worker/providers'
-import { classifyApplicationCapability } from './capability'
+import { classifyApplicationCapability, canEnterAutonomousApply } from './capability'
 import { inspectApplicationPage } from './detect'
 import { preflightApplication } from './preflight'
 import { analyzeApplicationSurface } from './surface'
+import { liveCapabilityPreflight, type LiveCapabilityPage } from './live-capability'
+import { logApplicationPreflightReport } from './application-preflight'
 
 const greenhouseApplication = `
   <html><body>
@@ -20,7 +22,7 @@ const greenhouseApplication = `
 describe('controlled Greenhouse ATS page', () => {
   it('detects the provider, application, fields, and upload without claiming a live submit', () => {
     const url = 'https://boards.greenhouse.io/acme/jobs/1'
-    expect(classifyApplicationCapability({ url }).capability).toBe('auto_apply_supported')
+    expect(classifyApplicationCapability({ url }).capability).toBe('unknown')
     const adapter = detectAtsAdapter({ url, html: greenhouseApplication })
     expect(adapter.id).toBe('greenhouse')
     expect(adapter.detect({ url, html: greenhouseApplication })).toBe(true)
@@ -53,77 +55,39 @@ describe('controlled Greenhouse ATS page', () => {
 })
 
 describe('live Greenhouse probe', () => {
-  it('reaches a real Greenhouse application page and detects fields without submitting', async () => {
+  it('preflights one real Greenhouse job without counting host-only capability as supported', async () => {
     const url = 'https://job-boards.greenhouse.io/gitlab/jobs/8556658002'
+    expect(classifyApplicationCapability({ url }).capability).toBe('unknown')
     const playwright = await import('playwright')
     const browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox'] })
     try {
       const page = await browser.newPage()
-      let response
+      let decision
       try {
-        response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 })
+        decision = await liveCapabilityPreflight({
+          jobId: '8556658002',
+          company: 'GitLab',
+          title: 'AI Engineer',
+          applicationUrl: url,
+          page: page as unknown as LiveCapabilityPage,
+        })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (/Timeout|net::|ENOTFOUND|ECONN|ERR_/i.test(message)) return
         throw error
       }
-      if (!response?.ok()) return
-      await page.waitForTimeout(1_500)
-      const { diagnoseLivePage, printApplicationDiagnostic, responseUrlFromGoto } = await import('./diagnose')
-      const diagnostic = await diagnoseLivePage({
-        job: {
-          jobId: '8556658002',
-          company: 'GitLab',
-          title: 'AI Engineer',
-          applicationUrl: url,
-          applicationId: 'live-greenhouse-1',
-        },
-        page,
-        navigation: {
-          initialUrl: url,
-          responseUrl: responseUrlFromGoto(response),
-          finalUrl: page.url(),
-          redirectChain: [url, page.url()].filter((item, index, all) => all.indexOf(item) === index),
-        },
+      logApplicationPreflightReport({
+        jobId: '8556658002',
+        title: 'AI Engineer',
+        company: 'GitLab',
+        discoveryProvider: 'greenhouse',
+        storedApplicationUrl: url,
+        decision,
       })
-      printApplicationDiagnostic(diagnostic)
-      expect(diagnostic.page.pageType).not.toBeUndefined()
-      expect(diagnostic.result).not.toMatch(/application not found/i)
-      if (diagnostic.blockers.captcha || diagnostic.blockers.login || diagnostic.blockers.mfa) {
-        expect(diagnostic.application.applicationDetected || diagnostic.blockers.captcha || diagnostic.blockers.login).toBe(true)
-        return
+      expect(decision.pageType).not.toBe('UNREACHED')
+      if (decision.capability !== 'auto_apply_supported') {
+        expect(canEnterAutonomousApply(decision.capability)).toBe(false)
       }
-      if (diagnostic.page.pageType === 'JOB_DETAIL_PAGE') {
-        const { clickApplyControl } = await import('./apply-action')
-        await clickApplyControl(page)
-        await page.waitForTimeout(1_200)
-        const afterClick = await diagnoseLivePage({
-          job: {
-            jobId: '8556658002',
-            company: 'GitLab',
-            title: 'AI Engineer',
-            applicationUrl: url,
-            applicationId: 'live-greenhouse-1',
-          },
-          page,
-          navigation: {
-            initialUrl: url,
-            responseUrl: page.url(),
-            finalUrl: page.url(),
-            redirectChain: [url, page.url()],
-          },
-        })
-        printApplicationDiagnostic(afterClick)
-        expect(afterClick.application.applicationDetected || afterClick.blockers.captcha || afterClick.blockers.login).toBe(
-          true,
-        )
-        if (afterClick.application.applicationDetected) {
-          expect(afterClick.application.fields.length).toBeGreaterThan(0)
-        }
-        return
-      }
-      expect(diagnostic.application.applicationDetected).toBe(true)
-      expect(diagnostic.application.fields).toEqual(expect.arrayContaining(['email']))
     } finally {
       await browser.close()
     }

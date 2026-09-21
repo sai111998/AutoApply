@@ -11,10 +11,12 @@ import { resetAgentEventsForTests } from './events'
 import { resetAgentSchedulerForTests } from './scheduler'
 import { resetAgentStateForTests } from './state'
 import { resetAnswerLibraryForTests } from '../application/answers'
+import { resetCapabilityCacheForTests } from '../apply/capability-cache'
 
 export function resetAgentForTests() {
   resetAgentStateForTests()
   resetAgentEventsForTests()
   resetAgentSchedulerForTests()
   resetAnswerLibraryForTests()
+  resetCapabilityCacheForTests()
 }

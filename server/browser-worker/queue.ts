@@ -70,7 +70,11 @@ export async function claimNextBrowserJob(): Promise<{ stored: StoredRun; item: 
   }
   for (const stored of runs) {
     if (!PROCESSABLE_RUN.has(stored.run.status)) continue
-    const item = stored.items.find((entry) => CLAIMABLE.has(entry.applicationStatus) || isRetryableBrowserJob(entry))
+    const item = stored.items.find(
+      (entry) =>
+        (CLAIMABLE.has(entry.applicationStatus) || isRetryableBrowserJob(entry)) &&
+        entry.applicationCapability === 'auto_apply_supported',
+    )
     if (!item) continue
     item.applicationStatus = 'opening'
     item.failureReason = null

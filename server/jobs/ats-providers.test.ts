@@ -262,7 +262,7 @@ describe('JobAggregator', () => {
     expect(aggregated.jobs.some((job) => job.provider === 'lever')).toBe(true)
     expect(aggregated.jobs.some((job) => job.provider === 'ashby')).toBe(true)
     expect(deduplicateJobs([greenhouse, duplicate])).toHaveLength(1)
-    expect(annotateCanonicalJob(lever).applicationCapability).toBe('auto_apply_supported')
+    expect(annotateCanonicalJob(lever).applicationCapability).toBe('unknown')
   })
 })
 

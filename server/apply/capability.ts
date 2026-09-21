@@ -133,15 +133,15 @@ export function classifyApplicationCapability(input: {
     }
   }
 
-  const ats = supportedAtsId(hostname) ?? (detected.id !== 'generic' && detected.id !== 'oraclecloud' ? detected.id : null)
+  const ats = supportedAtsId(hostname) ?? (detected.id !== 'generic' && detected.id !== 'oraclecloud' && detected.id !== 'smartrecruiters' ? detected.id : null)
   if (ats === 'workday' || ats === 'greenhouse' || ats === 'lever' || ats === 'ashby' || ats === 'icims') {
-    reasons.push(`Supported ATS host detected (${ats}).`)
+    reasons.push(`Known ATS host detected (${ats}). Workflow support is unknown until application preflight.`)
     return {
-      capability: 'auto_apply_supported',
+      capability: 'unknown',
       provider: ats,
       discoverySource,
       applicationSource,
-      sourceKind: discoverySource && discoverySource !== ats ? 'mixed' : 'auto_apply_ready',
+      sourceKind: discoverySource && discoverySource !== ats ? 'mixed' : 'discovery_only',
       confidence: 'medium',
       reasons,
     }
@@ -150,11 +150,21 @@ export function classifyApplicationCapability(input: {
   reasons.push('Application provider is unknown. This listing is discovery-only until a supported workflow is confirmed.')
   return {
     capability: 'unknown',
-    provider: 'unknown',
+    provider: detected.id === 'generic' ? 'unknown' : detected.id,
     discoverySource,
     applicationSource,
     sourceKind: 'discovery_only',
     confidence: 'low',
     reasons,
   }
+}
+
+export function isKnownAtsProvider(provider: string | null | undefined): boolean {
+  return provider === 'workday' || provider === 'greenhouse' || provider === 'lever' || provider === 'ashby' || provider === 'icims'
+}
+
+export function isAutoApplyCandidateHost(result: ApplicationCapabilityResult): boolean {
+  if (result.capability === 'auto_apply_supported') return true
+  if (result.capability === 'unsupported' || result.capability === 'blocked') return false
+  return isKnownAtsProvider(result.provider)
 }

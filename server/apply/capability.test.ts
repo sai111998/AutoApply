@@ -29,10 +29,11 @@ function job(partial: Partial<ListedAutoApplyJob> & { id: string; url: string })
 }
 
 describe('application capability', () => {
-  it('marks supported ATS hosts as auto_apply_supported', () => {
-    expect(classifyApplicationCapability({ url: 'https://boards.greenhouse.io/acme/jobs/1' }).capability).toBe(
-      'auto_apply_supported',
-    )
+  it('does not mark known ATS hosts as auto_apply_supported without workflow preflight', () => {
+    const greenhouse = classifyApplicationCapability({ url: 'https://boards.greenhouse.io/acme/jobs/1' })
+    expect(greenhouse.capability).toBe('unknown')
+    expect(greenhouse.provider).toBe('greenhouse')
+    expect(canEnterAutonomousApply(greenhouse.capability)).toBe(false)
     expect(classifyApplicationCapability({ url: 'https://jobs.lever.co/acme/abc' }).provider).toBe('lever')
     expect(classifyApplicationCapability({ url: 'https://jobs.ashbyhq.com/acme/x' }).provider).toBe('ashby')
     expect(classifyApplicationCapability({ url: 'https://acme.wd1.myworkdayjobs.com/en-US/careers' }).provider).toBe(

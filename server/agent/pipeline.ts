@@ -1,6 +1,6 @@
 import { conservativeTailor } from '../tailor/engine'
 import { tailoredResumeToText } from '../tailor/match-optimize'
-import { canEnterAutonomousApply, classifyApplicationCapability } from '../apply/capability'
+import { classifyApplicationCapability, isAutoApplyCandidateHost } from '../apply/capability'
 import {
   applicationIdentity,
   hasDuplicateApplication,
@@ -13,7 +13,6 @@ import {
   meetsMatchThreshold,
 } from '../apply/eligibility'
 import { resolveGreenhouseQuestions } from '../apply/greenhouse-questions'
-import { preflightApplication } from '../apply/preflight'
 import type { AutoApplyQueueItem, AutoApplyStartInput, ListedAutoApplyJob } from '../apply/types'
 import type { GreenhouseQuestion } from '../jobs/providers/greenhouse'
 import { c2cOnly } from './policy'
@@ -113,13 +112,8 @@ export function evaluateJobEligibility(job: ListedAutoApplyJob, context: Eligibi
     applicationUrl,
     discoveryProvider: job.discoveryProvider || job.provider,
   })
-  const staticPreflight = preflightApplication({
-    url: job.url,
-    applicationUrl,
-    provider: job.provider,
-  })
-  if (!canEnterAutonomousApply(capability.capability) || !canEnterAutonomousApply(staticPreflight.capability)) {
-    return fail('application_capability', 'This listing is not Auto-Apply capable.')
+  if (capability.capability === 'unsupported' || capability.capability === 'blocked' || !isAutoApplyCandidateHost(capability)) {
+    return fail('application_capability', 'This listing is not Auto-Apply capable until a supported workflow is preflighted.')
   }
 
   let finalScore = initialScore

@@ -6,7 +6,10 @@ import type { ServerConfig } from '../config'
 import type { FetchLike } from '../jobs/http'
 import { createApplyBrowser } from './browser'
 import { hasDuplicateQueueEntry } from './eligibility'
-import { classifyApplicationCapability } from './capability'
+import { canEnterAutonomousApply } from './capability'
+import { applicationPreflight, logApplicationPreflightReport, type ApplicationPreflightDecision } from './application-preflight'
+import { lookupCapability, rememberDecision, resetCapabilityCacheForTests, shouldRevalidateCapability } from './capability-cache'
+import { livePreflightApplicationUrl, shouldRunLiveCapabilityPreflight } from './live-capability'
 import { preflightApplication } from './preflight'
 import type {
   ApplyBrowser,
@@ -66,6 +69,7 @@ function withApplyLock<T>(fn: () => Promise<T>, lockMs: number): Promise<T> {
 export function resetAutoApplyEngineForTests() {
   applyChain = Promise.resolve()
   inFlightPrepares.clear()
+  resetCapabilityCacheForTests()
 }
 
 export function normalizeMinimumMatchRate(value: number): number {
@@ -110,6 +114,7 @@ export interface AutoApplyEngineDeps {
   store?: AutoApplyStore
   delayMs?: number
   timeouts?: Partial<ApplyTimeouts>
+  preflightJob?: (job: ListedAutoApplyJob) => Promise<ApplicationPreflightDecision>
 }
 
 async function listCampaignJobs(
@@ -121,14 +126,81 @@ async function listCampaignJobs(
   return discoverCampaignJobs(config, input, fetchImpl, deps)
 }
 
-function enqueueEligibleJobs(input: {
+async function resolveWorkflowPreflight(
+  job: ListedAutoApplyJob,
+  applicationUrl: string | null,
+  deps: AutoApplyEngineDeps,
+): Promise<ApplicationPreflightDecision> {
+  const identity = job.identityKey || job.id
+  const url = applicationUrl || job.url || ''
+  const cached = lookupCapability(identity, url)
+  if (cached && !shouldRevalidateCapability(cached, { url, provider: job.applicationProvider })) {
+    return {
+      capability: cached.capability,
+      provider: (cached.provider as ApplicationPreflightDecision['provider']) || 'unknown',
+      initialUrl: url,
+      finalUrl: url,
+      pageType: 'UNREACHED',
+      applicationDetected: cached.capability === 'auto_apply_supported',
+      confidence: 'medium',
+      blockers: cached.capability === 'auto_apply_supported' ? [] : [cached.reason || 'cached'],
+      evidence: [cached.reason || 'cached capability'],
+      detectedFields: [],
+      detectedButtons: [],
+      iframeCount: 0,
+      hasResumeUpload: cached.capability === 'auto_apply_supported',
+      applyActionAvailable: false,
+      reason: cached.reason,
+      checkedAt: cached.checkedAt,
+    }
+  }
+  if (deps.preflightJob) {
+    const decision = await deps.preflightJob(job)
+    rememberDecision(identity, url, decision)
+    return decision
+  }
+  const html = typeof job.rawMetadata?.applicationHtml === 'string' ? job.rawMetadata.applicationHtml : null
+  let decision = applicationPreflight({
+    url: job.url,
+    applicationUrl,
+    html,
+    discoveryProvider: job.discoveryProvider || job.provider,
+  })
+  if (
+    !html &&
+    !canEnterAutonomousApply(decision.capability) &&
+    decision.capability !== 'unsupported' &&
+    decision.capability !== 'blocked' &&
+    shouldRunLiveCapabilityPreflight()
+  ) {
+    decision = await livePreflightApplicationUrl({
+      jobId: job.id,
+      title: job.title,
+      company: job.company,
+      applicationUrl: url,
+    })
+  }
+  rememberDecision(identity, url, decision)
+  logApplicationPreflightReport({
+    jobId: job.id,
+    title: job.title,
+    company: job.company,
+    discoveryProvider: job.discoveryProvider || job.provider,
+    storedApplicationUrl: applicationUrl,
+    decision,
+  })
+  return decision
+}
+
+async function enqueueEligibleJobs(input: {
   run: AutoApplyRun
   items: AutoApplyQueueItem[]
   jobs: ListedAutoApplyJob[]
   startInput: AutoApplyStartInput
   previous: StoredRun[]
-}): { added: number; found: number; eligible: number; autoApplyCapable: number } {
-  const { run, items, jobs, startInput, previous } = input
+  deps: AutoApplyEngineDeps
+}): Promise<{ added: number; found: number; eligible: number; autoApplyCapable: number }> {
+  const { run, items, jobs, startInput, previous, deps } = input
   const masterSnapshot = startInput.masterResumeText
   const day = utcDayKey()
   const priorToday = previous
@@ -166,48 +238,50 @@ function enqueueEligibleJobs(input: {
     }
     if (hasDuplicateQueueEntry(job, queueIdentities)) continue
 
-    const initial = evaluated.initialScore
-    const finalScore = evaluated.finalScore
-    const tailoredText = evaluated.tailoredText
-    const resumeVersionId = randomUUID()
-    const resumeVersionName = evaluated.resumeVersionName
-    const timestamp = nowIso()
     eligible += 1
-
     const applicationUrl = evaluated.applicationUrl
-    const capability = classifyApplicationCapability({
-      url: job.url,
-      applicationUrl,
-      discoveryProvider: job.provider,
-    })
+    const decision = await resolveWorkflowPreflight(job, applicationUrl, deps)
     const staticPreflight = preflightApplication({
       url: job.url,
       applicationUrl,
       provider: job.provider,
+      html: typeof job.rawMetadata?.applicationHtml === 'string' ? job.rawMetadata.applicationHtml : null,
     })
+    if (!canEnterAutonomousApply(decision.capability)) {
+      logApplyEvent('capability-skip', {
+        jobId: job.id,
+        applicationUrl,
+        matchScore: evaluated.finalScore,
+        capability: decision.capability,
+        code: decision.capability,
+        blockingReason: decision.reason,
+      })
+      continue
+    }
     autoApplyCapable += 1
     const identity = evaluated.identity
     queueIdentities.push(identity)
+    const timestamp = nowIso()
     items.push({
       id: randomUUID(),
       runId: run.id,
       jobId: job.id,
       identityKey: identity,
       applicationId: randomUUID(),
-      resumeVersionId,
-      resumeVersionName,
+      resumeVersionId: randomUUID(),
+      resumeVersionName: evaluated.resumeVersionName,
       sourceResumeId: startInput.resumeId,
       title: job.title,
       company: job.company,
       applicationUrl,
-      initialMatchScore: initial,
-      finalMatchScore: finalScore,
+      initialMatchScore: evaluated.initialScore,
+      finalMatchScore: evaluated.finalScore,
       c2cStatus: job.c2cStatus,
       c2cEvidence: job.c2cEvidence,
       applicationStatus: 'queued',
       failureReason: null,
       questions: evaluated.questions,
-      tailoredResumeText: tailoredText ?? startInput.resumeText,
+      tailoredResumeText: evaluated.tailoredText ?? startInput.resumeText,
       jobDescriptionSnapshot: job.description ?? null,
       location: job.location ?? null,
       confirmationNumber: null,
@@ -217,14 +291,16 @@ function enqueueEligibleJobs(input: {
       sessionId: null,
       createdAt: timestamp,
       updatedAt: timestamp,
-      applicationCapability: capability.capability,
-      discoverySource: capability.discoverySource,
-      applicationSource: capability.applicationSource,
-      applicationProvider: capability.provider,
-      initialUrl: applicationUrl,
+      applicationCapability: decision.capability,
+      discoverySource: job.discoveryProvider || job.provider,
+      applicationSource: decision.provider,
+      applicationProvider: decision.provider,
+      initialUrl: decision.initialUrl || applicationUrl,
       redirectUrls: [],
-      finalApplicationUrl: null,
+      finalApplicationUrl: decision.finalUrl,
       preflight: staticPreflight,
+      capabilityCheckedAt: decision.checkedAt,
+      capabilityReason: decision.reason,
     })
     added += 1
   }
@@ -262,7 +338,7 @@ export async function startAutoApply(
   const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
   const items: AutoApplyQueueItem[] = []
   const previous = await store.list(input.userId)
-  const queued = enqueueEligibleJobs({ run, items, jobs, startInput: input, previous })
+  const queued = await enqueueEligibleJobs({ run, items, jobs, startInput: input, previous, deps })
 
   run.counts = {
     ...recount(items),
@@ -294,18 +370,18 @@ export async function refreshAutoApplyRun(
   }
   const jobs = await listCampaignJobs(config, input, fetchImpl, deps)
   const previous = await store.list(input.userId)
-  const { added, found, eligible, autoApplyCapable } = enqueueEligibleJobs({
+  const { added, found, eligible } = await enqueueEligibleJobs({
     run: current.run,
     items: current.items,
     jobs,
     startInput: input,
     previous,
+    deps,
   })
   current.run.counts = {
     ...recount(current.items),
     found: Math.max(current.run.counts.found, found),
     eligible: Math.max(current.run.counts.eligible, eligible),
-    autoApplyCapable: Math.max(current.run.counts.autoApplyCapable, autoApplyCapable),
   }
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()

@@ -4,6 +4,30 @@ import type { EmploymentFilter, RemoteFilter } from '../jobs/types'
 import type { ApplicationCapability } from './capability'
 import type { ApplicationPreflightResult } from './preflight'
 
+export const APPLY_LIFECYCLE_STATES = [
+  'discovered',
+  'eligible',
+  'preflight',
+  'queued',
+  'opening',
+  'job_page',
+  'application_page',
+  'provider_detected',
+  'filling',
+  'needs_user_input',
+  'captcha_required',
+  'login_required',
+  'mfa_required',
+  'ready_for_submission',
+  'submitting',
+  'submitted',
+  'failed',
+  'skipped',
+  'cancelled',
+] as const
+
+export type ApplyLifecycleState = (typeof APPLY_LIFECYCLE_STATES)[number]
+
 export type AutoApplyQueueStatus =
   | 'queued'
   | 'preparing'
@@ -111,6 +135,8 @@ export interface AutoApplyQueueItem {
   preflight?: ApplicationPreflightResult | null
   captchaDetectionConfidence?: string | null
   captchaEvidence?: string[]
+  capabilityCheckedAt?: string | null
+  capabilityReason?: string | null
 }
 
 export interface AutoApplyCounts {

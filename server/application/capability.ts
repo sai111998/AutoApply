@@ -1,3 +1,4 @@
+import { applicationPreflight } from '../apply/application-preflight'
 import {
   canEnterAutonomousApply,
   classifyApplicationCapability,
@@ -15,6 +16,7 @@ export {
   supportedAtsId,
 } from '../apply/capability'
 export type { ApplicationCapability, ApplicationCapabilityResult, JobSourceKind } from '../apply/capability'
+export { applicationPreflight } from '../apply/application-preflight'
 
 export interface ApplicationCapabilityEvaluation extends ApplicationCapabilityResult {
   preflight: ApplicationPreflightResult
@@ -35,6 +37,13 @@ export function evaluateApplicationCapability(input: {
     html: input.html,
     discoveryProvider: input.discoveryProvider,
   })
+  const decision = applicationPreflight({
+    url: input.url,
+    applicationUrl: input.applicationUrl,
+    html: input.html,
+    discoveryProvider: input.discoveryProvider,
+    accessible: input.accessible,
+  })
   const preflight = preflightApplication({
     url: input.url,
     applicationUrl: input.applicationUrl,
@@ -47,7 +56,7 @@ export function evaluateApplicationCapability(input: {
   return {
     ...classified,
     capability,
-    reasons: [...classified.reasons, ...preflight.reasons.filter((reason) => !classified.reasons.includes(reason))],
+    reasons: [...classified.reasons, ...decision.evidence.filter((reason) => !classified.reasons.includes(reason))],
     preflight,
     autoApplyReady: canEnterAutonomousApply(capability) && isAutoApplyReady(preflight),
   }

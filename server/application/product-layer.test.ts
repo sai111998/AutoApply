@@ -68,8 +68,14 @@ describe('application product layer', () => {
     expect(smart.capability).not.toBe('auto_apply_supported')
     expect(canEnterAutonomousApply(smart.capability)).toBe(false)
     expect(evaluateApplicationCapability({ url: 'https://boards.greenhouse.io/acme/jobs/1' }).capability).toBe(
-      'auto_apply_supported',
+      'unknown',
     )
+    expect(
+      evaluateApplicationCapability({
+        url: 'https://boards.greenhouse.io/acme/jobs/1',
+        html: '<form><label>Email</label><input type="email" name="email"><label>Upload Resume</label><input type="file"><button type="submit">Submit Application</button></form>',
+      }).capability,
+    ).toBe('auto_apply_supported')
   })
 
   it('maps profile values onto application fields', () => {

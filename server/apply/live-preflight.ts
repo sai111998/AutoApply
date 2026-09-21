@@ -1,5 +1,5 @@
 import { analyzeCaptcha } from './captcha'
-import { canEnterAutonomousApply, classifyApplicationCapability, isJobBoardHost } from './capability'
+import { isJobBoardHost, isSyntheticApplicationHost, type ApplicationCapability } from './capability'
 import { inspectApplicationPage } from './detect'
 import { classifyPageType, unsupportedProviderName, type PageType } from './page-classify'
 import { evidenceFromHtml, type PageEvidence } from './page-evidence'
@@ -7,6 +7,7 @@ import { detectApplicationProvider } from './providers'
 import { mergeSurfaceDocuments, type ApplicationAnalysis } from './surface'
 import { inspectStoredApplicationUrl } from './stored-url'
 import { hostnameOf } from './providers/types'
+import { decideWorkflowCapability } from './workflow-capability'
 
 export interface LivePreflightResult {
   jobId: string | null
@@ -24,7 +25,7 @@ export interface LivePreflightResult {
   mfaDetected: boolean
   blockers: string[]
   evidence: PageEvidence
-  capability: ReturnType<typeof classifyApplicationCapability>['capability']
+  capability: ApplicationCapability
   analysis: ApplicationAnalysis
   reason: string | null
 }
@@ -73,6 +74,7 @@ export function buildLivePreflight(input: {
   documents?: Array<{ html: string; url?: string; inIframe?: boolean }>
   evidence?: PageEvidence
   title?: string
+  applyFollowed?: boolean
 }): LivePreflightResult {
   const stored = inspectStoredApplicationUrl(input.applicationUrl)
   const documents = input.documents?.length
@@ -102,42 +104,40 @@ export function buildLivePreflight(input: {
   const captcha = analyzeCaptcha(input.html)
   const evidence = input.evidence ?? evidenceFromHtml(input.html, finalUrl || '', { title: input.title })
   const pageType = classification.pageType
-  const capabilitySource = classifyApplicationCapability({
-    url: finalUrl,
-    applicationUrl: stored.url,
-    html: input.html,
-  })
-  let capability = capabilitySource.capability
   const blockers: string[] = []
-  if (!stored.ok) {
-    blockers.push(stored.reason || 'Application URL is invalid.')
-    capability = 'unsupported'
-  }
-  if (pageType === 'CAPTCHA_PAGE') {
-    blockers.push('CAPTCHA challenge detected.')
-    capability = 'blocked'
-  } else if (pageType === 'LOGIN_PAGE') {
-    blockers.push('Employer login is required.')
-    capability = 'blocked'
-  } else if (pageType === 'MFA_PAGE') {
-    blockers.push('Multi-factor authentication is required.')
-    capability = 'blocked'
-  } else if (pageType === 'BLOCKED_PAGE') {
-    blockers.push('Automated access is blocked.')
-    capability = 'blocked'
-  } else if (pageType === 'ERROR_PAGE') {
-    blockers.push('Job is no longer available.')
-    capability = 'unsupported'
-  } else if (pageType === 'UNKNOWN_PAGE' && isJobBoardHost(evidence.hostname || hostnameOf(finalUrl || ''))) {
+  if (!stored.ok) blockers.push(stored.reason || 'Application URL is invalid.')
+  if (pageType === 'CAPTCHA_PAGE') blockers.push('CAPTCHA challenge detected.')
+  else if (pageType === 'LOGIN_PAGE') blockers.push('Employer login is required.')
+  else if (pageType === 'MFA_PAGE') blockers.push('Multi-factor authentication is required.')
+  else if (pageType === 'BLOCKED_PAGE') blockers.push('Automated access is blocked.')
+  else if (pageType === 'ERROR_PAGE') blockers.push('Job is no longer available.')
+  else if (pageType === 'UNKNOWN_PAGE' && isJobBoardHost(evidence.hostname || hostnameOf(finalUrl || ''))) {
     blockers.push('unsupported_application_flow')
-    capability = 'unsupported'
   } else if (pageType === 'UNKNOWN_PAGE' && unsupportedProviderName(evidence.hostname || '')) {
     blockers.push('unsupported_provider')
-    capability = 'unsupported'
-  } else if (pageType === 'UNKNOWN_PAGE' && !classification.applicationDetected && !analysis.hasApplyControl) {
-    blockers.push('unsupported_application_flow')
-    if (canEnterAutonomousApply(capability)) capability = 'unknown'
   }
+
+  const synthetic = isSyntheticApplicationHost(evidence.hostname || hostnameOf(finalUrl || ''), finalUrl || stored.url || '')
+  const applicationDetected = classification.applicationDetected || analysis.kind === 'application'
+  const capability: ApplicationCapability = decideWorkflowCapability(
+    {
+      pageType,
+      blockers,
+      applicationDetected,
+      provider,
+      detectedFields: analysis.fields,
+      hasResumeUpload: analysis.hasResumeUpload,
+      iframeDetected: analysis.inIframe || evidence.iframes > 0 || evidence.frames.length > 0,
+      applicationFormInIframe: analysis.code === 'APPLICATION_FORM_IN_IFRAME',
+      finalUrl,
+      applicationUrl: stored.url,
+    },
+    {
+      synthetic,
+      applyFollowed: input.applyFollowed === true,
+      unknownQuestions: inspection.questions,
+    },
+  )
 
   return {
     jobId: input.jobId ?? null,
@@ -145,7 +145,7 @@ export function buildLivePreflight(input: {
     finalUrl,
     pageType,
     provider,
-    applicationDetected: classification.applicationDetected || analysis.kind === 'application',
+    applicationDetected,
     confidence: classification.confidence,
     detectedFields: analysis.fields,
     detectedButtons: detectedButtonsFromHtml(input.html),

@@ -16,6 +16,7 @@ export const BROWSER_SESSION_STATES = [
   'submitting',
   'submitted',
   'failed',
+  'skipped',
   'cancelled',
 ] as const
 
@@ -137,6 +138,7 @@ export function queueStatusFromSession(state: BrowserSessionState): AutoApplyQue
   if (state === 'captcha_required') return 'captcha_required'
   if (state === 'submitting') return 'submitting'
   if (state === 'submitted') return 'submitted'
+  if (state === 'skipped') return 'skipped'
   if (state === 'cancelled') return 'cancelled'
   return 'failed'
 }

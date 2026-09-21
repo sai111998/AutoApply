@@ -68,7 +68,7 @@ describe('job eligibility pipeline', () => {
     ])
   })
 
-  it('queues only auto-apply capable jobs that meet match and C2C rules', () => {
+  it('marks ATS candidate hosts eligible without treating them as auto-apply capable', () => {
     const ready = evaluateJobEligibility(job({ id: 'ready', title: 'Java Engineer' }), { startInput })
     expect(ready.ok).toBe(true)
     expect(ready.stage).toBe('queue')

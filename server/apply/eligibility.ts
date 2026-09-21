@@ -1,4 +1,4 @@
-import { canEnterAutonomousApply, classifyApplicationCapability } from './capability'
+import { classifyApplicationCapability, isAutoApplyCandidateHost } from './capability'
 import type { AutoApplyProfile, ExistingApplicationRecord, ListedAutoApplyJob } from './types'
 
 const MAX_LIVE_JOB_AGE_MS = 90 * 24 * 60 * 60 * 1000
@@ -124,17 +124,19 @@ export function isEligibleForAutoApply(
     applicationUrl: jobApplicationUrl(job),
     discoveryProvider: job.discoveryProvider || job.provider,
   })
-  if (!canEnterAutonomousApply(capability.capability)) {
+  if (capability.capability === 'unsupported' || capability.capability === 'blocked') {
     return {
       ok: false,
       reason:
-        capability.capability === 'unsupported'
-          ? 'This listing is not Auto-Apply capable.'
-          : capability.capability === 'blocked'
-            ? 'This application is blocked from autonomous apply.'
-            : capability.capability === 'assisted_apply'
-              ? 'This application needs user input and cannot run autonomously.'
-              : 'Application capability is unknown, so this job stays discovery-only.',
+        capability.capability === 'blocked'
+          ? 'This application is blocked from autonomous apply.'
+          : 'This listing is not Auto-Apply capable.',
+    }
+  }
+  if (!isAutoApplyCandidateHost(capability)) {
+    return {
+      ok: false,
+      reason: 'Application capability is unknown, so this job stays discovery-only until preflight.',
     }
   }
   return { ok: true, reason: null }

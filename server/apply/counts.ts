@@ -19,7 +19,6 @@ const PROCESSED_STATUSES = new Set([
   'failed',
   'blocked',
   'automation_blocked',
-  'skipped',
 ])
 const TERMINAL_STATUSES = new Set([
   'submitted',
@@ -85,7 +84,9 @@ export function recount(items: AutoApplyQueueItem[]): AutoApplyCounts {
     if (item.applicationStatus === 'submitted') counts.submitted += 1
     if (item.applicationStatus === 'skipped') counts.skipped += 1
     if (FAILED_STATUSES.has(item.applicationStatus)) counts.failed += 1
-    if (item.applicationCapability === 'auto_apply_supported') counts.autoApplyCapable += 1
+    if (item.applicationCapability === 'auto_apply_supported' && item.applicationStatus !== 'skipped') {
+      counts.autoApplyCapable += 1
+    }
     if (PROCESSED_STATUSES.has(item.applicationStatus)) counts.processed += 1
     if (BLOCKED_STATUSES.has(item.applicationStatus)) counts.blocked += 1
   }
@@ -98,7 +99,7 @@ export function recountWithDiscovery(items: AutoApplyQueueItem[], previous?: Aut
     ...counts,
     found: Math.max(counts.found, previous?.found ?? 0),
     eligible: Math.max(counts.eligible, previous?.eligible ?? 0),
-    autoApplyCapable: Math.max(counts.autoApplyCapable, previous?.autoApplyCapable ?? 0),
+    autoApplyCapable: counts.autoApplyCapable,
   }
 }
 
