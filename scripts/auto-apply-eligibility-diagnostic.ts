@@ -77,8 +77,11 @@ async function main() {
       employmentType: 'any',
     }),
   }
-  const rows = listed.jobs.slice(0, Math.max(10, Math.min(12, listed.jobs.length))).map((job) => {
+  const evaluatedJobs = listed.jobs.map((job) => {
     const evaluated = evaluateJobEligibility(job, { startInput })
+    return { job, evaluated }
+  })
+  const rows = evaluatedJobs.slice(0, 15).map(({ job, evaluated }) => {
     return {
       jobId: job.id,
       title: job.title,
@@ -131,7 +134,17 @@ async function main() {
     browserWorkerRunning: Boolean(getBrowserWorker()?.running()),
     newJobs: listed.jobs.length,
     currentScoreDistribution: distribution(listed.jobs.map((job) => job.match?.score ?? job.matchScore ?? null)),
-    tailoredScoreDistribution: distribution(rows.map((row) => row.tailoredScore)),
+    tailoredScoreDistribution: distribution(evaluatedJobs.map(({ evaluated }) => evaluated.tailoredScore)),
+    allEligible: evaluatedJobs
+      .filter(({ evaluated }) => evaluated.ok)
+      .map(({ job, evaluated }) => ({
+        jobId: job.id,
+        title: job.title,
+        currentScore: evaluated.initialScore,
+        tailoredScore: evaluated.tailoredScore,
+        capability: evaluated.capability,
+        url: job.jobUrl || job.url,
+      })),
     rows,
   }
   writeFileSync('/tmp/auto-apply-eligibility-diagnostic.json', JSON.stringify(report, null, 2))

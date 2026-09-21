@@ -140,5 +140,6 @@ describe('job eligibility pipeline', () => {
     )
     expect(skipped.ok).toBe(false)
     expect(['auto_tailor', 're_score', 'final_eligibility']).toContain(skipped.stage)
+    expect(skipped.tailoredScore).not.toBeNull()
   })
 })

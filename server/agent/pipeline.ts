@@ -161,18 +161,23 @@ export function evaluateJobEligibility(job: ListedAutoApplyJob, context: Eligibi
       applicationUrl,
       discoveryProvider: job.discoveryProvider || job.provider,
     })
-  const fail = (stage: EligibilityStage, reason: string, code?: PipelineErrorCode | null): EligibilityResult => ({
+  const fail = (
+    stage: EligibilityStage,
+    reason: string,
+    code?: PipelineErrorCode | null,
+    extra: Partial<Pick<EligibilityResult, 'tailoredScore' | 'tailoredText' | 'resumeVersionName' | 'resumeVersionId' | 'finalScore'>> = {},
+  ): EligibilityResult => ({
     ok: false,
     stage,
     reason,
     identity,
     applicationUrl,
     initialScore,
-    finalScore: initialScore,
-    tailoredScore: null,
-    tailoredText: null,
-    resumeVersionId: currentResumeVersionId,
-    resumeVersionName: 'Master',
+    finalScore: extra.finalScore ?? initialScore,
+    tailoredScore: extra.tailoredScore ?? null,
+    tailoredText: extra.tailoredText ?? null,
+    resumeVersionId: extra.resumeVersionId ?? currentResumeVersionId,
+    resumeVersionName: extra.resumeVersionName ?? 'Master',
     capability: classified().capability,
     questions: [],
     code: code ?? null,
@@ -225,14 +230,32 @@ export function evaluateJobEligibility(job: ListedAutoApplyJob, context: Eligibi
       resumeVersionId = tailoredVersionId
       tailoredScore = scoreWithMatchEngine(job, tailoredText, tailoredVersionId)
     } catch {
-      return fail('re_score', 'MATCH_ERROR', 'MATCH_ERROR')
+      return fail('re_score', 'MATCH_ERROR', 'MATCH_ERROR', {
+        tailoredScore,
+        tailoredText,
+        resumeVersionName,
+        resumeVersionId,
+      })
     }
   }
 
   const qualifyingScore = startInput.config.autoTailorResume ? bestScore([initialScore, tailoredScore]) : initialScore
-  if (qualifyingScore == null) return fail('final_eligibility', 'Match score is missing.', 'MATCH_ERROR')
+  if (qualifyingScore == null) {
+    return fail('final_eligibility', 'Match score is missing.', 'MATCH_ERROR', {
+      tailoredScore,
+      tailoredText,
+      resumeVersionName,
+      resumeVersionId,
+    })
+  }
   if (!meetsMatchThreshold(qualifyingScore, startInput.config.minimumMatchRate)) {
-    return fail('final_eligibility', 'Match score is below the selected threshold.')
+    return fail('final_eligibility', 'Match score is below the selected threshold.', null, {
+      tailoredScore,
+      tailoredText,
+      resumeVersionName,
+      resumeVersionId,
+      finalScore: qualifyingScore,
+    })
   }
   if (c2cOnly({ jobType: startInput.config.jobType }) && job.c2cStatus !== 'confirmed') {
     return fail('c2c', 'C2C-only mode requires a confirmed C2C job.')
