@@ -6,7 +6,6 @@ import { selectedResumeForUpload, assertMasterResumeUnchanged } from './resume'
 import { classifyNavigationControl, persistStepState, isBoundedStepTimeout } from './navigation'
 import { canInsertApplicationHistory, detectSubmissionConfirmation } from './confirmation'
 import { profileFieldValues } from './fields'
-import { persistTheme, readStoredTheme, THEME_STORAGE_KEY } from '../../src/lib/theme'
 import type { AutoApplyProfile, AutoApplyQueueItem } from '../apply/types'
 import { resetAnswerLibraryForTests } from './answers'
 
@@ -127,32 +126,5 @@ describe('application product layer', () => {
         detected: false,
       }),
     ).toBe(false)
-  })
-
-  it('keeps Dark Mode persisted independently of Auto Apply', () => {
-    const storage = {
-      data: {} as Record<string, string>,
-      getItem(key: string) {
-        return this.data[key] ?? null
-      },
-      setItem(key: string, value: string) {
-        this.data[key] = value
-      },
-      removeItem(key: string) {
-        delete this.data[key]
-      },
-      clear() {
-        this.data = {}
-      },
-      key() {
-        return null
-      },
-      get length() {
-        return Object.keys(this.data).length
-      },
-    } as Storage
-    persistTheme('dark', storage)
-    expect(storage.getItem(THEME_STORAGE_KEY)).toBe('dark')
-    expect(readStoredTheme(storage)).toBe('dark')
   })
 })

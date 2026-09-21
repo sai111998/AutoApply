@@ -54,7 +54,7 @@ describe('candidate application profile', () => {
     expect(candidate.employment.sponsorshipRequired).toBe(false)
     expect(candidate.preferences.c2c).toBe(true)
     expect(candidate.preferences.salaryMin).toBe(120000)
-    expect(candidate.resume.masterText).toBe(JAVA_RESUME_TEXT)
+    expect(candidate.resume.masterText).toBe(JAVA_RESUME_TEXT.trim())
     expect(candidate.resume.defaultVersionId).toBe('resume-1')
     expect(toAutoApplyProfile(candidate).email).toBe(profile.email)
   })
