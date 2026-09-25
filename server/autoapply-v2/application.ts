@@ -1,7 +1,12 @@
 import { listConfirmedApplications } from '../apply/confirmed'
 import { getLiveJobSnapshot } from '../jobs/live-store'
 import { V2Error } from './errors'
+import { listV2Runs } from './queue'
 import type { V2JobRef } from './types'
+
+export interface V2JobOptions {
+  allowSyntheticEmployer?: boolean
+}
 
 export function isSyntheticV2Url(url: string): boolean {
   try {
@@ -14,11 +19,11 @@ export function isSyntheticV2Url(url: string): boolean {
   }
 }
 
-export function validateV2ApplicationUrl(applicationUrl: string): void {
+export function validateV2ApplicationUrl(applicationUrl: string, options: V2JobOptions = {}): void {
   if (!applicationUrl?.trim()) {
     throw new V2Error('INVALID_APPLICATION_URL', 'Job is missing an application URL.', 422)
   }
-  if (isSyntheticV2Url(applicationUrl)) return
+  if (options.allowSyntheticEmployer && isSyntheticV2Url(applicationUrl)) return
   let parsed: URL
   try {
     parsed = new URL(applicationUrl)
@@ -38,22 +43,6 @@ export function validateV2ApplicationUrl(applicationUrl: string): void {
   }
 }
 
-export function isV2JobAlreadyApplied(
-  userId: string,
-  job: { id: string; applicationUrl: string },
-): boolean {
-  const normalizedUrl = normalizeV2Url(job.applicationUrl)
-  return listConfirmedApplications(userId).some((record) => {
-    if (record.jobId === job.id) return true
-    if (record.identityKey === `live:${job.id}`) return true
-    if (normalizeV2Url(record.applicationUrl ?? '') === normalizedUrl) return true
-    if (record.finalUrl && normalizeV2Url(record.finalUrl) === normalizedUrl) {
-      return true
-    }
-    return false
-  })
-}
-
 function normalizeV2Url(url: string): string {
   try {
     const parsed = new URL(url.trim())
@@ -62,6 +51,26 @@ function normalizeV2Url(url: string): string {
   } catch {
     return url.trim()
   }
+}
+
+export function isV2JobAlreadyApplied(
+  userId: string,
+  job: { id: string; applicationUrl: string },
+): boolean {
+  const normalizedUrl = normalizeV2Url(job.applicationUrl)
+  const confirmed = listConfirmedApplications(userId).some((record) => {
+    if (record.jobId === job.id) return true
+    if (record.identityKey === `live:${job.id}`) return true
+    if (normalizeV2Url(record.applicationUrl ?? '') === normalizedUrl) return true
+    return Boolean(record.finalUrl && normalizeV2Url(record.finalUrl) === normalizedUrl)
+  })
+  if (confirmed) return true
+  return listV2Runs().some(
+    (run) =>
+      run.userId === userId &&
+      run.jobId === job.id &&
+      (run.status === 'submitted' || run.status === 'submission_uncertain'),
+  )
 }
 
 export function firstValidV2Job(
@@ -76,7 +85,7 @@ export function firstValidV2Job(
   }>,
 ): V2JobRef | null {
   for (const job of jobs) {
-    if (!job.id || !job.title?.trim() || !job.company?.trim()) continue
+    if (!job.id?.trim() || !job.title?.trim() || !job.company?.trim() || !job.description?.trim()) continue
     try {
       validateV2ApplicationUrl(job.applicationUrl)
     } catch {
@@ -100,7 +109,7 @@ export function resolveV2ApplicationUrl(snapshot: { jobUrl?: string | null; url?
   return value || null
 }
 
-export function loadV2Job(userId: string, jobId: string): V2JobRef {
+export function loadV2Job(userId: string, jobId: string, options: V2JobOptions = {}): V2JobRef {
   const snapshot = getLiveJobSnapshot(jobId)
   if (!snapshot) {
     throw new V2Error('JOB_NOT_FOUND', 'Job not found in the live-job dataset.', 404)
@@ -112,11 +121,11 @@ export function loadV2Job(userId: string, jobId: string): V2JobRef {
   if (!applicationUrl) {
     throw new V2Error('INVALID_APPLICATION_URL', 'Job is missing an application URL.', 422)
   }
-  validateV2ApplicationUrl(applicationUrl)
+  validateV2ApplicationUrl(applicationUrl, options)
   if (isV2JobAlreadyApplied(userId, { id: snapshot.id, applicationUrl })) {
-    throw new V2Error('ALREADY_APPLIED', 'This job already has a confirmed application.', 409)
+    throw new V2Error('ALREADY_APPLIED', 'This job already has a submitted or possibly submitted application.', 409)
   }
-  const job: V2JobRef = {
+  return {
     id: snapshot.id,
     title: snapshot.title.trim(),
     company: snapshot.company.trim(),
@@ -124,6 +133,4 @@ export function loadV2Job(userId: string, jobId: string): V2JobRef {
     description: snapshot.description ?? null,
     applicationUrl,
   }
-  console.log(`[V2] JOB_SELECTED id=${job.id} company=${job.company}`)
-  return job
 }

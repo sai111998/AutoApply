@@ -1,14 +1,17 @@
+import { randomUUID } from 'node:crypto'
 import type { AutoApplyQueueItem } from '../apply/types'
 import { persistConfirmedSubmission, sanitizeJobDescriptionSnapshot } from '../apply/confirmed'
 import { getServerConfig } from '../config'
 import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
-import { runV2Application } from './agent'
-import { isV2BrowserAvailable, launchV2Browser } from './browser'
-import { loadV2Profile } from './profile'
-import { getV2Run, listV2Runs, v2QueueDepth } from './queue'
+import { runV2Application, type V2AgentResult } from './agent'
+import { isV2BrowserAvailable, launchV2Browser, type V2BrowserHandle } from './browser'
+import { isV2Error } from './errors'
+import { logV2 } from './log'
+import { requireV2Profile } from './profile'
+import { getV2Run, listV2Runs, updateV2Run, v2QueueDepth } from './queue'
 import { loadV2Resume } from './resume'
 import { createV2Session, updateV2Session } from './session'
-import type { V2QueueItem, V2RunStatus } from './types'
+import type { V2QueueItem, V2Resume, V2RunStatus } from './types'
 import { V2_TERMINAL_STATUSES } from './types'
 
 const V2_HEARTBEAT_FILE = 'autoapply-v2-heartbeat.json'
@@ -51,7 +54,7 @@ export function startV2Worker(intervalMs = 1500): void {
   workerTimer = setInterval(() => {
     touchV2Heartbeat()
     void processV2QueueOnce().catch((error) => {
-      console.error('[V2] worker error', error instanceof Error ? error.message : error)
+      console.error('[AutoApplyV2] worker error', error instanceof Error ? error.message : error)
     })
   }, intervalMs)
   workerTimer.unref?.()
@@ -94,8 +97,14 @@ export async function processV2QueueOnce(): Promise<V2QueueItem | null> {
   }
 }
 
+function stopV2Run(runId: string, status: V2RunStatus, failureReason: string): V2QueueItem | null {
+  updateV2Run(runId, { status, failureReason })
+  updateV2Session(runId, { state: status })
+  logV2('RUN_STOPPED', { status, reason: failureReason.split(':')[0] })
+  return getV2Run(runId)
+}
+
 async function processV2Run(runId: string): Promise<V2QueueItem | null> {
-  const { updateV2Run } = await import('./queue')
   const run = getV2Run(runId)
   if (!run) return null
   createV2Session({
@@ -105,78 +114,88 @@ async function processV2Run(runId: string): Promise<V2QueueItem | null> {
     resumeVersionId: run.resumeVersionId,
   })
 
-  const { profile, profileReady, missing } = await loadV2Profile(run.userId)
-  if (!profileReady) {
-    const failureReason = `PROFILE_INCOMPLETE: missing ${missing.join(',')}`
-    updateV2Run(runId, { status: 'needs_user_input', failureReason })
-    updateV2Session(runId, { state: 'needs_user_input' })
-    return getV2Run(runId)
+  let profile
+  try {
+    profile = await requireV2Profile(run.userId)
+  } catch (error) {
+    const missing = isV2Error(error) && error.missingFields?.length ? error.missingFields.join(',') : 'profile'
+    return stopV2Run(runId, 'needs_user_input', `PROFILE_INCOMPLETE: missing ${missing}`)
   }
 
-  let resume
+  let resume: V2Resume
   try {
-    resume = await loadV2Resume(run.userId)
+    resume = await loadV2Resume(run.userId, run.resumeVersionId)
   } catch (error) {
-    const failureReason = `RESUME_NOT_FOUND: ${error instanceof Error ? error.message : 'resume unavailable.'}`
-    updateV2Run(runId, { status: 'failed', failureReason })
-    updateV2Session(runId, { state: 'failed' })
-    return getV2Run(runId)
+    return stopV2Run(runId, 'failed', `RESUME_NOT_FOUND: ${error instanceof Error ? error.message : 'resume unavailable.'}`)
   }
 
-  const handle = await launchV2Browser(true)
+  let handle: V2BrowserHandle
   try {
-    const result = await runV2Application({ run, profile, resume, page: handle.page })
-    updateV2Run(runId, {
-      status: result.status,
-      failureReason: result.failureReason,
-      pageState: result.pageState,
-      provider: result.provider,
-      finalUrl: result.finalUrl,
-      redirectChain: result.redirectChain,
-      fieldsDetected: result.fieldsDetected,
-      fieldsFilled: result.fieldsFilled,
-      resumeUploaded: result.resumeUploaded,
-      submitClicked: result.submitClicked,
-      confirmationNumber: result.confirmation?.confirmationNumber ?? null,
-      confirmationText: result.confirmation?.confirmationText ?? null,
-      confirmationEvidence: result.confirmation?.evidence ?? [],
-      submittedAt: result.status === 'submitted' ? new Date().toISOString() : null,
-    })
-    updateV2Session(runId, { state: result.status, currentUrl: result.finalUrl })
-    if (result.status === 'submitted' && result.confirmation?.confirmed) {
-      await persistV2Application(getV2Run(runId) ?? run)
-      console.log('[V2] APPLICATION_PERSISTED')
-    }
-    return getV2Run(runId)
+    handle = await launchV2Browser(true)
   } catch (error) {
-    const failureReason = `SUBMISSION_FAILED: ${error instanceof Error ? error.message : 'worker crashed.'}`
-    updateV2Run(runId, { status: 'failed', failureReason })
-    updateV2Session(runId, { state: 'failed' })
-    return getV2Run(runId)
-  } finally {
+    return stopV2Run(runId, 'failed', `BROWSER_UNAVAILABLE: ${error instanceof Error ? error.message : 'Chromium could not start.'}`)
+  }
+  let result: V2AgentResult
+  try {
+    result = await runV2Application({ run, profile, resume, page: handle.page })
+  } catch (error) {
     await handle.close().catch(() => null)
+    const submitted = getV2Run(runId)?.submitClicked === true
+    return stopV2Run(
+      runId,
+      submitted ? 'submission_uncertain' : 'failed',
+      `${submitted ? 'SUBMISSION_UNCERTAIN' : 'SUBMISSION_FAILED'}: ${error instanceof Error ? error.message : 'worker crashed.'}`,
+    )
   }
+  await handle.close().catch(() => null)
+  updateV2Run(runId, {
+    status: result.status,
+    failureReason: result.failureReason,
+    pageState: result.pageState,
+    provider: result.provider,
+    finalUrl: result.finalUrl,
+    redirectChain: result.redirectChain,
+    fieldsDetected: result.fieldsDetected,
+    fieldsFilled: result.fieldsFilled,
+    resumeUploaded: result.resumeUploaded,
+    submitClicked: result.submitClicked,
+    confirmationNumber: result.confirmation?.confirmationNumber ?? null,
+    confirmationText: result.confirmation?.confirmationText ?? null,
+    confirmationEvidence: result.confirmation?.evidence ?? [],
+    submittedAt: result.status === 'submitted' ? new Date().toISOString() : null,
+  })
+  updateV2Session(runId, { state: result.status, currentUrl: result.finalUrl })
+  if (result.status === 'submitted' && result.confirmation?.confirmed) {
+    const record = await persistV2Application(getV2Run(runId) ?? run, resume)
+    logV2('APPLICATION_PERSISTED', { runId, recorded: Boolean(record) })
+  }
+  return getV2Run(runId)
 }
 
-export async function persistV2Application(run: V2QueueItem) {
+export async function persistV2Application(run: V2QueueItem, resume: V2Resume | null) {
   if (run.status !== 'submitted') return null
   const now = run.submittedAt ?? new Date().toISOString()
+  const applicationRecordId = run.applicationRecordId ?? randomUUID()
+  const persistedJobId = run.persistedJobId ?? randomUUID()
+  const submittedResumeText = resume?.text?.trim() ? resume.text : null
+  const submittedResumeVersionId = submittedResumeText ? (run.submittedResumeVersionId ?? randomUUID()) : null
+  updateV2Run(run.runId, { applicationRecordId, persistedJobId, submittedResumeVersionId, submittedResumeText })
   const item: AutoApplyQueueItem = {
     id: run.runId,
     runId: run.runId,
-    jobId: run.jobId,
-    applicationId: run.jobId,
+    jobId: persistedJobId,
+    applicationId: applicationRecordId,
     title: run.title,
     company: run.company,
     location: run.location,
-    applicationUrl: run.finalUrl ?? run.applicationUrl,
+    applicationUrl: run.applicationUrl,
     finalApplicationUrl: run.finalUrl ?? run.applicationUrl,
-    resumeVersionId: run.resumeVersionId,
-    resumeVersionName: run.resumeVersionName,
+    resumeVersionId: submittedResumeVersionId,
+    resumeVersionName: `Submitted — ${run.title}`,
     sourceResumeId: run.resumeVersionId,
-    initialMatchScore: 0,
-    finalMatchScore: 0,
-    tailoredResumeText: null,
+    initialMatchScore: null,
+    finalMatchScore: null,
+    tailoredResumeText: submittedResumeText,
     jobDescriptionSnapshot: sanitizeJobDescriptionSnapshot(run.jdSnapshot),
     questions: [],
     c2cStatus: 'unknown',

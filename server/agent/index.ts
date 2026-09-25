@@ -1,5 +1,11 @@
 export { startCampaign, tickCampaign, pauseCampaign, resumeCampaign, cancelCampaign, resumeIntervention } from './agent'
-export { startExecutionCampaign, processExecutionCampaign, logExecution } from './campaign'
+export {
+  startSyntheticSliceCampaign,
+  processExecutionCampaign,
+  logExecution,
+  isLegacySyntheticRun,
+  retireLegacySyntheticRuns,
+} from './campaign'
 export {
   isAutoApplySmokeTestEnabled,
   startSmokeTestCampaign,

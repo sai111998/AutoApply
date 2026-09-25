@@ -27,7 +27,7 @@ import {
   submitQueueItem,
 } from './apply/engine'
 import { startCampaign, pauseCampaign, resumeCampaign } from './agent'
-import { startExecutionCampaign } from './agent/campaign'
+import { isLegacySyntheticRun } from './agent/campaign'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
 import { publicAutomationHealth, type AutomationHealth } from './apply/health'
@@ -48,13 +48,18 @@ import { getBrowserWorker } from './browser-worker/worker'
 import { readAutomationHeartbeats } from './automation/heartbeat'
 import {
   getApplicationProfileAvailability,
-  getCandidateApplicationProfileAsync,
+  getCandidateApplicationProfile,
 } from './application/candidate-profile'
-import { startV2AutoApply } from './autoapply-v2/agent'
-import { isV2Error } from './autoapply-v2/errors'
+import { startV2AutoApply, startV2AutoApplyCampaign, toAutoApplyRunResult } from './autoapply-v2/campaign'
+import { isV2Error, V2Error, v2ErrorBody } from './autoapply-v2/errors'
+import { cancelV2Run, getV2Run, listV2RunsForUser } from './autoapply-v2/queue'
 import { v2Health } from './autoapply-v2/worker'
 
 function sendApplyError(res: Response, error: unknown, fallback: string) {
+  if (isV2Error(error)) {
+    res.status(error.status).json(v2ErrorBody(error))
+    return
+  }
   if (isApplyError(error)) {
     logApplyEvent('apply-error', { code: error.code, error, ...error.details })
     res.status(error.status).json(applyErrorBody(error))
@@ -200,7 +205,7 @@ export function createApp(options: AppOptions): Express {
     }
   })
 
-  app.post('/api/autoapply-v2/start', async (req: Request, res: Response) => {
+  const startOneJob = async (req: Request, res: Response) => {
     try {
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
       const headerUserId = req.header('x-jobpilot-user-id')?.trim() ?? ''
@@ -216,13 +221,11 @@ export function createApp(options: AppOptions): Express {
       const started = await startV2AutoApply({ userId, jobId })
       res.json({ success: true, runId: started.runId, status: started.status })
     } catch (error) {
-      if (isV2Error(error)) {
-        res.status(error.status).json({ success: false, code: error.code, error: error.message })
-        return
-      }
       sendApplyError(res, error, 'Could not start Auto Apply V2.')
     }
-  })
+  }
+  app.post('/api/autoapply-v2/start', startOneJob)
+  app.post('/api/autoapply-v2/start-one', startOneJob)
 
   app.get('/api/autoapply-v2/profile-check', async (req: Request, res: Response) => {
     try {
@@ -233,8 +236,9 @@ export function createApp(options: AppOptions): Express {
         res.status(401).json({ success: false, error: 'Authentication required.' })
         return
       }
-      const profile = await getCandidateApplicationProfileAsync(userId, options.config)
-      res.json(getApplicationProfileAvailability(profile))
+      const profile = await getCandidateApplicationProfile(userId, options.config)
+      const { firstName, lastName, email, phone } = getApplicationProfileAvailability(profile)
+      res.json({ firstName, lastName, email, phone })
     } catch (error) {
       sendApplyError(res, error, 'Could not check the application profile.')
     }
@@ -290,8 +294,7 @@ export function createApp(options: AppOptions): Express {
         res.json({ run: started.run, items: started.items, campaignId: started.run.id, status: started.run.status })
         return
       }
-      const started = await startExecutionCampaign(options.config, request)
-      res.json({ campaignId: started.campaignId, status: started.status, run: started.run, items: started.items })
+      res.json(await startV2AutoApplyCampaign(request))
     } catch (error) {
       sendApplyError(res, error, 'Could not start Auto Apply.')
     }
@@ -301,7 +304,9 @@ export function createApp(options: AppOptions): Express {
     try {
       const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
       if (!userId) throw new HttpError(400, 'userId is required')
-      res.json({ runs: await listAutoApplyRuns(userId, {}, options.config) })
+      const legacyRuns = (await listAutoApplyRuns(userId, {}, options.config)).filter((entry) => !isLegacySyntheticRun(entry))
+      const v2Runs = listV2RunsForUser(userId).map(toAutoApplyRunResult)
+      res.json({ runs: [...v2Runs, ...legacyRuns].sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt)) })
     } catch (error) {
       sendApplyError(res, error, 'Could not load Auto Apply.')
     }
@@ -310,6 +315,11 @@ export function createApp(options: AppOptions): Express {
   app.get('/api/jobs/auto-apply/:runId', async (req: Request, res: Response) => {
     try {
       const runId = routeParam(req.params.runId)
+      const v2Run = getV2Run(runId)
+      if (v2Run) {
+        res.json(toAutoApplyRunResult(v2Run))
+        return
+      }
       const current = await getAutoApplyRun(runId, {}, options.config)
       if (!current) {
         res.status(404).json({ success: false, code: 'APPLICATION_NOT_FOUND', error: 'Auto Apply run was not found.', message: 'Auto Apply run was not found.' })
@@ -321,8 +331,13 @@ export function createApp(options: AppOptions): Express {
     }
   })
 
+  const rejectV2RunAction = (runId: string, message: string) => {
+    if (getV2Run(runId)) throw new V2Error('ACTION_UNSUPPORTED', message, 409)
+  }
+
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/apply', async (req: Request, res: Response) => {
     try {
+      rejectV2RunAction(routeParam(req.params.runId), 'Auto Apply V2 prepares and submits applications on the server.')
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
       const result = await prepareQueueItem(
         routeParam(req.params.runId),
@@ -355,6 +370,7 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/submit', async (req: Request, res: Response) => {
     try {
+      rejectV2RunAction(routeParam(req.params.runId), 'Auto Apply V2 submits only after verifying the final application step.')
       const result = await submitQueueItem(routeParam(req.params.runId), routeParam(req.params.itemId), {}, options.config)
       res.json(result)
     } catch (error) {
@@ -364,7 +380,12 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/skip', async (req: Request, res: Response) => {
     try {
-      const result = await skipQueueItem(routeParam(req.params.runId), routeParam(req.params.itemId), {}, options.config)
+      const runId = routeParam(req.params.runId)
+      if (getV2Run(runId)) {
+        res.json(toAutoApplyRunResult(cancelV2Run(runId)))
+        return
+      }
+      const result = await skipQueueItem(runId, routeParam(req.params.itemId), {}, options.config)
       res.json(result)
     } catch (error) {
       sendApplyError(res, error, 'Could not skip the application.')
@@ -373,7 +394,12 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/cancel', async (req: Request, res: Response) => {
     try {
-      const result = await cancelQueueItem(routeParam(req.params.runId), routeParam(req.params.itemId), {}, options.config)
+      const runId = routeParam(req.params.runId)
+      if (getV2Run(runId)) {
+        res.json(toAutoApplyRunResult(cancelV2Run(runId)))
+        return
+      }
+      const result = await cancelQueueItem(runId, routeParam(req.params.itemId), {}, options.config)
       res.json(result)
     } catch (error) {
       sendApplyError(res, error, 'Could not cancel the application.')
@@ -382,6 +408,7 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/items/:itemId/answer', async (req: Request, res: Response) => {
     try {
+      rejectV2RunAction(routeParam(req.params.runId), 'Answering application questions is not available for Auto Apply V2 yet.')
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
       const answers = Array.isArray(body.answers) ? body.answers : []
       const result = await answerQueueItem(
@@ -402,6 +429,7 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/pause', async (req: Request, res: Response) => {
     try {
+      rejectV2RunAction(routeParam(req.params.runId), 'Auto Apply V2 processes one job at a time and cannot be paused. Use Cancel instead.')
       const result = await pauseCampaign(routeParam(req.params.runId))
       res.json(result)
     } catch (error) {
@@ -411,6 +439,7 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/resume', async (req: Request, res: Response) => {
     try {
+      rejectV2RunAction(routeParam(req.params.runId), 'Auto Apply V2 runs cannot be resumed. Start Auto Apply again.')
       const result = await resumeCampaign(routeParam(req.params.runId))
       res.json(result)
     } catch (error) {
@@ -420,7 +449,12 @@ export function createApp(options: AppOptions): Express {
 
   app.post('/api/jobs/auto-apply/:runId/cancel', async (req: Request, res: Response) => {
     try {
-      const result = await cancelRun(routeParam(req.params.runId), {}, options.config)
+      const runId = routeParam(req.params.runId)
+      if (getV2Run(runId)) {
+        res.json(toAutoApplyRunResult(cancelV2Run(runId)))
+        return
+      }
+      const result = await cancelRun(runId, {}, options.config)
       res.json(result)
     } catch (error) {
       sendApplyError(res, error, 'Could not cancel Auto Apply.')

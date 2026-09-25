@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { mkdtempSync } from 'node:fs'
 import { JAVA_RESUME_TEXT } from '../tailor/fixtures'
-import { startExecutionCampaign, SYNTHETIC_SLICE_CONFIRMATION, SYNTHETIC_SLICE_TITLE } from './campaign'
+import { startSyntheticSliceCampaign, SYNTHETIC_SLICE_CONFIRMATION, SYNTHETIC_SLICE_TITLE } from './campaign'
 import { resetAgentForTests } from './index'
 import { createBrowserWorker, resetBrowserWorkerForTests } from '../browser-worker/worker'
 import { startSyntheticEmployer } from '../browser-worker/synthetic'
@@ -60,7 +60,7 @@ describe('synthetic Auto Apply vertical slice', () => {
     const worker = await createBrowserWorker({ headless: true, userDataDir: profileDir })
     await worker.start()
     try {
-      const started = await startExecutionCampaign(
+      const started = await startSyntheticSliceCampaign(
         { ...config, port: site.port },
         {
           userId: 'slice-user',
@@ -126,7 +126,7 @@ describe('synthetic Auto Apply vertical slice', () => {
     const worker = await createBrowserWorker({ headless: true, userDataDir: profileDir })
     await worker.start()
     try {
-      const started = await startExecutionCampaign(
+      const started = await startSyntheticSliceCampaign(
         { ...config, port: site.port, supabaseUrl: 'https://project.supabase.co', supabaseServiceRoleKey: 'service-role-test' },
         {
           userId,

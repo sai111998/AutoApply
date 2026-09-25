@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runExecutionBrowser } from '../browser-worker/browser'
 import { getCandidateProfile, resetCandidateStoreForTests, saveCandidateProfile } from '../application/candidate-store'
 import { resetConfirmedApplicationsForTests } from '../apply/confirmed'
+import { emptyCounts } from '../apply/counts'
 import { defaultAutoApplyConfig } from '../apply/engine'
 import { clearAutoApplyMemory } from '../apply/store'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyStartInput } from '../apply/types'
 import type { ServerConfig } from '../config'
-import { startExecutionCampaign } from './campaign'
+import { memoryStore } from '../apply/store'
+import { retireLegacySyntheticRuns, startSyntheticSliceCampaign } from './campaign'
 import { resetAgentForTests } from './index'
+import { createCampaignRecord, getCampaign } from './state'
 
 const USER_ID = '11111111-1111-4111-8111-111111111111'
 
@@ -106,7 +109,48 @@ afterEach(async () => {
   clearAutoApplyMemory()
 })
 
-describe('Auto Apply button path profile source', () => {
+describe('stale legacy synthetic runs', () => {
+  it('cancels active Test Employer runs and their campaigns without touching real-job runs', async () => {
+    const now = '2026-09-24T00:00:00.000Z'
+    const legacyRun = (id: string, status: 'running' | 'needs_attention') => ({
+      id,
+      userId: USER_ID,
+      status,
+      config: defaultAutoApplyConfig({ maxJobs: 1, includeSynthetic: true }),
+      counts: emptyCounts(),
+      createdAt: now,
+      updatedAt: now,
+    })
+    await memoryStore.save(legacyRun('legacy-synthetic', 'needs_attention'), [
+      { ...syntheticItem(), id: 'item-synthetic', runId: 'legacy-synthetic', applicationStatus: 'needs_user_input' },
+    ])
+    await memoryStore.save(legacyRun('legacy-real', 'running'), [
+      {
+        ...syntheticItem(),
+        id: 'item-real',
+        runId: 'legacy-real',
+        identityKey: 'live:real-1',
+        applicationUrl: 'https://jobs.example.com/real-1/apply',
+      },
+    ])
+    createCampaignRecord({
+      runId: 'legacy-synthetic',
+      userId: USER_ID,
+      status: 'needs_attention',
+      startInput: startInput(oneWordNameNoPhone),
+      serverConfig: { ...config, supabaseUrl: '', supabaseServiceRoleKey: '' },
+    })
+
+    expect(await retireLegacySyntheticRuns()).toBe(1)
+    const synthetic = await memoryStore.get('legacy-synthetic')
+    expect(synthetic?.run.status).toBe('cancelled')
+    expect(synthetic?.items[0].applicationStatus).toBe('cancelled')
+    expect(getCampaign('legacy-synthetic')?.status).toBe('cancelled')
+    expect((await memoryStore.get('legacy-real'))?.run.status).toBe('running')
+  })
+})
+
+describe('legacy synthetic slice profile source (development only)', () => {
   it('reports MISSING_PROFILE_FIELD:last_name,phone for a one-word name without phone', async () => {
     saveCandidateProfile({ userId: USER_ID, profile: oneWordNameNoPhone, resumeText: 'Java resume', resumeVersionId: 'resume-1' })
     const result = await runExecutionBrowser({ item: syntheticItem(), userId: USER_ID, playwrightAvailable: false })
@@ -116,7 +160,7 @@ describe('Auto Apply button path profile source', () => {
 
   it('uses the last name and phone saved in Supabase profiles when the browser payload lacks them', async () => {
     stubSupabaseProfilesRow({ id: USER_ID, full_name: 'Jordan Hale', email: 'jordan.hale@example.com', phone: '5125550100' })
-    await startExecutionCampaign(config, startInput(oneWordNameNoPhone))
+    await startSyntheticSliceCampaign(config, startInput(oneWordNameNoPhone))
     expect(getCandidateProfile(USER_ID)?.profile).toMatchObject({ fullName: 'Jordan Hale', phone: '5125550100' })
     const result = await runExecutionBrowser({ item: syntheticItem(), userId: USER_ID, playwrightAvailable: false })
     expect(result.failureReason).toBe('BROWSER_UNAVAILABLE')
@@ -124,7 +168,7 @@ describe('Auto Apply button path profile source', () => {
 
   it('still reports phone missing when Supabase has no phone either', async () => {
     stubSupabaseProfilesRow({ id: USER_ID, full_name: 'Jordan Hale', email: 'jordan.hale@example.com' })
-    await startExecutionCampaign(config, startInput(oneWordNameNoPhone))
+    await startSyntheticSliceCampaign(config, startInput(oneWordNameNoPhone))
     const result = await runExecutionBrowser({ item: syntheticItem(), userId: USER_ID, playwrightAvailable: false })
     expect(result.executionState).toBe('needs_user_input')
     expect(result.failureReason).toBe('MISSING_PROFILE_FIELD:phone')

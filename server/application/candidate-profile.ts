@@ -17,7 +17,7 @@ export interface CanonicalCandidateProfile {
   linkedin: string
   github: string
   workAuthorization: string | null
-  sponsorshipRequired: boolean
+  sponsorship: boolean
 }
 
 function asText(value: unknown): string {
@@ -41,13 +41,15 @@ export function normalizeStoredCandidate(
   record: Record<string, unknown> | null | undefined,
 ): Omit<CanonicalCandidateProfile, 'userId'> {
   const source = record ?? {}
-  const fullName = pickText(source, ['fullName', 'full_name', 'name'])
-  const split = splitCandidateName(fullName)
-  const sponsorshipRaw = source.sponsorshipRequired ?? source.sponsorship_required ?? source.sponsorship
+  const storedFullName = pickText(source, ['fullName', 'full_name', 'name'])
+  const split = splitCandidateName(storedFullName)
+  const firstName = pickText(source, ['firstName', 'first_name']) || split.firstName
+  const lastName = pickText(source, ['lastName', 'last_name']) || split.lastName
+  const sponsorshipRaw = source.sponsorship ?? source.sponsorshipRequired ?? source.sponsorship_required
   return {
-    firstName: pickText(source, ['firstName', 'first_name']) || split.firstName,
-    lastName: pickText(source, ['lastName', 'last_name']) || split.lastName,
-    fullName,
+    firstName,
+    lastName,
+    fullName: storedFullName || [firstName, lastName].filter(Boolean).join(' '),
     email: pickText(source, ['email']),
     phone: pickText(source, ['phone', 'phoneNumber', 'phone_number']),
     address: pickText(source, ['address', 'addressLine1', 'address_line1', 'street']),
@@ -58,24 +60,15 @@ export function normalizeStoredCandidate(
     linkedin: pickText(source, ['linkedin', 'linkedIn', 'linked_in']),
     github: pickText(source, ['github', 'gitHub']),
     workAuthorization: pickText(source, ['workAuthorization', 'work_authorization']) || null,
-    sponsorshipRequired: sponsorshipRaw === true,
-  }
-}
-
-export function getCandidateApplicationProfile(userId: string): CanonicalCandidateProfile | null {
-  const id = userId.trim()
-  if (!id) return null
-  const stored = getCandidateProfile(id)
-  if (!stored || stored.userId !== id) return null
-  return {
-    userId: stored.userId,
-    ...normalizeStoredCandidate(stored.profile as unknown as Record<string, unknown>),
+    sponsorship: sponsorshipRaw === true,
   }
 }
 
 export interface SupabaseProfileRow {
   id?: string
   full_name?: string | null
+  first_name?: string | null
+  last_name?: string | null
   email?: string | null
   phone?: string | null
   location?: string | null
@@ -98,7 +91,7 @@ export async function fetchSupabaseProfileRow(
     const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
-    // '*' keeps name/email readable on databases that predate the phone column (migration 012).
+    // '*' keeps the read working on databases that predate the application profile columns (migration 011).
     const { data, error } = await supabase.from('profiles').select('*').eq('id', id).maybeSingle()
     if (error || !data) return null
     return data as SupabaseProfileRow
@@ -107,69 +100,18 @@ export async function fetchSupabaseProfileRow(
   }
 }
 
-function hasCandidateLastName(fullName: string): boolean {
-  return splitCandidateName(fullName).lastName !== ''
-}
-
-function overlaySupabaseRow(
-  base: Omit<CanonicalCandidateProfile, 'userId'>,
-  row: SupabaseProfileRow | null,
-): Omit<CanonicalCandidateProfile, 'userId'> {
-  if (!row) return base
-  const overlay = normalizeStoredCandidate(row as unknown as Record<string, unknown>)
-  const merged: Omit<CanonicalCandidateProfile, 'userId'> = { ...base }
-  if (overlay.fullName && (hasCandidateLastName(overlay.fullName) || !base.lastName)) {
-    merged.fullName = overlay.fullName
-    merged.firstName = overlay.firstName
-    merged.lastName = overlay.lastName
-  }
-  const textKeys = [
-    'email',
-    'phone',
-    'address',
-    'city',
-    'state',
-    'zip',
-    'country',
-    'linkedin',
-    'github',
-  ] as const
-  for (const key of textKeys) {
-    if (overlay[key]) merged[key] = overlay[key]
-  }
-  if (overlay.workAuthorization) merged.workAuthorization = overlay.workAuthorization
-  if (row.sponsorship_required === true || row.sponsorship_required === false) {
-    merged.sponsorshipRequired = row.sponsorship_required
-  }
-  return merged
-}
-
-export async function getCandidateApplicationProfileAsync(
+export async function getCandidateApplicationProfile(
   userId: string,
   config?: ServerConfig,
 ): Promise<CanonicalCandidateProfile | null> {
   const id = userId.trim()
-  if (!id) return null
-  const stored = getCandidateApplicationProfile(id)
   const row = await fetchSupabaseProfileRow(id, config)
-  if (!stored && !row) return null
-  const base: Omit<CanonicalCandidateProfile, 'userId'> = stored ?? {
-    firstName: '',
-    lastName: '',
-    fullName: '',
-    email: '',
-    phone: '',
-    address: '',
-    city: '',
-    state: '',
-    zip: '',
-    country: '',
-    linkedin: '',
-    github: '',
-    workAuthorization: null,
-    sponsorshipRequired: false,
-  }
-  return { userId: id, ...overlaySupabaseRow(base, row) }
+  if (!row) return null
+  return { userId: id, ...normalizeStoredCandidate(row as unknown as Record<string, unknown>) }
+}
+
+function hasCandidateLastName(fullName: string): boolean {
+  return splitCandidateName(fullName).lastName !== ''
 }
 
 export async function hydrateCandidateStoreFromSupabase(
@@ -180,9 +122,10 @@ export async function hydrateCandidateStoreFromSupabase(
   if (!id) return false
   const row = await fetchSupabaseProfileRow(id, config)
   if (!row) return false
+  const canonical = normalizeStoredCandidate(row as unknown as Record<string, unknown>)
   const existing = getCandidateProfile(id)
   const profile = existing?.profile
-  const rowName = row.full_name?.trim() ?? ''
+  const rowName = [canonical.firstName, canonical.lastName].filter(Boolean).join(' ')
   const storedName = profile?.fullName?.trim() ?? ''
   const fullName =
     rowName && (hasCandidateLastName(rowName) || !hasCandidateLastName(storedName)) ? rowName : storedName
@@ -191,11 +134,11 @@ export async function hydrateCandidateStoreFromSupabase(
     userId: id,
     profile: {
       fullName,
-      email: row.email?.trim() || profile?.email || '',
-      phone: row.phone?.trim() || profile?.phone || null,
+      email: canonical.email || profile?.email || '',
+      phone: canonical.phone || profile?.phone || null,
       location: row.location?.trim() || profile?.location || '',
       yearsOfExperience: profile?.yearsOfExperience ?? null,
-      workAuthorization: row.work_authorization?.trim() || profile?.workAuthorization || null,
+      workAuthorization: canonical.workAuthorization || profile?.workAuthorization || null,
       sponsorshipRequired:
         row.sponsorship_required === true || row.sponsorship_required === false
           ? row.sponsorship_required

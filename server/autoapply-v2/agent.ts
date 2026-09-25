@@ -1,64 +1,21 @@
 import type { Page } from 'playwright'
-import { randomUUID } from 'node:crypto'
 import type { CanonicalCandidateProfile } from '../application/candidate-profile'
-import { loadV2Job } from './application'
-import { V2Error } from './errors'
-import { loadV2Profile } from './profile'
-import { createV2Run, updateV2Run } from './queue'
-import { loadV2Resume } from './resume'
+import { updateV2Run } from './queue'
 import { updateV2Session } from './session'
 import { detectV2Confirmation, type V2ConfirmationInput } from './confirmation'
 import { detectV2Fields, fillV2Fields, mapV2Fields } from './fields'
-import { clickV2Apply, findV2ApplyControl, clickV2ApplyManual, findV2ApplyManualControl, clickV2Next, findV2NextControl, findV2SubmitControl } from './navigation'
+import { logV2 } from './log'
+import {
+  clickV2Apply,
+  findV2ApplyControl,
+  clickV2ApplyManual,
+  findV2ApplyManualControl,
+  clickV2Next,
+  findV2NextControl,
+  findV2SubmitControl,
+} from './navigation'
 import { clickV2Submit } from './submission'
 import type { V2Confirmation, V2PageState, V2Provider, V2QueueItem, V2Resume, V2RunStatus } from './types'
-
-export async function startV2AutoApply(input: {
-  userId: string
-  jobId: string
-}): Promise<{ runId: string; status: 'queued' }> {
-  if (!input.userId?.trim()) throw new V2Error('PROFILE_INCOMPLETE', 'Authentication required.', 401)
-  if (!input.jobId?.trim()) throw new V2Error('JOB_NOT_FOUND', 'jobId is required.', 400)
-  const job = loadV2Job(input.userId, input.jobId)
-  const { profileReady, missing } = await loadV2Profile(input.userId)
-  if (!profileReady) {
-    throw new V2Error('PROFILE_INCOMPLETE', `Profile incomplete, missing: ${missing.join(', ')}.`, 422)
-  }
-  const resume = await loadV2Resume(input.userId)
-  const now = new Date().toISOString()
-  const runId = randomUUID()
-  createV2Run({
-    runId,
-    jobId: job.id,
-    title: job.title,
-    company: job.company,
-    location: job.location,
-    applicationUrl: job.applicationUrl,
-    initialUrl: null,
-    finalUrl: null,
-    redirectChain: [],
-    resumeVersionId: resume.versionId,
-    resumeVersionName: resume.versionName,
-    userId: input.userId,
-    status: 'queued',
-    failureReason: null,
-    pageState: null,
-    provider: null,
-    fieldsDetected: [],
-    fieldsFilled: [],
-    resumeUploaded: false,
-    submitClicked: false,
-    confirmationNumber: null,
-    confirmationText: null,
-    confirmationEvidence: [],
-    submittedAt: null,
-    jdSnapshot: job.description,
-    createdAt: now,
-    updatedAt: now,
-  })
-  console.log(`[V2] RUN_QUEUED runId=${runId} jobId=${job.id}`)
-  return { runId, status: 'queued' }
-}
 
 export interface V2AgentResult {
   status: V2RunStatus
@@ -219,29 +176,42 @@ export async function runV2Application(input: {
   const fieldsFilled = new Set<string>()
   let resumeUploaded = false
   let submitClicked = false
+  let provider: V2Provider = 'unknown'
+  let snapshot: V2PageSnapshot = { url: run.applicationUrl, title: '', html: '', bodyText: '' }
 
   const track = (status: V2RunStatus) => {
     updateV2Run(run.runId, { status })
     updateV2Session(run.runId, { state: status, currentUrl: page.url() })
   }
 
+  const followNavigation = async (waitMs: number) => {
+    await settleV2Page(page, waitMs)
+    snapshot = await snapshotV2Page(page)
+    if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
+    updateV2Run(run.runId, { finalUrl: snapshot.url, redirectChain: [...redirectChain] })
+    updateV2Session(run.runId, { currentUrl: snapshot.url })
+  }
+
   track('opening')
   try {
     await page.goto(run.applicationUrl, { waitUntil: 'domcontentloaded', timeout: 16000 })
-  } catch {
-    return fail('APPLICATION_PAGE_NOT_FOUND', 'The employer application page could not be opened.')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split('\n')[0] : 'navigation failed'
+    return fail('APPLICATION_NOT_REACHABLE', `The application URL could not be opened (${detail}).`)
   }
   await settleV2Page(page)
-  let snapshot = await snapshotV2Page(page)
+  snapshot = await snapshotV2Page(page)
   if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
   updateV2Run(run.runId, { initialUrl: snapshot.url, finalUrl: snapshot.url, redirectChain: [...redirectChain] })
-  const provider = detectV2Provider(snapshot.url, snapshot.html)
+  logV2('APPLICATION_URL_OPENED', { url: snapshot.url })
+  provider = detectV2Provider(snapshot.url, snapshot.html)
   updateV2Run(run.runId, { provider })
   updateV2Session(run.runId, { provider, currentUrl: snapshot.url })
-  console.log(`[V2] JOB_PAGE_OPENED provider=${provider} url=${snapshot.url}`)
+  logV2('PROVIDER_DETECTED', { provider })
 
   let unknownRetries = 0
   let applyClicks = 0
+  let classifiedInitialPage = false
   for (;;) {
     const fields = await detectV2Fields(page).catch(() => [])
     const hasPassword = fields.some((field) => field.type === 'password')
@@ -255,41 +225,39 @@ export async function runV2Application(input: {
       hasFileInput,
     })
     updateV2Run(run.runId, { pageState })
+    if (!classifiedInitialPage && (pageState !== 'UNKNOWN' || unknownRetries >= 4)) {
+      logV2('INITIAL_PAGE_CLASSIFIED', { pageState, fields: fields.length })
+      classifiedInitialPage = true
+    }
     if (pageState === 'CAPTCHA_PAGE') return terminal('captcha_required', 'CAPTCHA_REQUIRED', null, pageState)
     if (pageState === 'LOGIN_PAGE') return terminal('login_required', 'LOGIN_REQUIRED', null, pageState)
     if (pageState === 'MFA_PAGE') return terminal('mfa_required', 'MFA_REQUIRED', null, pageState)
-    if (pageState === 'ERROR_PAGE') return fail('APPLICATION_PAGE_NOT_FOUND', 'The employer page reported an error.')
+    if (pageState === 'ERROR_PAGE') {
+      return fail('APPLICATION_NOT_REACHABLE', 'The employer page reported an error or access denial.')
+    }
     if (pageState === 'APPLICATION_PAGE') break
     if (pageState === 'JOB_PAGE' && hasApply && applyClicks < 3) {
-      console.log('[V2] APPLY_ACTION_FOUND')
+      logV2('APPLY_ACTION_FOUND', { control: 'apply' })
       track('opening')
       const clicked = await clickV2Apply(page)
-      if (!clicked) return fail('FORM_NOT_FOUND', 'The Apply control could not be clicked.')
+      if (!clicked) return fail('APPLICATION_UNSUPPORTED', 'The Apply control was found but could not be clicked.')
       applyClicks += 1
       unknownRetries = 0
-      console.log('[V2] APPLY_ACTION_CLICKED')
-      await settleV2Page(page, 2200)
-      snapshot = await snapshotV2Page(page)
-      if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
-      updateV2Run(run.runId, { finalUrl: snapshot.url, redirectChain: [...redirectChain] })
-      updateV2Session(run.runId, { currentUrl: snapshot.url })
+      logV2('APPLY_ACTION_CLICKED', { control: 'apply' })
+      await followNavigation(2200)
       continue
     }
     const hasApplyManual =
       fields.length === 0 && !hasFileInput && applyClicks < 3 ? await findV2ApplyManualControl(page) : false
     if ((pageState === 'JOB_PAGE' || pageState === 'UNKNOWN') && !hasApply && hasApplyManual) {
-      console.log('[V2] APPLY_ACTION_FOUND')
+      logV2('APPLY_ACTION_FOUND', { control: 'apply-manually' })
       track('opening')
       const clicked = await clickV2ApplyManual(page)
-      if (!clicked) return fail('FORM_NOT_FOUND', 'The Apply Manually control could not be clicked.')
+      if (!clicked) return fail('APPLICATION_UNSUPPORTED', 'The Apply Manually control could not be clicked.')
       applyClicks += 1
       unknownRetries = 0
-      console.log('[V2] APPLY_ACTION_CLICKED')
-      await settleV2Page(page, 2200)
-      snapshot = await snapshotV2Page(page)
-      if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
-      updateV2Run(run.runId, { finalUrl: snapshot.url, redirectChain: [...redirectChain] })
-      updateV2Session(run.runId, { currentUrl: snapshot.url })
+      logV2('APPLY_ACTION_CLICKED', { control: 'apply-manually' })
+      await followNavigation(2200)
       continue
     }
     if (unknownRetries < 4) {
@@ -299,12 +267,11 @@ export async function runV2Application(input: {
       if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
       continue
     }
-    return fail('FORM_NOT_FOUND', 'No application form or Apply action was detected.')
+    return fail('APPLICATION_UNSUPPORTED', 'The page loaded, but no application form or Apply action was detected.')
   }
 
   track('application_detected')
-  console.log('[V2] APPLICATION_PAGE_DETECTED')
-  console.log('[V2] FORM_DETECTED')
+  logV2('APPLICATION_PAGE_DETECTED', { url: snapshot.url })
 
   for (let step = 0; step < 8; step += 1) {
     snapshot = await snapshotV2Page(page)
@@ -325,7 +292,12 @@ export async function runV2Application(input: {
     track('filling')
     const mapping = mapV2Fields(fields, profile)
     for (const detected of mapping.detected) fieldsDetected.add(detected.key)
-    console.log(`[V2] FIELDS_DETECTED count=${mapping.detected.length}`)
+    logV2('FIELDS_DETECTED', {
+      step: step + 1,
+      count: mapping.detected.length,
+      mapped: mapping.mapped.length,
+      unknownRequired: mapping.unknownRequired.length,
+    })
     if (mapping.unknownRequired.length > 0) {
       const labels = mapping.unknownRequired.map((field) => field.label).slice(0, 5).join(' | ')
       updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
@@ -333,7 +305,7 @@ export async function runV2Application(input: {
     }
     const filled = await fillV2Fields(page, mapping.mapped)
     for (const key of filled) fieldsFilled.add(key)
-    console.log(`[V2] FIELDS_FILLED count=${filled.length}`)
+    logV2('FIELDS_FILLED', { step: step + 1, count: filled.length, keys: filled.join(',') || 'none' })
     updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
 
     if (hasFileInput && !resumeUploaded) {
@@ -341,7 +313,7 @@ export async function runV2Application(input: {
       const accepted = await uploadV2Resume(page, resume)
       if (!accepted) return fail('RESUME_UPLOAD_FAILED', 'The resume file was not accepted by the page.')
       resumeUploaded = true
-      console.log('[V2] RESUME_UPLOADED')
+      logV2('RESUME_UPLOADED', { bytes: resume.buffer.length, mimeType: resume.mimeType })
       updateV2Run(run.runId, { resumeUploaded: true })
     }
 
@@ -357,18 +329,15 @@ export async function runV2Application(input: {
       track('navigating')
       const advanced = await clickV2Next(page)
       if (!advanced) return fail('NAVIGATION_TIMEOUT', 'The Next control could not be clicked.')
-      console.log('[V2] NEXT_STEP')
-      await settleV2Page(page, 2200)
-      snapshot = await snapshotV2Page(page)
-      if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
-      updateV2Run(run.runId, { finalUrl: snapshot.url, redirectChain: [...redirectChain] })
-      updateV2Session(run.runId, { currentUrl: snapshot.url, step: step + 1 })
+      logV2('NEXT_STEP', { step: step + 1 })
+      await followNavigation(2200)
+      updateV2Session(run.runId, { step: step + 1 })
       continue
     }
     return fail('NAVIGATION_TIMEOUT', 'No Next or Submit control was detected on the application.')
   }
 
-  console.log('[V2] REVIEW_REACHED')
+  logV2('REVIEW_REACHED', { url: snapshot.url })
   track('ready_to_submit')
   snapshot = await snapshotV2Page(page)
   const reviewFields = await detectV2Fields(page).catch(() => [])
@@ -378,12 +347,12 @@ export async function runV2Application(input: {
   }
   const hasSubmit = await findV2SubmitControl(page)
   if (!hasSubmit) return fail('SUBMISSION_FAILED', 'The final Submit control was not found.')
-  console.log('[V2] FINAL_SUBMIT_FOUND')
+  logV2('FINAL_SUBMIT_FOUND')
 
   track('submitting')
   submitClicked = await clickV2Submit(page)
   if (!submitClicked) return fail('SUBMISSION_FAILED', 'The final Submit control could not be clicked.')
-  console.log('[V2] FINAL_SUBMIT_CLICKED')
+  logV2('FINAL_SUBMIT_CLICKED')
   updateV2Run(run.runId, { submitClicked: true })
   await settleV2Page(page, 2800)
   snapshot = await snapshotV2Page(page)
@@ -406,7 +375,7 @@ export async function runV2Application(input: {
     submittedAt: confirmation.confirmed ? new Date().toISOString() : null,
   })
   if (confirmation.confirmed) {
-    console.log('[V2] CONFIRMATION_DETECTED')
+    logV2('CONFIRMATION_DETECTED', { confirmationNumber: Boolean(confirmation.confirmationNumber) })
     return {
       status: 'submitted',
       failureReason: null,
@@ -431,6 +400,7 @@ export async function runV2Application(input: {
   ): V2AgentResult {
     updateV2Run(run.runId, { status, failureReason, finalUrl: snapshot.url, pageState: resultPageState })
     updateV2Session(run.runId, { state: status, currentUrl: snapshot.url })
+    logV2('RUN_STOPPED', { status, reason: failureReason.split(':')[0] })
     return {
       status,
       failureReason,
@@ -450,6 +420,7 @@ export async function runV2Application(input: {
     const failureReason = `${code}: ${message}`
     updateV2Run(run.runId, { status: 'failed', failureReason, finalUrl: snapshot.url })
     updateV2Session(run.runId, { state: 'failed', currentUrl: snapshot.url })
+    logV2('RUN_STOPPED', { status: 'failed', reason: code })
     return {
       status: 'failed',
       failureReason,

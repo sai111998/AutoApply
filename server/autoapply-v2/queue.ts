@@ -69,6 +69,22 @@ export function setV2Status(runId: string, status: V2RunStatus, failureReason: s
   return updateV2Run(runId, { status, failureReason })
 }
 
+export function cancelV2Run(runId: string): V2QueueItem {
+  const current = getV2Run(runId)
+  if (!current) throw new V2Error('JOB_NOT_FOUND', 'Auto Apply run was not found.', 404)
+  if (current.status === 'submitted' || current.status === 'cancelled') return current
+  if (current.status !== 'queued' && !V2_TERMINAL_STATUSES.has(current.status)) {
+    throw new V2Error('RUN_IN_PROGRESS', 'The application is being processed right now and cannot be cancelled.', 409)
+  }
+  return updateV2Run(runId, { status: 'cancelled' }) ?? current
+}
+
+export function listV2RunsForUser(userId: string): V2QueueItem[] {
+  return listV2Runs()
+    .filter((run) => run.userId === userId && run.source !== 'synthetic-test')
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+}
+
 export function v2QueueDepth(): number {
   reloadQueue()
   return [...runs.values()].filter((item) => !V2_TERMINAL_STATUSES.has(item.status)).length

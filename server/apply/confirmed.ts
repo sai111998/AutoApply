@@ -289,7 +289,7 @@ export async function persistConfirmedSubmission(input: {
     confirmation_number: stored.confirmationNumber,
     confirmation_text: stored.confirmationText,
     submitted_at: stored.submittedAt,
-    application_url: stored.applicationUrl,
+    application_url: stored.finalUrl || stored.applicationUrl,
   }
   let applicationResult = await supabase.from('applications').upsert(applicationRow, { onConflict: 'id', defaultToNull: false })
   if (applicationResult.error) {

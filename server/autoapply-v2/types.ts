@@ -1,3 +1,5 @@
+import type { AutoApplyConfig } from '../apply/types'
+
 export const V2_RUN_STATUSES = [
   'queued',
   'opening',
@@ -14,6 +16,7 @@ export const V2_RUN_STATUSES = [
   'mfa_required',
   'failed',
   'submission_uncertain',
+  'cancelled',
 ] as const
 
 export type V2RunStatus = (typeof V2_RUN_STATUSES)[number]
@@ -26,7 +29,10 @@ export const V2_TERMINAL_STATUSES: ReadonlySet<V2RunStatus> = new Set([
   'mfa_required',
   'failed',
   'submission_uncertain',
+  'cancelled',
 ])
+
+export type V2RunSource = 'auto-apply' | 'start-one' | 'synthetic-test'
 
 export type V2PageState =
   | 'JOB_PAGE'
@@ -59,6 +65,9 @@ export interface V2JobRef {
 
 export interface V2QueueItem {
   runId: string
+  source: V2RunSource
+  campaignConfig: AutoApplyConfig | null
+  jobsFound: number
   jobId: string
   title: string
   company: string
@@ -83,6 +92,10 @@ export interface V2QueueItem {
   confirmationEvidence: string[]
   submittedAt: string | null
   jdSnapshot: string | null
+  applicationRecordId: string | null
+  persistedJobId: string | null
+  submittedResumeVersionId: string | null
+  submittedResumeText: string | null
   createdAt: string
   updatedAt: string
 }
@@ -91,7 +104,7 @@ export interface V2Resume {
   versionId: string
   versionName: string
   fileName: string
-  mimeType: 'text/plain'
+  mimeType: string
   buffer: Buffer
   text: string
 }
