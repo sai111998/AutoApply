@@ -4,7 +4,10 @@ import type {
   JobMatch,
   Profile,
   Resume,
+  ResumeVersion,
   Skill,
+  TailoredResumeContent,
+  TailoringPlan,
   UserPreferences,
   WorkspaceSnapshot,
 } from '@/types/domain'
@@ -54,6 +57,19 @@ type JobRow = {
   job_url: string | null
   description: string
   created_at: string
+  provider?: string | null
+  provider_job_id?: string | null
+  remote?: boolean | null
+  work_arrangement?: string | null
+  employment_type?: string | null
+  posted_at?: string | null
+  discovered_at?: string | null
+  last_verified_at?: string | null
+  salary_min?: number | null
+  salary_max?: number | null
+  salary_currency?: string | null
+  source?: string | null
+  identity_key?: string | null
 }
 
 type MatchRow = {
@@ -61,6 +77,8 @@ type MatchRow = {
   user_id: string
   job_id: string
   resume_id: string | null
+  parent_match_id?: string | null
+  resume_version_id?: string | null
   overall_score: number | null
   skills_matched: JobMatch['skillsMatched']
   skills_partial: JobMatch['skillsPartial']
@@ -79,6 +97,7 @@ type MatchRow = {
   created_at: string
   analyzed_at: string | null
   summary: string | null
+  analysis_payload?: JobMatch['report'] | null
 }
 
 type ApplicationRow = {
@@ -87,12 +106,21 @@ type ApplicationRow = {
   job_id: string
   match_id: string | null
   resume_id: string | null
+  selected_resume_version_id?: string | null
+  current_match_id?: string | null
+  current_match_score?: number | null
   status: Application['status']
   date_added: string
   date_applied: string | null
   next_action: string | null
   notes: string | null
   updated_at: string
+  is_confirmed_submission?: boolean | null
+  submitted_job_description_snapshot?: string | null
+  confirmation_number?: string | null
+  confirmation_text?: string | null
+  submitted_at?: string | null
+  application_url?: string | null
 }
 
 type PreferencesRow = {
@@ -201,10 +229,49 @@ export function mapJob(row: JobRow): Job {
     jobUrl: row.job_url ?? '',
     description: row.description,
     createdAt: row.created_at,
+    provider: row.provider ?? null,
+    providerJobId: row.provider_job_id ?? null,
+    remote: row.remote ?? null,
+    workArrangement: row.work_arrangement ?? null,
+    employmentType: row.employment_type ?? null,
+    postedAt: row.posted_at ?? null,
+    discoveredAt: row.discovered_at ?? null,
+    lastVerifiedAt: row.last_verified_at ?? null,
+    salaryMin: row.salary_min ?? null,
+    salaryMax: row.salary_max ?? null,
+    salaryCurrency: row.salary_currency ?? null,
+    source: row.source ?? null,
+    identityKey: row.identity_key ?? null,
   }
 }
 
 export function jobToRow(job: Job) {
+  return {
+    id: job.id,
+    user_id: job.userId,
+    title: job.title,
+    company: job.company,
+    location: job.location,
+    job_url: job.jobUrl,
+    description: job.description,
+    created_at: job.createdAt,
+    provider: job.provider ?? null,
+    provider_job_id: job.providerJobId ?? null,
+    remote: job.remote ?? null,
+    work_arrangement: job.workArrangement ?? null,
+    employment_type: job.employmentType ?? null,
+    posted_at: job.postedAt ?? null,
+    discovered_at: job.discoveredAt ?? null,
+    last_verified_at: job.lastVerifiedAt ?? null,
+    salary_min: job.salaryMin ?? null,
+    salary_max: job.salaryMax ?? null,
+    salary_currency: job.salaryCurrency ?? null,
+    source: job.source ?? null,
+    identity_key: job.identityKey ?? null,
+  }
+}
+
+export function jobCoreRow(job: Job) {
   return {
     id: job.id,
     user_id: job.userId,
@@ -223,6 +290,8 @@ export function mapMatch(row: MatchRow): JobMatch {
     userId: row.user_id,
     jobId: row.job_id,
     resumeId: row.resume_id,
+    parentMatchId: row.parent_match_id ?? null,
+    resumeVersionId: row.resume_version_id ?? null,
     overallScore: row.overall_score,
     skillsMatched: row.skills_matched ?? [],
     skillsPartial: row.skills_partial ?? [],
@@ -241,6 +310,8 @@ export function mapMatch(row: MatchRow): JobMatch {
     summary: row.summary ?? null,
     createdAt: row.created_at,
     analyzedAt: row.analyzed_at,
+    confidence: row.analysis_payload?.confidence ?? null,
+    report: row.analysis_payload ?? null,
   }
 }
 
@@ -250,6 +321,8 @@ export function matchToRow(match: JobMatch) {
     user_id: match.userId,
     job_id: match.jobId,
     resume_id: match.resumeId,
+    parent_match_id: match.parentMatchId ?? null,
+    resume_version_id: match.resumeVersionId ?? null,
     overall_score: match.overallScore,
     skills_matched: match.skillsMatched,
     skills_partial: match.skillsPartial,
@@ -268,22 +341,33 @@ export function matchToRow(match: JobMatch) {
     created_at: match.createdAt,
     analyzed_at: match.analyzedAt,
     summary: match.summary,
+    analysis_payload: match.report ?? null,
   }
 }
 
 export function mapApplication(row: ApplicationRow): Application {
+  const applied = row.status === 'applied' || row.status === 'interview' || row.status === 'offer'
   return {
     id: row.id,
     userId: row.user_id,
     jobId: row.job_id,
     matchId: row.match_id,
     resumeId: row.resume_id,
+    selectedResumeVersionId: row.selected_resume_version_id ?? null,
+    currentMatchId: row.current_match_id ?? null,
+    currentMatchScore: row.current_match_score ?? null,
     status: row.status,
     dateAdded: row.date_added,
     dateApplied: row.date_applied,
     nextAction: row.next_action ?? '',
     notes: row.notes ?? '',
     updatedAt: row.updated_at,
+    isConfirmedSubmission: row.is_confirmed_submission ?? applied,
+    submittedJobDescriptionSnapshot: row.submitted_job_description_snapshot ?? null,
+    confirmationNumber: row.confirmation_number ?? null,
+    confirmationText: row.confirmation_text ?? null,
+    submittedAt: row.submitted_at ?? null,
+    applicationUrl: row.application_url ?? null,
   }
 }
 
@@ -294,12 +378,38 @@ export function applicationToRow(application: Application) {
     job_id: application.jobId,
     match_id: application.matchId,
     resume_id: application.resumeId,
+    selected_resume_version_id: application.selectedResumeVersionId,
+    current_match_id: application.currentMatchId,
+    current_match_score: application.currentMatchScore,
     status: application.status,
     date_added: application.dateAdded,
     date_applied: application.dateApplied,
     next_action: application.nextAction,
     notes: application.notes,
     updated_at: application.updatedAt,
+    is_confirmed_submission: application.isConfirmedSubmission ?? application.status === 'applied',
+    submitted_job_description_snapshot: application.submittedJobDescriptionSnapshot ?? null,
+    confirmation_number: application.confirmationNumber ?? null,
+    confirmation_text: application.confirmationText ?? null,
+    submitted_at: application.submittedAt ?? null,
+    application_url: application.applicationUrl ?? null,
+  }
+}
+
+export function applicationCoreRow(application: Application) {
+  const row = applicationToRow(application)
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    job_id: row.job_id,
+    match_id: row.match_id,
+    resume_id: row.resume_id,
+    status: row.status,
+    date_added: row.date_added,
+    date_applied: row.date_applied,
+    next_action: row.next_action,
+    notes: row.notes,
+    updated_at: row.updated_at,
   }
 }
 
@@ -331,6 +441,93 @@ export function preferencesToRow(preferences: UserPreferences) {
   }
 }
 
+type ResumeVersionRow = {
+  id: string
+  user_id: string
+  source_resume_id: string
+  job_id: string | null
+  analysis_id: string | null
+  version_name: string
+  resume_content: TailoredResumeContent
+  tailoring_summary: TailoringPlan
+  changes: ResumeVersion['changes']
+  warnings: string[] | null
+  status?: ResumeVersion['status'] | null
+  created_by?: ResumeVersion['createdBy'] | null
+  is_selected?: boolean | null
+  generation_id?: string | null
+  comparison_analysis_id?: string | null
+  original_content?: TailoredResumeContent | null
+  created_at: string
+  updated_at: string
+}
+
+function emptyResumeContent(): TailoredResumeContent {
+  return {
+    summary: '',
+    skills: [],
+    experience: [],
+    projects: [],
+    education: [],
+    certifications: [],
+    changes: [],
+    omissions: [],
+    warnings: [],
+    contact: { name: '', email: '', location: '' },
+  }
+}
+
+export function mapResumeVersion(row: ResumeVersionRow): ResumeVersion {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    sourceResumeId: row.source_resume_id,
+    jobId: row.job_id,
+    analysisId: row.analysis_id,
+    versionName: row.version_name,
+    resumeContent: row.resume_content ?? emptyResumeContent(),
+    tailoringSummary: row.tailoring_summary ?? {
+      skillsToEmphasize: [],
+      relatedSkills: [],
+      missingSkills: [],
+      experienceToEmphasize: [],
+    },
+    changes: row.changes ?? [],
+    warnings: row.warnings ?? [],
+    status: row.status ?? 'completed',
+    createdBy: row.created_by ?? 'ai',
+    isSelected: Boolean(row.is_selected),
+    generationId: row.generation_id ?? row.id,
+    comparisonAnalysisId: row.comparison_analysis_id ?? null,
+    originalContent: row.original_content ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function resumeVersionToRow(version: ResumeVersion) {
+  return {
+    id: version.id,
+    user_id: version.userId,
+    source_resume_id: version.sourceResumeId,
+    job_id: version.jobId,
+    analysis_id: version.analysisId,
+    version_name: version.versionName,
+    resume_content: version.resumeContent,
+    tailoring_summary: version.tailoringSummary,
+    changes: version.changes,
+    warnings: version.warnings,
+    status: version.status,
+    created_by: version.createdBy,
+    is_selected: version.isSelected,
+    generation_id: version.generationId,
+    comparison_analysis_id: version.comparisonAnalysisId,
+    original_content: version.originalContent,
+    created_at: version.createdAt,
+    updated_at: version.updatedAt,
+  }
+}
+
 export function emptyWorkspace(userId: string, email: string, fullName = ''): WorkspaceSnapshot {
   const now = new Date().toISOString()
   return {
@@ -353,6 +550,7 @@ export function emptyWorkspace(userId: string, email: string, fullName = ''): Wo
     jobs: [],
     matches: [],
     applications: [],
+    resumeVersions: [],
     preferences: {
       userId,
       aiModelPreference: 'Use the server default',

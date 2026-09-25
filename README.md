@@ -17,7 +17,24 @@ npm test
 - Vite on http://localhost:5173/
 - the analysis API on http://127.0.0.1:8787/ (`POST /api/jobs/analyze`)
 
-Open the app, click **Explore with sample data**, then Job Analysis. Demo mode pre-fills Alex Rivera’s sample resume text.
+Open http://localhost:5173/ to view the public landing page. Click **Get Started** or **Sign In**, then **Explore with sample data**. After sign-in, the workspace lives at `/dashboard`. Job Analysis is under **Job Analysis**. Demo mode pre-fills Alex Rivera’s sample resume text.
+
+Leave `VITE_API_BASE_URL` unset. The browser always requests same-origin `/api/*`; Vite proxies those calls to the local Express server.
+
+Live job discovery is under **Live Jobs**. The browser calls `GET /api/jobs`; the server then calls the keyless Job Opportunities API (`GET https://api.jobopportunitiesapi.org/public/jobs?country=US`). Jooble and USAJOBS remain available through `POST /api/jobs/discover` when those keys are set. No Job Opportunities API key is required. Keys stay server-side and are never sent to the browser. Live rows are labeled **Live**, with source **Job Opportunities API**.
+
+## Production (Vercel)
+
+Vercel hosts the Vite static build. The existing Express app is mounted by `api/[...path].ts` so production can serve the same routes as local development, including `GET /api/health` and `POST /api/jobs/analyze`.
+
+Set these in the Vercel project (server values are not `VITE_` prefixed):
+
+- `LLM_API_KEY` (required for live analysis)
+- `LLM_API_BASE_URL` / `LLM_MODEL` as needed
+- `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` for persistence
+- `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for the frontend
+
+Do **not** set `VITE_API_BASE_URL` to `http://127.0.0.1:8787` or another local address. That would make the production frontend call a backend that only exists on a developer machine.
 
 ## LLM API key (required for live analysis)
 
@@ -42,7 +59,7 @@ Without `LLM_API_KEY`, the app still runs. Analyze returns `503` and Match Resul
 
 ## PostgreSQL storage
 
-When Supabase is configured, each analysis is written to `jobs` and `job_matches`.
+When Supabase is configured, profiles, resumes, jobs, matches, and applications persist in Postgres. Analysis results are also written to `jobs` and `job_matches`.
 
 ```
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
@@ -51,12 +68,20 @@ SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 ```
 
-Run both SQL files in the Supabase SQL editor:
+Apply the initial schema once (idempotent):
 
-- `supabase/migrations/00001_init.sql`
-- `supabase/migrations/00002_analysis_results.sql` (`parsed_text`, `summary`, `analysis_payload`)
+1. Open the Supabase SQL Editor.
+2. Paste and run `supabase/migrations/001_initial_schema.sql`.
+3. Confirm tables under **Table Editor**, the private `resumes` bucket under **Storage**, and `on_auth_user_created` under **Database → Triggers**.
 
-`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never prefix it with `VITE_`.
+Or, with a personal access token from https://supabase.com/dashboard/account/tokens in `SUPABASE_ACCESS_TOKEN`:
+
+```
+npm run db:apply
+npm run db:auth-flow
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` is server-only. Never prefix it with `VITE_`. For local sign-up testing, turn off **Confirm email** under Authentication → Providers → Email.
 
 ## Analysis contract
 
@@ -104,11 +129,31 @@ The model is instructed to use **only** the supplied resume text. It must not in
 | --- | --- |
 | `npm run dev` | API + Vite |
 | `npm test` | Backend analysis service and API tests |
-| `npm run build` | Typecheck and frontend bundle |
+| `npm run build` | Typecheck, frontend bundle, and Chrome extension |
+| `npm run build:extension` | Build the unpacked Chrome extension into `dist/extension` |
 | `npm run lint` | ESLint |
+| `npm run db:apply` | Apply `001_initial_schema.sql` to the linked Supabase project |
+| `npm run db:auth-flow` | Sign up → login → create/read/update profile against live Supabase |
+
+## Chrome extension
+
+The JobPilot Application Agent is a Manifest V3 Chrome extension that inspects employer application pages in the user's browser. This milestone detects the page, provider, and fields. It does **not** submit applications.
+
+```bash
+npm run build:extension
+```
+
+Then in Chrome:
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select `dist/extension`
+
+A local synthetic form is served at `http://127.0.0.1:8787/extension/test/application.html` when the API is running. See `extension/README.md`.
 
 ## Out of scope
 
 - Automatic job submission
-- Browser automation
 - Parsing PDF/DOCX bytes in the browser (paste resume text, or use demo parsed text)
+

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>JobPilot Detection</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>JobPilot Detection</h1>
+      <p class="note">Development inspector only. This extension does not submit applications.</p>
+      <p>
+        <button type="button" id="process">Process queued application</button>
+      </p>
+      <dl>
+        <div><dt>Current URL</dt><dd id="url">Inspecting…</dd></div>
+        <div><dt>Page title</dt><dd id="title">—</dd></div>
+        <div><dt>Detected provider</dt><dd id="provider">—</dd></div>
+        <div><dt>Application confidence</dt><dd id="confidence">—</dd></div>
+        <div><dt>Application page</dt><dd id="application">—</dd></div>
+        <div><dt>Detected fields</dt><dd id="fields">—</dd></div>
+        <div><dt>Detected buttons</dt><dd id="buttons">—</dd></div>
+        <div><dt>CAPTCHA</dt><dd id="captcha">—</dd></div>
+        <div><dt>MFA</dt><dd id="mfa">—</dd></div>
+        <div><dt>Login</dt><dd id="login">—</dd></div>
+        <div><dt>Session</dt><dd id="session">—</dd></div>
+      </dl>
+    </main>
+    <script src="./popup.ts" type="module"></script>
+  </body>
+</html>

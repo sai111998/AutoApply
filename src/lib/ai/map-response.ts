@@ -1,15 +1,20 @@
 import type { DimensionMatch, JobMatch, SkillSignal } from '@/types/domain'
-import type { AnalyzeJobApiResult } from './types'
+import type { AnalyzeJobApiResult, MatchReport, SkillAssessment } from './types'
 
-function toSignals(names: string[]): SkillSignal[] {
-  return names.map((name) => ({ name }))
+function toSignals(items: string[] | SkillAssessment[] | undefined, fallbackNote?: string): SkillSignal[] {
+  if (!items?.length) return []
+  return items.map((item) =>
+    typeof item === 'string'
+      ? { name: item, note: fallbackNote }
+      : { name: item.name, note: item.evidence || `${item.source} · ${item.classification}` },
+  )
 }
 
-function toDimension(matched: boolean, yes: string, no: string): DimensionMatch {
+function toDimension(matched: boolean, summary: string): DimensionMatch {
   return {
     score: matched ? 100 : 0,
     matched,
-    summary: matched ? yes : no,
+    summary,
   }
 }
 
@@ -32,36 +37,59 @@ export function mapApiResultToMatchFields(result: AnalyzeJobApiResult): Pick<
   | 'provider'
   | 'errorMessage'
   | 'analyzedAt'
+  | 'confidence'
+  | 'report'
 > {
+  const report: MatchReport | null = result.report ?? null
+  const required = result.requiredSkills ?? report?.requiredSkills
+  const preferred = result.preferredSkills ?? report?.preferredSkills
+
   return {
     overallScore: result.matchScore,
-    skillsMatched: toSignals(result.matchedSkills),
-    skillsPartial: toSignals(result.partiallyMatchedSkills),
-    skillsMissing: toSignals(result.missingSkills),
+    skillsMatched: toSignals(required?.matched ?? result.matchedSkills, 'Strong match'),
+    skillsPartial: toSignals(required?.partial?.concat(preferred?.partial ?? []) ?? result.partiallyMatchedSkills, 'Partial match'),
+    skillsMissing: toSignals(
+      [
+        ...(required?.missing ?? []),
+        ...(preferred?.missing ?? []),
+      ].length
+        ? [...(required?.missing ?? []), ...(preferred?.missing ?? [])]
+        : result.missingSkills,
+      'Missing',
+    ),
     experienceMatch: toDimension(
       result.experienceMatch,
-      'The resume states experience that meets the posting.',
-      'The resume does not state experience that meets the posting.',
+      result.experience?.gap || result.experience?.candidateEvidence || (result.experienceMatch
+        ? 'The resume states experience that meets the posting.'
+        : 'The resume does not state experience that meets the posting.'),
     ),
     educationMatch: toDimension(
       result.educationMatch,
-      'Education is compatible with the posting, or no education requirement was stated.',
-      'The resume does not state education that meets the posting.',
+      result.education?.details ||
+        (result.educationMatch
+          ? 'Education is compatible with the posting, or no education requirement was stated.'
+          : 'The resume does not state education that meets the posting.'),
     ),
     locationMatch: toDimension(
       result.locationMatch,
-      'Location or work arrangement in the resume is compatible with the posting.',
-      'The resume does not support the posting location or work arrangement.',
+      result.locationFit?.details ||
+        (result.locationMatch
+          ? 'Location or work arrangement in the resume is compatible with the posting.'
+          : 'The resume does not support the posting location or work arrangement.'),
     ),
-    workAuthorizationNotes: 'Work authorization was not included in this analysis contract.',
+    workAuthorizationNotes:
+      result.missingEvidence?.find((item) => /authorization|sponsor/i.test(item)) ||
+      'Work authorization was compared only when the posting and resume stated it.',
     strengths: result.strengths,
     concerns: result.concerns,
     recommendation: result.recommendation,
     summary: result.summary,
     analysisStatus: 'complete',
     analysisSource: 'api',
-    provider: 'llm',
+    provider: 'match-engine',
     errorMessage: null,
     analyzedAt: new Date().toISOString(),
+    confidence: result.confidence,
+    report,
   }
 }

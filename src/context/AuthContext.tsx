@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
 import { DEMO_USER_ID } from '@/data/sample'
+import { rememberExtensionSession } from '@/lib/extension-session'
 
 const DEMO_FLAG = 'jobpilot.demo'
 
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isDemo) {
       setUser({ id: DEMO_USER_ID, email: 'alex.rivera@example.com', fullName: 'Alex Rivera' })
+      rememberExtensionSession({ userId: DEMO_USER_ID })
       setLoading(false)
       return
     }
@@ -54,20 +56,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           : null,
       )
+      if (sessionUser?.id) rememberExtensionSession({ userId: sessionUser.id })
+      else sessionStorage.removeItem('jobpilot.userId')
       setLoading(false)
     })
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       const sessionUser = session?.user
-      setUser(
-        sessionUser
-          ? {
-              id: sessionUser.id,
-              email: sessionUser.email ?? '',
-              fullName: sessionUser.user_metadata?.full_name as string | undefined,
-            }
-          : null,
+      const next = sessionUser
+        ? {
+            id: sessionUser.id,
+            email: sessionUser.email ?? '',
+            fullName: sessionUser.user_metadata?.full_name as string | undefined,
+          }
+        : null
+      setUser((current) =>
+        current?.id === next?.id && current?.email === next?.email && current?.fullName === next?.fullName
+          ? current
+          : next,
       )
+      if (next?.id) rememberExtensionSession({ userId: next.id })
+      else sessionStorage.removeItem('jobpilot.userId')
     })
 
     return () => {
@@ -84,6 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       enterDemo: () => {
         sessionStorage.setItem(DEMO_FLAG, '1')
+        rememberExtensionSession({ userId: DEMO_USER_ID })
         setIsDemo(true)
         setUser({ id: DEMO_USER_ID, email: 'alex.rivera@example.com', fullName: 'Alex Rivera' })
       },
@@ -108,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut: async () => {
         sessionStorage.removeItem(DEMO_FLAG)
         sessionStorage.removeItem('jobpilot.workspace')
+        sessionStorage.removeItem('jobpilot.userId')
         setIsDemo(false)
         setUser(null)
         if (supabase) await supabase.auth.signOut()

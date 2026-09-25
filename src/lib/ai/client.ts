@@ -1,4 +1,5 @@
 import type { AnalyzeJobApiRequest, AnalyzeJobApiResult, AnalyzeJobClientResponse } from './types'
+import type { Job } from '@/types/domain'
 
 function apiUrl(path: string): string {
   const base = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') ?? ''
@@ -21,33 +22,370 @@ function isAnalysisResult(value: unknown): value is AnalyzeJobApiResult {
     typeof record.locationMatch === 'boolean' &&
     Array.isArray(record.strengths) &&
     Array.isArray(record.concerns) &&
-    typeof record.summary === 'string'
+    typeof record.summary === 'string' &&
+    (record.confidence === undefined ||
+      record.confidence === 'HIGH' ||
+      record.confidence === 'MEDIUM' ||
+      record.confidence === 'LOW')
   )
+}
+
+export async function getAutomationHealth(): Promise<{
+  available: boolean
+  browser: 'chromium' | null
+  playwright: boolean
+  runtime?: string
+  reason?: string
+}> {
+  try {
+    const response = await fetch(apiUrl('/api/automation/health'))
+    if (!response.ok) return { available: false, browser: null, playwright: false, reason: 'Automation health is unavailable.' }
+    const body = (await response.json()) as {
+      available?: boolean
+      browser?: 'chromium' | null | { available?: boolean }
+      playwright?: boolean
+      runtime?: string
+      reason?: string
+    }
+    const browserAvailable =
+      body.browser === 'chromium' ||
+      (body.browser && typeof body.browser === 'object' && body.browser.available === true)
+    return {
+      available: Boolean(body.available ?? browserAvailable),
+      browser: browserAvailable ? 'chromium' : null,
+      playwright: Boolean(body.playwright),
+      runtime: body.runtime,
+      reason: body.reason,
+    }
+  } catch {
+    return { available: false, browser: null, playwright: false, reason: 'Automation health is unavailable.' }
+  }
 }
 
 export async function getAnalysisHealth(): Promise<{
   ok: boolean
   llmConfigured: boolean
   databaseConfigured: boolean
+  jobProviders: Array<{
+    name: string
+    label: string
+    enabled: boolean
+    available: boolean
+    connectionLabel: string
+  }>
 }> {
   try {
     const response = await fetch(apiUrl('/api/health'))
     if (!response.ok) {
-      return { ok: false, llmConfigured: false, databaseConfigured: false }
+      return { ok: false, llmConfigured: false, databaseConfigured: false, jobProviders: [] }
     }
     const body = (await response.json()) as {
       ok?: boolean
       llmConfigured?: boolean
       databaseConfigured?: boolean
+      jobProviders?: Array<{
+        name: string
+        label: string
+        enabled: boolean
+        available: boolean
+        connectionLabel: string
+      }>
     }
     return {
       ok: Boolean(body.ok),
       llmConfigured: Boolean(body.llmConfigured),
       databaseConfigured: Boolean(body.databaseConfigured),
+      jobProviders: Array.isArray(body.jobProviders) ? body.jobProviders : [],
     }
   } catch {
-    return { ok: false, llmConfigured: false, databaseConfigured: false }
+    return { ok: false, llmConfigured: false, databaseConfigured: false, jobProviders: [] }
   }
+}
+
+export interface DiscoverJobsRequest {
+  roles?: string[]
+  location?: string
+  remote?: string
+  employmentType?: string
+  experienceLevel?: string
+  keywords?: string[]
+  datePostedDays?: number
+  page?: number
+  pageSize?: number
+  minMatchScore?: number | null
+  providers?: string[]
+  resumeText?: string
+  userId?: string
+}
+
+export interface LiveJobMatchResult {
+  score: number | null
+  matchedSkills: string[]
+  missingSkills: string[]
+  resumeVersionId: string | null
+  scoreUpdatedAt: string | null
+  cached?: boolean
+}
+
+export interface DiscoveredJobResult {
+  id: string
+  provider: string
+  providerJobId: string | null
+  title: string
+  company: string
+  location: string | null
+  remote: boolean | null
+  workArrangement: string | null
+  employmentType: string | null
+  seniority?: string | null
+  description: string | null
+  jobUrl: string | null
+  url?: string | null
+  postedAt: string | null
+  salaryMin: number | null
+  salaryMax: number | null
+  salaryCurrency: string | null
+  source: string
+  sourceJobId?: string | null
+  discoveredAt: string
+  fetchedAt?: string
+  lastVerifiedAt: string
+  identityKey: string
+  match?: LiveJobMatchResult
+  matchScore: number | null
+  matchedSkills: string[]
+  missingSkills?: string[]
+  demo: boolean
+  liveDemoProvider?: boolean
+  rawMetadata?: Record<string, unknown>
+  c2cStatus?: 'confirmed' | 'not_allowed' | 'unknown'
+  c2cEvidence?: Array<{
+    matchedPhrase: string
+    sourceField: string
+    confidence: string
+    detectedAt: string
+  }>
+}
+
+export interface DiscoverJobsResponse {
+  jobs: DiscoveredJobResult[]
+  page: number
+  pageSize: number
+  total: number
+  providers: Array<{
+    name: string
+    label: string
+    enabled: boolean
+    available: boolean
+    connectionLabel: string
+  }>
+  warnings: Array<{ provider: string; code: string; message: string }>
+  hasMore: boolean
+  demo: boolean
+}
+
+export async function discoverJobsRequest(payload: DiscoverJobsRequest): Promise<DiscoverJobsResponse> {
+  const response = await fetch(apiUrl('/api/jobs/discover'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as DiscoverJobsResponse | { error?: string } | null
+  if (!response.ok || !body || !('jobs' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Job discovery failed.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Job discovery failed.' : message)
+  }
+  return body
+}
+
+export interface LiveJobsQuery {
+  q?: string
+  country?: string
+  state?: string
+  location?: string
+  remote?: string
+  employment_type?: string
+  seniority?: string
+  page?: number
+  limit?: number
+  sort?: 'match' | 'recent' | 'relevance'
+  resumeText?: string
+  resumeVersionId?: string
+  jobType?: 'all' | 'c2c' | 'contract' | 'w2'
+}
+
+export interface LiveJobsResponse {
+  jobs: DiscoveredJobResult[]
+  page: number
+  limit: number
+  total: number
+  hasMore: boolean
+  source: string
+  warning?: { provider: string; code: string; message: string }
+}
+
+export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<LiveJobsResponse> {
+  const payload = {
+    q: query.q?.trim() || undefined,
+    country: query.country?.trim() || undefined,
+    state: query.state?.trim() || undefined,
+    location: query.location?.trim() || undefined,
+    remote: query.remote && query.remote !== 'any' ? query.remote : undefined,
+    employment_type: query.employment_type && query.employment_type !== 'any' ? query.employment_type : undefined,
+    seniority: query.seniority && query.seniority !== 'any' ? query.seniority : undefined,
+    page: query.page,
+    limit: query.limit,
+    sort: query.sort || 'match',
+    resumeText: query.resumeText?.trim() || undefined,
+    resumeVersionId: query.resumeVersionId?.trim() || undefined,
+    jobType: query.jobType && query.jobType !== 'all' ? query.jobType : undefined,
+  }
+  const params = new URLSearchParams()
+  if (payload.q) params.set('q', payload.q)
+  if (payload.country) params.set('country', payload.country)
+  if (payload.state) params.set('state', payload.state)
+  if (payload.location) params.set('location', payload.location)
+  if (payload.remote) params.set('remote', payload.remote)
+  if (payload.employment_type) params.set('employment_type', payload.employment_type)
+  if (payload.seniority) params.set('seniority', payload.seniority)
+  if (payload.page) params.set('page', String(payload.page))
+  if (payload.limit) params.set('limit', String(payload.limit))
+  if (payload.sort) params.set('sort', payload.sort)
+  if (payload.jobType) params.set('jobType', payload.jobType)
+
+  const response = payload.resumeText
+    ? await fetch(apiUrl('/api/jobs'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    : await fetch(apiUrl(`/api/jobs?${params.toString()}`))
+  const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
+  if (!response.ok || !body || !('jobs' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
+  }
+  return body
+}
+
+export interface LiveTailorPreviewResult {
+  current: LiveJobMatchResult
+  tailored: LiveJobMatchResult
+  improvement: number
+  matchedSkills: string[]
+  missingSkills: string[]
+  stillMissing: string[]
+  cannotReachTargetReason: string | null
+  previewText: string
+  cached?: boolean
+}
+
+export async function previewLiveJobRequest(payload: {
+  resumeText: string
+  resumeVersionId?: string
+  job: Pick<
+    DiscoveredJobResult,
+    'id' | 'providerJobId' | 'title' | 'company' | 'description' | 'sourceJobId'
+  >
+}): Promise<LiveTailorPreviewResult> {
+  const response = await fetch(apiUrl('/api/jobs/preview'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as LiveTailorPreviewResult | { error?: string } | null
+  if (!response.ok || !body || !('current' in body) || !('tailored' in body)) {
+    const message =
+      body && 'error' in body && typeof body.error === 'string' ? body.error : 'Could not preview the tailored resume match.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Could not preview the tailored resume match.' : message)
+  }
+  return body
+}
+
+export async function getLiveJobRequest(provider: string, jobId: string): Promise<DiscoveredJobResult> {
+  const response = await fetch(apiUrl(`/api/jobs/live/${encodeURIComponent(provider)}/${encodeURIComponent(jobId)}`))
+  const body = (await response.json().catch(() => null)) as DiscoveredJobResult | { error?: string } | null
+  if (!response.ok || !body || !('title' in body)) {
+    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
+    throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
+  }
+  return body
+}
+
+export async function saveDiscoveredJobRequest(payload: {
+  userId: string
+  job: Job
+  resumeVersionId?: string | null
+}) {
+  const response = await fetch(apiUrl('/api/jobs/save'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: payload.userId,
+      job: {
+        id: payload.job.id,
+        provider: payload.job.provider,
+        providerJobId: payload.job.providerJobId,
+        title: payload.job.title,
+        company: payload.job.company,
+        location: payload.job.location,
+        remote: payload.job.remote,
+        workArrangement: payload.job.workArrangement,
+        employmentType: payload.job.employmentType,
+        seniority: payload.job.seniority,
+        description: payload.job.description,
+        jobUrl: payload.job.jobUrl,
+        postedAt: payload.job.postedAt,
+        salaryMin: payload.job.salaryMin,
+        salaryMax: payload.job.salaryMax,
+        salaryCurrency: payload.job.salaryCurrency,
+        source: payload.job.source,
+        identityKey: payload.job.identityKey,
+        discoveredAt: payload.job.discoveredAt,
+        lastVerifiedAt: payload.job.lastVerifiedAt,
+        matchScore: payload.job.matchScore ?? null,
+        resumeVersionId: payload.resumeVersionId ?? null,
+        createdAt: payload.job.createdAt,
+        rawMetadata: {
+          matchScore: payload.job.matchScore ?? null,
+          resumeVersionId: payload.resumeVersionId ?? null,
+          createdAt: payload.job.createdAt,
+        },
+      },
+    }),
+  })
+  const body = (await response.json().catch(() => null)) as { error?: string; jobId?: string } | null
+  if (!response.ok) {
+    throw new Error(body?.error && !/key|secret|service.role/i.test(body.error) ? body.error : 'Could not save the job.')
+  }
+  return body
+}
+
+export async function extractResumeTextRequest(file: File): Promise<string> {
+  const response = await fetch(apiUrl('/api/resumes/extract'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-File-Name': file.name,
+    },
+    body: await file.arrayBuffer(),
+  })
+  const body: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message =
+      body && typeof body === 'object' && 'error' in body && typeof (body as { error: unknown }).error === 'string'
+        ? (body as { error: string }).error
+        : `Resume extraction returned ${response.status}.`
+    throw new Error(message)
+  }
+  if (!body || typeof body !== 'object' || typeof (body as { text?: unknown }).text !== 'string') {
+    throw new Error('Resume extraction returned an unexpected payload.')
+  }
+  const text = (body as { text: string }).text.trim()
+  if (!text) {
+    throw new Error('No text could be extracted from this resume. Upload a text-based PDF or a .txt file.')
+  }
+  return text
 }
 
 export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<AnalyzeJobClientResponse> {
@@ -60,10 +398,16 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
         resumeText: payload.resumeText,
         userId: payload.userId,
         resumeId: payload.resumeId,
+        jobId: payload.jobId,
+        matchId: payload.matchId,
+        applicationId: payload.applicationId,
         title: payload.title,
         company: payload.company,
         location: payload.location,
         jobUrl: payload.jobUrl,
+        resumeProfile: payload.resumeProfile,
+        jobProfile: payload.jobProfile,
+        persistResults: payload.persistResults,
       }),
     })
 
@@ -88,4 +432,411 @@ export async function analyzeJobRequest(payload: AnalyzeJobApiRequest): Promise<
       message: error instanceof Error ? error.message : 'Could not reach the analysis API.',
     }
   }
+}
+
+export async function tailorResumeRequest(payload: Record<string, unknown>) {
+  const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 70_000)
+    try {
+      const response = await fetch(apiUrl('/api/resumes/tailor'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!body) throw new Error('Your resume could not be tailored right now. Please try again.')
+      if (!response.ok && response.status !== 422) {
+        const raw = typeof body.error === 'string' ? body.error : ''
+        if (/key|secret|service.role|stack/i.test(raw) || !raw.trim()) {
+          throw new Error('Your resume could not be tailored right now. Please try again.')
+        }
+        throw new Error(raw)
+      }
+      return body
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Your resume could not be tailored right now. Please try again.')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+    }
+}
+
+export async function validateTailoredResumeRequest(payload: Record<string, unknown>) {
+  const response = await fetch(apiUrl('/api/resumes/validate-tailor'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  if (!body) throw new Error('Could not validate the tailored resume.')
+  return { ok: response.ok, body }
+}
+
+export async function downloadResumePdfRequest(tailored: unknown, contact: { name?: string; email?: string; location?: string }) {
+  const response = await fetch(apiUrl('/api/resumes/pdf'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tailored, contact }),
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error || 'Could not generate the PDF.')
+  }
+  return response.blob()
+}
+
+export type AutoApplyJobType = 'all' | 'c2c' | 'contract' | 'w2'
+export type AutoApplyQueueStatus =
+  | 'queued'
+  | 'preparing'
+  | 'tailoring'
+  | 'ready'
+  | 'opening'
+  | 'filling'
+  | 'needs_user_input'
+  | 'captcha_required'
+  | 'mfa_required'
+  | 'login_required'
+  | 'blocked'
+  | 'automation_blocked'
+  | 'extension_not_connected'
+  | 'ready_for_submission'
+  | 'submitting'
+  | 'needs_user_confirmation'
+  | 'needs_confirmation'
+  | 'submitted'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+
+export interface AutoApplyConfigPayload {
+  maxJobs: number
+  minimumMatchRate: number
+  autoTailorResume: boolean
+  jobType: AutoApplyJobType
+  remotePreference: string
+  keywords: string[]
+  q?: string
+  country?: string
+  state?: string
+  location?: string
+  employmentType?: string
+  jobTitles?: string[]
+  excludedCompanies?: string[]
+}
+
+export interface AutoApplyProfilePayload {
+  fullName: string
+  email: string
+  location: string
+  yearsOfExperience: number | null
+  workAuthorization: string | null
+  sponsorshipRequired: boolean
+  preferredWorkArrangement: string | null
+  targetSalaryMin: number | null
+  targetSalaryMax: number | null
+}
+
+export interface AutoApplyQuestion {
+  id: string
+  prompt: string
+  answer: string | null
+  source: 'profile' | 'user'
+}
+
+export interface AutoApplyQueueItem {
+  id: string
+  runId: string
+  jobId: string
+  identityKey: string
+  applicationId: string | null
+  resumeVersionId: string | null
+  resumeVersionName: string
+  title: string
+  company: string
+  applicationUrl: string | null
+  initialMatchScore: number | null
+  finalMatchScore: number | null
+  c2cStatus: 'confirmed' | 'not_allowed' | 'unknown'
+  applicationStatus: AutoApplyQueueStatus
+  failureReason: string | null
+  questions: AutoApplyQuestion[]
+  tailoredResumeText?: string | null
+  jobDescriptionSnapshot?: string | null
+  location?: string | null
+  confirmationNumber?: string | null
+  confirmationText?: string | null
+  submittedAt?: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface AutoApplyCounts {
+  found: number
+  eligible: number
+  autoApplyCapable?: number
+  tailored: number
+  ready: number
+  needsInput: number
+  submitted: number
+  skipped: number
+  failed: number
+  queued?: number
+  processed?: number
+  blocked?: number
+}
+
+export interface AutoApplyRun {
+  id: string
+  userId: string
+  status: 'stopped' | 'running' | 'paused' | 'needs_attention' | 'completed' | 'failed' | 'cancelled'
+  config: AutoApplyConfigPayload
+  counts: AutoApplyCounts
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AutoApplyRunResult {
+  run: AutoApplyRun
+  items: AutoApplyQueueItem[]
+}
+
+export const PREPARE_REQUEST_TIMEOUT_MS = 50_000
+export const PREPARE_PERSIST_TIMEOUT_MS = 8_000
+
+export const PREPARE_ERROR_MESSAGES: Record<string, string> = {
+  JOB_NOT_FOUND: 'This job is no longer available.',
+  APPLICATION_NOT_FOUND: 'This Auto Apply job is no longer in the queue.',
+  APPLICATION_URL_MISSING: 'This listing does not include a valid application URL.',
+  RESUME_VERSION_NOT_FOUND: 'The selected resume version could not be found.',
+  RESUME_VERSION_NOT_READY: 'Resume is still being prepared. Please wait until the version is ready.',
+  RESUME_FILE_MISSING: 'The selected resume is missing text for this application.',
+  INVALID_APPLICATION_URL: 'This listing does not include a valid application URL.',
+  UNSUPPORTED_PROVIDER: 'This job source cannot be prepared automatically.',
+  DATABASE_ERROR: 'Could not prepare the application.',
+  DATABASE_TIMEOUT: 'Saving the application timed out.',
+  BROWSER_AUTOMATION_ERROR: 'Could not open the employer application.',
+  BROWSER_AUTOMATION_UNAVAILABLE:
+    'Browser automation is not available. JobPilot cannot open the employer application in this environment.',
+  BROWSER_LAUNCH_TIMEOUT: 'The browser did not start within the allowed time.',
+  BROWSER_NAVIGATION_TIMEOUT: 'The employer application page did not load within the allowed time.',
+  BROWSER_SELECTOR_TIMEOUT: 'The application form did not respond within the allowed time.',
+  APPLICATION_FORM_NOT_FOUND: 'The page was classified after collecting evidence and is not a supported application form.',
+  APPLICATION_FORM_NOT_RECOGNIZED: 'The page was classified after collecting evidence and is not a supported application form.',
+  APPLICATION_FORM_IN_IFRAME: 'An embedded application frame was found and must be inspected before filling.',
+  UNSUPPORTED_APPLICATION_FLOW: 'This listing does not lead to a supported application flow.',
+  JOB_PAGE_REQUIRES_APPLY_CLICK: 'The job page requires an Apply action before the application form appears.',
+  APPLICATION_PAGE_BLOCKED: 'The employer site blocked automated interaction. JobPilot will not bypass that protection.',
+  PREPARE_TIMEOUT: 'Application preparation timed out.',
+  APPLICATION_AUTOMATION_UNSUPPORTED: 'This employer site cannot be prepared automatically.',
+  AUTHENTICATION_FAILURE: 'Sign in to prepare this application.',
+}
+
+export async function withClientTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = PREPARE_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  try {
+    return await withClientTimeout(
+      fetch(input, { ...init, signal: controller.signal }),
+      timeoutMs,
+      PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT,
+    )
+  } catch (error) {
+    controller.abort()
+    if (error instanceof Error && (error.name === 'AbortError' || error.message === PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)) {
+      throw new Error(PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)
+    }
+    throw error
+  }
+}
+
+export function normalizeAutoApplyResult(body: unknown): AutoApplyRunResult | null {
+  if (!body || typeof body !== 'object') return null
+  const record = body as Record<string, unknown>
+  if (!record.run || typeof record.run !== 'object') return null
+  if (Array.isArray(record.items)) {
+    return { run: record.run as AutoApplyRun, items: record.items as AutoApplyQueueItem[] }
+  }
+  if (record.item && typeof record.item === 'object') {
+    return { run: record.run as AutoApplyRun, items: [record.item as AutoApplyQueueItem] }
+  }
+  return null
+}
+
+export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare the application.'): string {
+  if (!body || typeof body !== 'object') return fallback
+  const record = body as { code?: unknown; message?: unknown; error?: unknown }
+  if (typeof record.code === 'string' && PREPARE_ERROR_MESSAGES[record.code]) {
+    return PREPARE_ERROR_MESSAGES[record.code]
+  }
+  const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
+  if (raw && !/key|secret|service.role/i.test(raw)) return raw
+  return fallback
+}
+
+async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  const normalized = normalizeAutoApplyResult(body)
+  if (normalized) return normalized
+  const message = prepareErrorMessage(body, fallback)
+  throw new Error(/key|secret|service.role/i.test(message) ? fallback : message)
+}
+
+export async function startAutoApplyRequest(payload: {
+  userId: string
+  resumeId?: string | null
+  resumeVersionId?: string | null
+  resumeText: string
+  masterResumeText?: string
+  profile: AutoApplyProfilePayload
+  config: AutoApplyConfigPayload
+  existingApplications?: Array<{
+    jobId?: string | null
+    identityKey?: string | null
+    applicationUrl?: string | null
+    status?: string | null
+  }>
+  existingQueueIdentities?: string[]
+}): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl('/api/jobs/auto-apply/start'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readAutoApplyResult(response, 'Could not start Auto Apply.')
+}
+
+export async function listAutoApplyRunsRequest(userId: string): Promise<AutoApplyRunResult[]> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply?userId=${encodeURIComponent(userId)}`))
+  const body = (await response.json().catch(() => null)) as { runs?: AutoApplyRunResult[]; error?: string } | null
+  if (!response.ok || !body) {
+    throw new Error(body?.error && !/key|secret|service.role/i.test(body.error) ? body.error : 'Could not load Auto Apply.')
+  }
+  return Array.isArray(body.runs) ? body.runs : []
+}
+
+export async function getAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}`))
+  return readAutoApplyResult(response, 'Could not load Auto Apply.')
+}
+
+export async function prepareAutoApplyItemRequest(
+  runId: string,
+  itemId: string,
+  profile: AutoApplyProfilePayload,
+  userId?: string | null,
+  options: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<AutoApplyRunResult> {
+  const timeoutMs = options.timeoutMs ?? PREPARE_REQUEST_TIMEOUT_MS
+  const fetchImpl = options.fetchImpl ?? fetch
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await withClientTimeout(
+      fetchImpl(
+        apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/apply`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile, userId: userId ?? null }),
+          signal: controller.signal,
+        },
+      ),
+      timeoutMs,
+      PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT,
+    )
+    return await readAutoApplyResult(response, 'Could not prepare the application.')
+  } catch (error) {
+    controller.abort()
+    if (error instanceof Error && (error.name === 'AbortError' || error.message === PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)) {
+      throw new Error(PREPARE_ERROR_MESSAGES.PREPARE_TIMEOUT)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function submitAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/submit`),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  )
+  return readAutoApplyResult(response, 'Could not submit the application.')
+}
+
+export async function skipAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/skip`),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  )
+  return readAutoApplyResult(response, 'Could not skip the application.')
+}
+
+export async function cancelAutoApplyItemRequest(runId: string, itemId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/cancel`),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  )
+  return readAutoApplyResult(response, 'Could not cancel the application.')
+}
+
+export async function answerAutoApplyItemRequest(
+  runId: string,
+  itemId: string,
+  answers: Array<{ id: string; answer: string }>,
+): Promise<AutoApplyRunResult> {
+  const response = await fetch(
+    apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/answer`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    },
+  )
+  return readAutoApplyResult(response, 'Could not save the answer.')
+}
+
+export async function pauseAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/pause`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return readAutoApplyResult(response, 'Could not pause Auto Apply.')
+}
+
+export async function resumeAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/resume`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return readAutoApplyResult(response, 'Could not resume Auto Apply.')
+}
+
+export async function cancelAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/cancel`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return readAutoApplyResult(response, 'Could not cancel Auto Apply.')
 }
