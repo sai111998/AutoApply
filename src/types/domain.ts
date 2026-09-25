@@ -27,6 +27,8 @@ export type AnalysisSource = 'sample' | 'api'
 export interface Profile {
   id: string
   fullName: string
+  firstName: string
+  lastName: string
   email: string
   phone: string
   location: string

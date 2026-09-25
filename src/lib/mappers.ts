@@ -15,6 +15,8 @@ import type {
 type ProfileRow = {
   id: string
   full_name: string | null
+  first_name: string | null
+  last_name: string | null
   email: string | null
   phone: string | null
   location: string | null
@@ -140,6 +142,8 @@ export function mapProfile(row: ProfileRow, fallbackEmail: string): Profile {
   return {
     id: row.id,
     fullName: row.full_name ?? '',
+    firstName: row.first_name ?? '',
+    lastName: row.last_name ?? '',
     email: row.email ?? fallbackEmail,
     phone: row.phone ?? '',
     location: row.location ?? '',
@@ -158,6 +162,8 @@ export function profileToRow(profile: Profile) {
   return {
     id: profile.id,
     full_name: profile.fullName,
+    first_name: profile.firstName,
+    last_name: profile.lastName,
     email: profile.email,
     phone: profile.phone,
     location: profile.location,
@@ -537,6 +543,8 @@ export function emptyWorkspace(userId: string, email: string, fullName = ''): Wo
     profile: {
       id: userId,
       fullName,
+      firstName: '',
+      lastName: '',
       email,
       phone: '',
       location: '',

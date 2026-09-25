@@ -43,6 +43,8 @@ const matches = {
 export const sampleProfile: Profile = {
   id: DEMO_USER_ID,
   fullName: 'Alex Rivera',
+  firstName: 'Alex',
+  lastName: 'Rivera',
   email: 'alex.rivera@example.com',
   phone: '',
   location: 'Austin, TX',

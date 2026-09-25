@@ -53,7 +53,11 @@ import {
   skillToRow,
 } from '@/lib/mappers'
 import { persistErrorCode, persistErrorText, userFacingPersistError } from '@/lib/persist-errors'
-import { PHONE_COLUMN_MISSING_MESSAGE, persistProfileRow } from '@/lib/profile-save'
+import {
+  APPLICATION_PROFILE_COLUMNS_MISSING_MESSAGE,
+  hasApplicationProfileValues,
+  persistProfileRow,
+} from '@/lib/profile-save'
 import { buildAutoApplyWorkspaceRecords } from '@/lib/auto-apply-application'
 import { supabase } from '@/lib/supabase'
 import { RESUME_BUCKET } from '@/lib/resume-storage'
@@ -322,7 +326,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const updatedProfile = { ...profile, updatedAt: new Date().toISOString() }
       replace((current) => ({ ...current, profile: updatedProfile, skills }))
       if (isDemo || !supabase || !user) return
-      const { error: profileError, phoneStored } = await persistProfileRow(supabase, updatedProfile)
+      const { error: profileError, applicationFieldsStored } = await persistProfileRow(supabase, updatedProfile)
       if (profileError) throw profileError
       const { error: deleteError } = await supabase.from('skills').delete().eq('user_id', user.id)
       if (deleteError) throw deleteError
@@ -330,7 +334,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error: insertError } = await supabase.from('skills').insert(skills.map(skillToRow))
         if (insertError) throw insertError
       }
-      if (!phoneStored && updatedProfile.phone?.trim()) throw new Error(PHONE_COLUMN_MISSING_MESSAGE)
+      if (!applicationFieldsStored && hasApplicationProfileValues(updatedProfile)) {
+        throw new Error(APPLICATION_PROFILE_COLUMNS_MISSING_MESSAGE)
+      }
     },
     [isDemo, replace, user],
   )
