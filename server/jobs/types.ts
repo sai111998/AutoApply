@@ -1,4 +1,4 @@
-export type JobProviderName = 'job-opportunities' | 'jooble' | 'usajobs' | 'greenhouse' | 'lever' | 'ashby' | string
+export type JobProviderName = 'job-opportunities' | 'jooble' | 'usajobs' | 'greenhouse' | 'lever' | 'ashby' | 'jsearch' | string
 export type ProviderConnectionLabel = 'Live Demo' | 'Connected' | 'Not configured' | 'Disabled'
 
 export type RemoteFilter = 'any' | 'remote' | 'onsite' | 'hybrid'
@@ -72,7 +72,10 @@ export interface ProviderSearchResult {
   pageSize: number
   hasMore: boolean
   warning?: ProviderWarning
+  rawCount?: number
 }
+
+export type ProviderAvailability = 'available' | 'not_configured' | 'disabled'
 
 export interface ProviderStatus {
   name: JobProviderName
@@ -80,6 +83,7 @@ export interface ProviderStatus {
   enabled: boolean
   available: boolean
   connectionLabel: ProviderConnectionLabel
+  status: ProviderAvailability
 }
 
 export interface DiscoverRequest {

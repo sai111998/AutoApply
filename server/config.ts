@@ -66,6 +66,10 @@ export function getServerConfig() {
     leverSites: envList('LEVER_SITES', []),
     ashbyEnabled: envFlag('ASHBY_ENABLED', true),
     ashbyBoards: envList('ASHBY_BOARDS', []),
+    rapidApiKey: process.env.RAPIDAPI_KEY?.trim() ?? '',
+    jsearchEnabled: envFlag('JSEARCH_ENABLED', true),
+    jsearchApiBaseUrl: (process.env.JSEARCH_API_BASE_URL?.trim() || 'https://jsearch.p.rapidapi.com').replace(/\/$/, ''),
+    jsearchMaxPages: Number(process.env.JSEARCH_MAX_PAGES ?? 1),
   }
 }
 
@@ -78,7 +82,9 @@ type AtsDiscoveryFields =
   | 'ashbyEnabled'
   | 'ashbyBoards'
 
-export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscoveryFields> & {
+type JsearchDiscoveryFields = 'rapidApiKey' | 'jsearchEnabled' | 'jsearchApiBaseUrl' | 'jsearchMaxPages'
+
+export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscoveryFields | JsearchDiscoveryFields> & {
   greenhouseEnabled?: boolean
   greenhouseBoardTokens?: string[]
   greenhouseJobBoardApiKey?: string
@@ -86,6 +92,10 @@ export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscovery
   leverSites?: string[]
   ashbyEnabled?: boolean
   ashbyBoards?: string[]
+  rapidApiKey?: string
+  jsearchEnabled?: boolean
+  jsearchApiBaseUrl?: string
+  jsearchMaxPages?: number
 }
 
 export function atsDiscoveryConfig(config: ServerConfig) {
