@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseAutoApplyStart } from '../apply/parse'
 import { mapSyntheticApplicationFields, candidateFromStoredProfile } from '../agent/eligibility'
 import { resetAgentForTests } from '../agent'
@@ -209,6 +209,73 @@ describe('canonical profile Supabase source', () => {
     expect(canonical?.lastName).toBe('Rivera')
     expect(canonical?.phone).toBe('5125550100')
     expect(await getCandidateApplicationProfileAsync('unknown-user', undefined)).toBeNull()
+  })
+})
+
+describe('canonical profile read from public.profiles', () => {
+  const SUPABASE_USER = '11111111-1111-4111-8111-111111111111'
+  const supabaseConfig = { supabaseUrl: 'https://project.supabase.co', supabaseServiceRoleKey: 'service-role-test' } as never
+
+  function stubProfilesRow(row: Record<string, unknown>) {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input instanceof Request ? input.url : String(input)
+        urls.push(url)
+        const body = url.includes('/rest/v1/profiles') ? JSON.stringify([row]) : '[]'
+        return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
+      }),
+    )
+    return urls
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('fills last name and phone from the profiles row the Profile page saves', async () => {
+    saveCandidateProfile({
+      userId: SUPABASE_USER,
+      profile: { ...canonicalFixture, fullName: 'Alex', phone: null },
+      resumeText: 'resume',
+      resumeVersionId: 'resume-1',
+    })
+    const urls = stubProfilesRow({ id: SUPABASE_USER, full_name: 'Alex Rivera', email: 'alex.rivera@example.com', phone: '5125550100' })
+    const canonical = await getCandidateApplicationProfileAsync(SUPABASE_USER, supabaseConfig)
+    expect(canonical).toMatchObject({ firstName: 'Alex', lastName: 'Rivera', phone: '5125550100' })
+    expect(isApplicationProfileComplete(canonical).complete).toBe(true)
+    expect(urls.some((url) => url.includes('/rest/v1/profiles') && url.includes('select=*'))).toBe(true)
+  })
+
+  it('keeps an existing last name when the stored profiles name is one word', async () => {
+    saveCandidateProfile({ userId: SUPABASE_USER, profile: canonicalFixture, resumeText: 'resume', resumeVersionId: 'resume-1' })
+    stubProfilesRow({ id: SUPABASE_USER, full_name: 'Alex', email: 'alex.rivera@example.com' })
+    const canonical = await getCandidateApplicationProfileAsync(SUPABASE_USER, supabaseConfig)
+    expect(canonical).toMatchObject({ firstName: 'Alex', lastName: 'Rivera', fullName: 'Alex Rivera' })
+  })
+
+  it('reads name and email from databases without the phone column and leaves phone missing', async () => {
+    stubProfilesRow({ id: SUPABASE_USER, full_name: 'Alex Rivera', email: 'alex.rivera@example.com' })
+    const canonical = await getCandidateApplicationProfileAsync(SUPABASE_USER, supabaseConfig)
+    expect(canonical).toMatchObject({ lastName: 'Rivera', email: 'alex.rivera@example.com', phone: '' })
+    expect(isApplicationProfileComplete(canonical).missingFields).toEqual(['phone'])
+  })
+
+  it('writes the profiles row into the store the browser worker reads', async () => {
+    saveCandidateProfile({
+      userId: SUPABASE_USER,
+      profile: { ...canonicalFixture, fullName: 'Alex', phone: null },
+      resumeText: 'resume',
+      resumeVersionId: 'resume-1',
+    })
+    stubProfilesRow({ id: SUPABASE_USER, full_name: 'Alex Rivera', email: 'alex.rivera@example.com', phone: '5125550100' })
+    expect(await hydrateCandidateStoreFromSupabase(SUPABASE_USER, supabaseConfig)).toBe(true)
+    expect(getCandidateProfile(SUPABASE_USER)).toMatchObject({
+      profile: { fullName: 'Alex Rivera', phone: '5125550100' },
+      resumeText: 'resume',
+      resumeVersionId: 'resume-1',
+    })
   })
 })
 

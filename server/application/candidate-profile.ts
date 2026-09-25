@@ -98,16 +98,17 @@ export async function fetchSupabaseProfileRow(
     const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id,full_name,email,phone,location,work_authorization,sponsorship_required')
-      .eq('id', id)
-      .maybeSingle()
+    // '*' keeps name/email readable on databases that predate the phone column (migration 012).
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', id).maybeSingle()
     if (error || !data) return null
     return data as SupabaseProfileRow
   } catch {
     return null
   }
+}
+
+function hasCandidateLastName(fullName: string): boolean {
+  return splitCandidateName(fullName).lastName !== ''
 }
 
 function overlaySupabaseRow(
@@ -117,10 +118,12 @@ function overlaySupabaseRow(
   if (!row) return base
   const overlay = normalizeStoredCandidate(row as unknown as Record<string, unknown>)
   const merged: Omit<CanonicalCandidateProfile, 'userId'> = { ...base }
+  if (overlay.fullName && (hasCandidateLastName(overlay.fullName) || !base.lastName)) {
+    merged.fullName = overlay.fullName
+    merged.firstName = overlay.firstName
+    merged.lastName = overlay.lastName
+  }
   const textKeys = [
-    'firstName',
-    'lastName',
-    'fullName',
     'email',
     'phone',
     'address',
@@ -179,7 +182,10 @@ export async function hydrateCandidateStoreFromSupabase(
   if (!row) return false
   const existing = getCandidateProfile(id)
   const profile = existing?.profile
-  const fullName = (row.full_name?.trim() || profile?.fullName || '').trim()
+  const rowName = row.full_name?.trim() ?? ''
+  const storedName = profile?.fullName?.trim() ?? ''
+  const fullName =
+    rowName && (hasCandidateLastName(rowName) || !hasCandidateLastName(storedName)) ? rowName : storedName
   if (!fullName && !existing) return false
   saveCandidateProfile({
     userId: id,

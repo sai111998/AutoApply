@@ -3,6 +3,7 @@ import { defaultAutoApplyConfig } from '../apply/engine'
 import { emptyCounts, recount, syncRunStatus } from '../apply/counts'
 import { memoryStore, persistRun } from '../apply/store'
 import { saveCandidateProfile } from '../application/candidate-store'
+import { hydrateCandidateStoreFromSupabase } from '../application/candidate-profile'
 import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/profile-store'
 import { touchAgentHeartbeat } from '../automation/heartbeat'
 import type { AutoApplyQueueItem, AutoApplyRun, AutoApplyStartInput } from '../apply/types'
@@ -119,6 +120,7 @@ export async function startExecutionCampaign(serverConfig: ServerConfig, input: 
     resumeText: input.resumeText ?? input.masterResumeText,
     resumeVersionId: input.resumeVersionId,
   })
+  await hydrateCandidateStoreFromSupabase(input.userId, serverConfig)
   rememberAutoApplyProfile(input.userId, input.profile)
   touchAgentHeartbeat({ currentCampaignId: run.id, lastDiscoveryAt: createdAt })
   logExecution('AGENT_STARTED')
