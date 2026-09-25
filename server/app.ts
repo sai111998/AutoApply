@@ -46,6 +46,9 @@ import { rememberLiveJobs } from './jobs/live-store'
 import { queueDirectSmokeTestJob } from './agent/smoke-test'
 import { getBrowserWorker } from './browser-worker/worker'
 import { readAutomationHeartbeats } from './automation/heartbeat'
+import { startV2AutoApply } from './autoapply-v2/agent'
+import { isV2Error } from './autoapply-v2/errors'
+import { v2Health } from './autoapply-v2/worker'
 
 function sendApplyError(res: Response, error: unknown, fallback: string) {
   if (isApplyError(error)) {
@@ -175,6 +178,45 @@ export function createApp(options: AppOptions): Express {
       })
     } catch (error) {
       sendApplyError(res, error, 'Could not queue the smoke-test job.')
+    }
+  })
+
+  app.get('/api/autoapply-v2/health', async (_req, res) => {
+    try {
+      res.json(await v2Health())
+    } catch {
+      res.json({
+        agentRunning: false,
+        workerRunning: false,
+        browserAvailable: false,
+        queueDepth: 0,
+        lastHeartbeat: null,
+        currentState: 'idle',
+      })
+    }
+  })
+
+  app.post('/api/autoapply-v2/start', async (req: Request, res: Response) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
+      const headerUserId = req.header('x-jobpilot-user-id')?.trim() ?? ''
+      const userId =
+        headerUserId ||
+        (typeof body.userId === 'string' ? body.userId.trim() : '') ||
+        (typeof req.query.userId === 'string' ? req.query.userId.trim() : '')
+      if (!userId) {
+        res.status(401).json({ success: false, error: 'Authentication required.' })
+        return
+      }
+      const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
+      const started = await startV2AutoApply({ userId, jobId })
+      res.json({ success: true, runId: started.runId, status: started.status })
+    } catch (error) {
+      if (isV2Error(error)) {
+        res.status(error.status).json({ success: false, code: error.code, error: error.message })
+        return
+      }
+      sendApplyError(res, error, 'Could not start Auto Apply V2.')
     }
   })
 
