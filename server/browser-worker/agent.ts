@@ -23,7 +23,7 @@ import { selectedResumeForUpload } from '../application/resume'
 import { persistStepState } from '../application/navigation'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus } from '../apply/types'
 import { shouldUnattendedSubmit } from './profile'
-import { isSmokeTestItem, logSmokeTest, shouldSkipCapabilityGate } from '../agent/smoke-test'
+import { isFixtureCandidateProfile, isSmokeTestItem, logSmokeTest, shouldSkipCapabilityGate } from '../agent/smoke-test'
 import { detectAtsAdapter } from './providers'
 import { recordUserIntervention } from './intervention'
 import {
@@ -58,6 +58,21 @@ async function visibleControlLabels(page: BrowserPageLike): Promise<string[]> {
 function pageUrl(page: BrowserPageLike, fallback: string): string {
   if (!page.url) return fallback
   return typeof page.url === 'function' ? page.url() : page.url
+}
+
+function isLocalSmokeSubmitUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    if (host === '127.0.0.1' || host === 'localhost' || host.endsWith('.localhost')) return true
+    return (
+      parsed.pathname.includes('/test-employer') ||
+      parsed.pathname.includes('/extension/test/') ||
+      parsed.pathname.includes('/browser-worker/synthetic/')
+    )
+  } catch {
+    return false
+  }
 }
 
 function profileValues(profile: AutoApplyProfile, extras?: { userId?: string; resumeText?: string | null; resumeVersionId?: string | null; resumeVersionName?: string }): Record<string, string> {
@@ -155,6 +170,7 @@ export async function runApplicationAgent(input: {
     captcha: decision.pageType === 'CAPTCHA_PAGE',
     captchaDetectionConfidence: decision.pageType === 'CAPTCHA_PAGE' ? 'high' : 'none',
     captchaEvidence: decision.pageType === 'CAPTCHA_PAGE' ? decision.blockers : [],
+    pageType: decision.pageType,
     source: {
       capability: decision.capability,
       provider: decision.provider,
@@ -170,6 +186,7 @@ export async function runApplicationAgent(input: {
 
   const smoke = isSmokeTestItem(input.item)
   if (smoke) {
+    logSmokeTest('Opening employer URL', { storedApplicationUrl: input.item.applicationUrl, initialUrl })
     logSmokeTest('Employer page opened', {
       hostname: (() => {
         try {
@@ -180,6 +197,10 @@ export async function runApplicationAgent(input: {
       })(),
       pageTitle: (await input.page.title?.()) ?? '',
     })
+    logSmokeTest('Final URL', { finalUrl: currentUrl, redirectChain: input.item.redirectUrls })
+    logSmokeTest('Page type', { pageType: decision.pageType })
+    logSmokeTest('Provider', { provider: decision.provider })
+    logSmokeTest('Application detected', { detected: decision.applicationDetected })
     if (decision.applyActionAvailable) logSmokeTest('Apply action detected')
     if (decision.pageType === 'APPLICATION_PAGE' || decision.applicationDetected) {
       logSmokeTest('Application page detected')
@@ -272,6 +293,12 @@ export async function runApplicationAgent(input: {
     resumeVersionName: input.item.resumeVersionName,
   })
   const resumeUpload = selectedResumeForUpload(input.item)
+  if (smoke) {
+    logSmokeTest('Profile mapping', { mappedFields: Object.keys(values).length })
+    if (!resumeUpload) {
+      logSmokeTest('Resume uploaded', { resumeVersionId: input.item.resumeVersionId, resumeUpload: 'failure' })
+    }
+  }
   let advanced = 0
   while (advanced < 8) {
     html = await input.page.content()
@@ -329,7 +356,7 @@ export async function runApplicationAgent(input: {
         mimeType: resumeUpload.mimeType,
         buffer: resumeUpload.buffer,
       })
-      if (smoke) logSmokeTest('Resume uploaded')
+      if (smoke) logSmokeTest('Resume uploaded', { resumeVersionId: input.item.resumeVersionId, resumeUpload: 'success' })
     }
     const labels = await visibleControlLabels(input.page)
     const hasVisibleNext = labels.some((label) => /^(next|continue|save and continue)$/i.test(label))
@@ -340,13 +367,29 @@ export async function runApplicationAgent(input: {
       const shouldSubmit = shouldUnattendedSubmit(currentUrl, input.autoSubmit)
       if (shouldSubmit) {
         if (smoke) {
+          logSmokeTest('Review reached')
           logSmokeTest('Review page reached')
+          logSmokeTest('Submit found')
           logSmokeTest('Final submit found')
+          logSmokeTest('FINAL_SUBMIT_FOUND')
+        }
+        if (smoke && isFixtureCandidateProfile(input.profile) && !isLocalSmokeSubmitUrl(currentUrl)) {
+          session = markBrowserSessionState(session.itemId, 'needs_user_input', { currentUrl })
+          return {
+            session,
+            status: 'needs_user_input',
+            questions: resolved.answered,
+            failureReason: 'Stored candidate profile is a test fixture. Smoke test will not submit fake identity data to a real employer.',
+          }
         }
         logSubmitTrace('READY_TO_SUBMIT', { url: currentUrl, title })
         session = markBrowserSessionState(session.itemId, 'submitting', { currentUrl })
         const submitted = await adapter.submit(input.page)
-        if (smoke && submitted) logSmokeTest('Final submit clicked')
+        if (smoke && submitted) {
+          logSmokeTest('Submit clicked')
+          logSmokeTest('Final submit clicked')
+          logSmokeTest('FINAL_SUBMIT_CLICKED')
+        }
         logSubmitTrace(submitted ? 'FINAL_SUBMIT_ACTION_PERFORMED' : 'FINAL_SUBMIT_NOT_PERFORMED')
         await input.page.waitForLoadState?.('domcontentloaded', { timeout: 8_000 }).catch(() => undefined)
         const confirmationHtml = await input.page.content()

@@ -17,6 +17,7 @@ export interface ApplicationPreflightResult {
   captcha: boolean
   captchaDetectionConfidence: ReturnType<typeof analyzeCaptcha>['captchaDetectionConfidence']
   captchaEvidence: string[]
+  pageType?: string | null
   source: ApplicationCapabilityResult
 }
 

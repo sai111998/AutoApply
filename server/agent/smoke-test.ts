@@ -9,6 +9,8 @@ import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/prof
 import { listConfirmedApplications } from '../apply/confirmed'
 import { touchAgentHeartbeat } from '../automation/heartbeat'
 import { listLiveJobs } from '../jobs/list'
+import { getLiveJobSnapshot, liveJobToListedJob } from '../jobs/live-store'
+import { HttpError } from '../types'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus, AutoApplyRun, AutoApplyStartInput, ExistingApplicationRecord, ListedAutoApplyJob } from '../apply/types'
 import type { ServerConfig } from '../config'
 import type { FetchLike } from '../jobs/http'
@@ -23,18 +25,35 @@ export const SMOKE_TEST_MAX_JOBS = 1
 export const SMOKE_TEST_LOGS = [
   'Started',
   'Selected job',
+  'Selected existing job',
+  'Queue created',
+  'Job queued',
   'Application URL',
+  'Worker started',
+  'Worker picked up job',
+  'Worker picked job',
   'Browser started',
+  'Opening employer URL',
   'Employer page opened',
+  'Final URL',
+  'Page type',
+  'Provider',
+  'Application detected',
   'Apply action detected',
   'Application page detected',
   'Provider detected',
   'Fields detected',
+  'Profile mapping',
   'Fields filled',
   'Resume uploaded',
+  'Review reached',
   'Review page reached',
+  'Submit found',
   'Final submit found',
+  'FINAL_SUBMIT_FOUND',
+  'Submit clicked',
   'Final submit clicked',
+  'FINAL_SUBMIT_CLICKED',
   'Confirmation detected',
   'Application persisted',
 ] as const
@@ -218,6 +237,79 @@ function stringField(record: Record<string, unknown>, key: string): string {
 export function isFixtureCandidateProfile(profile?: Pick<AutoApplyProfile, 'fullName' | 'email'> | null): boolean {
   if (!profile) return false
   return /example\.com$/i.test(profile.email) || /jordan\s+hale/i.test(profile.fullName)
+}
+
+export function validateDirectSmokeUrl(raw: string | null | undefined): { ok: boolean; reason: string | null; url: string | null } {
+  const value = raw?.trim() ?? ''
+  if (!value || value === 'undefined' || value === 'null') {
+    return { ok: false, reason: 'Application URL is missing.', url: null }
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return { ok: false, reason: 'Application URL is invalid.', url: null }
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, reason: `Application URL protocol ${parsed.protocol} is not allowed.`, url: null }
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const loopback =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host.endsWith('.localhost')
+  const syntheticPath =
+    parsed.pathname.startsWith('/test-employer') ||
+    parsed.pathname.startsWith('/extension/test/') ||
+    parsed.pathname.startsWith('/browser-worker/synthetic/')
+  if (loopback && !syntheticPath) {
+    return { ok: false, reason: 'Application URL must be a real employer URL.', url: null }
+  }
+  return { ok: true, reason: null, url: parsed.toString() }
+}
+
+export type SmokeFailureCode =
+  | 'WORKER_QUEUE_FAILURE'
+  | 'NAVIGATION_FAILURE'
+  | 'APPLICATION_NAVIGATION_FAILURE'
+  | 'APPLICATION_DETECTION_FAILURE'
+  | 'RESUME_UPLOAD_FAILURE'
+  | 'SUBMISSION_ACTION_FAILURE'
+  | 'SUBMISSION_CONFIRMATION_FAILURE'
+
+export function smokeFailureCodeForStage(stage: SmokeTestStage | string | null): SmokeFailureCode | null {
+  switch (stage) {
+    case 'job_selected':
+    case 'application_url':
+      return 'WORKER_QUEUE_FAILURE'
+    case 'browser':
+    case 'employer_page':
+      return 'NAVIGATION_FAILURE'
+    case 'application_page':
+      return 'APPLICATION_NAVIGATION_FAILURE'
+    case 'form':
+    case 'fields':
+      return 'APPLICATION_DETECTION_FAILURE'
+    case 'resume':
+      return 'RESUME_UPLOAD_FAILURE'
+    case 'multi_step':
+    case 'final_submit':
+      return 'SUBMISSION_ACTION_FAILURE'
+    case 'confirmation':
+    case 'application_persisted':
+    case 'applications':
+      return 'SUBMISSION_CONFIRMATION_FAILURE'
+    default:
+      return null
+  }
+}
+
+export function smokeProfileYesNo(fields: Record<string, SmokeTestAvailability>): Record<string, 'yes' | 'no'> {
+  return Object.fromEntries(
+    Object.entries(fields).map(([key, value]) => [key, value === 'available' ? 'yes' : 'no']),
+  ) as Record<string, 'yes' | 'no'>
 }
 
 export function validateSmokeTestSafety(job: ListedAutoApplyJob, now = Date.now()): { ok: boolean; reason: string | null; url: string | null } {
@@ -551,6 +643,157 @@ export async function processSmokeTestCampaign(runId: string, fetchImpl?: FetchL
   await persistCampaignQueue(stored)
   wakeApplicationWorker()
   return stored
+}
+
+export function buildDirectSmokeTestReport(input: {
+  jobTitle?: string | null
+  company?: string | null
+  jobId?: string | null
+  applicationUrl?: string | null
+  queue: 'PASS' | 'FAIL'
+  worker: 'PASS' | 'FAIL'
+  browser: 'PASS' | 'FAIL'
+  initialUrl?: string | null
+  finalUrl?: string | null
+  pageType?: string | null
+  provider?: string | null
+  applicationDetected: 'PASS' | 'FAIL'
+  fields: 'PASS' | 'FAIL'
+  profileMapping: 'PASS' | 'FAIL'
+  resume: 'PASS' | 'FAIL'
+  multiStep: 'PASS' | 'FAIL'
+  finalSubmit: 'PASS' | 'FAIL'
+  confirmation: 'PASS' | 'FAIL'
+  applicationCreated: boolean
+  firstFailure: SmokeTestStage | string | null
+  rootCause: string
+}): string {
+  const failureCode = input.firstFailure ? smokeFailureCodeForStage(input.firstFailure) : null
+  return [
+    `JOB: ${[input.jobTitle, input.company].filter(Boolean).join(' / ') || 'none'}`,
+    `JOB ID: ${input.jobId || 'none'}`,
+    `APPLICATION URL: ${input.applicationUrl || 'none'}`,
+    `QUEUE: ${input.queue}`,
+    `WORKER: ${input.worker}`,
+    `BROWSER: ${input.browser}`,
+    `INITIAL URL: ${input.initialUrl || 'none'}`,
+    `FINAL URL: ${input.finalUrl || 'none'}`,
+    `PAGE TYPE: ${input.pageType || 'unknown'}`,
+    `PROVIDER: ${input.provider || 'unknown'}`,
+    `APPLICATION DETECTED: ${input.applicationDetected}`,
+    `FIELDS: ${input.fields}`,
+    `PROFILE MAPPING: ${input.profileMapping}`,
+    `RESUME: ${input.resume}`,
+    `MULTI-STEP: ${input.multiStep}`,
+    `FINAL SUBMIT: ${input.finalSubmit}`,
+    `CONFIRMATION: ${input.confirmation}`,
+    `APPLICATION: ${input.applicationCreated ? 'CREATED' : 'NOT CREATED'}`,
+    `FIRST FAILURE: ${input.firstFailure || 'none'}`,
+    `FAILURE CODE: ${failureCode || 'none'}`,
+    `ROOT CAUSE: ${input.rootCause || 'none'}`,
+  ].join('\n')
+}
+
+export async function queueDirectSmokeTestJob(input: { userId: string; jobId: string; serverConfig: ServerConfig }) {
+  const userId = input.userId.trim()
+  if (!userId) throw new HttpError(401, 'userId is required')
+  const jobId = input.jobId.trim()
+  if (!jobId) throw new HttpError(400, 'jobId is required')
+  if (!canSelectAnotherSmokeTestJob()) {
+    throw new HttpError(409, 'Smoke test already queued one job.')
+  }
+  const snapshot = getLiveJobSnapshot(jobId)
+  if (!snapshot) {
+    throw new HttpError(404, 'Live job was not found in the loaded Live Jobs data.')
+  }
+  const job = liveJobToListedJob(snapshot)
+  if (!job.title?.trim() || !job.company?.trim()) {
+    throw new HttpError(422, 'Job is missing an identifiable title or company.')
+  }
+  const urlCheck = validateDirectSmokeUrl(jobApplicationUrl(job))
+  if (!urlCheck.ok || !urlCheck.url) {
+    throw new HttpError(422, urlCheck.reason ?? 'Application URL is missing or invalid.')
+  }
+  const candidate = getCandidateProfile(userId)
+  if (!candidate?.profile) {
+    throw new HttpError(422, 'The JobPilot profile required for this application is missing.')
+  }
+  if (!candidate.resumeText?.trim() || !candidate.resumeVersionId?.trim()) {
+    throw new HttpError(422, 'A completed resume is required for the smoke test.')
+  }
+  const confirmed = listConfirmedApplications(userId).map((record) => ({
+    jobId: record.jobId,
+    identityKey: record.identityKey,
+    applicationUrl: record.applicationUrl,
+    status: record.status,
+  }))
+  if (hasDuplicateApplication(job, confirmed)) {
+    throw new HttpError(409, 'An application for this job already exists.')
+  }
+  const runs = memoryStore.listAll ? await memoryStore.listAll() : []
+  const queuedIdentities = runs.flatMap((entry) => entry.items.map((item) => item.identityKey))
+  if (hasDuplicateQueueEntry(job, queuedIdentities)) {
+    throw new HttpError(409, 'This job is already in the Auto Apply queue.')
+  }
+  markSmokeTestJobSelected()
+
+  const createdAt = new Date().toISOString()
+  const run: AutoApplyRun = {
+    id: randomUUID(),
+    userId,
+    status: 'running',
+    config: smokeTestCampaignConfig(undefined),
+    counts: emptyCounts(),
+    createdAt,
+    updatedAt: createdAt,
+  }
+  await persistRun(memoryStore, run, [], input.serverConfig)
+  const startInput: AutoApplyStartInput = {
+    userId,
+    resumeId: candidate.resumeVersionId,
+    resumeVersionId: candidate.resumeVersionId,
+    resumeText: candidate.resumeText,
+    masterResumeText: candidate.resumeText,
+    profile: candidate.profile,
+    config: run.config,
+  }
+  createCampaignRecord({
+    runId: run.id,
+    userId,
+    status: 'running',
+    startInput,
+    serverConfig: input.serverConfig,
+    counters: run.counts,
+  })
+  rememberAutoApplyProfile(userId, candidate.profile)
+  touchAgentHeartbeat({ currentCampaignId: run.id, lastDiscoveryAt: createdAt })
+  logSmokeTest('Selected existing job', { jobId: job.id })
+  const availability = inspectCandidateProfileAvailability({
+    profile: candidate.profile,
+    resumeText: candidate.resumeText,
+    resumeVersionId: candidate.resumeVersionId,
+  })
+  logSmokeTest('Profile mapping', { fields: smokeProfileYesNo(availability.fields) })
+
+  const stored = await memoryStore.get(run.id)
+  if (!stored) throw new AgentError('CAMPAIGN_NOT_FOUND', 'Auto Apply campaign was not found.')
+  const item = buildSmokeTestQueueItem({ run: stored.run, start: startInput, job, url: urlCheck.url })
+  stored.items.push(item)
+  stored.run.counts = {
+    ...recount(stored.items),
+    found: 1,
+    eligible: 1,
+    autoApplyCapable: 1,
+    queued: 1,
+  }
+  syncRunStatus(stored.run, stored.items)
+  rememberQueueResume(stored.run.userId, item)
+  persistExecutionState(item.id, 'queued')
+  await persistCampaignQueue(stored)
+  logSmokeTest('Queue created')
+  logSmokeTest('Job queued')
+  wakeApplicationWorker()
+  return { run: stored.run, item, job }
 }
 
 function safeHostname(url: string): string {

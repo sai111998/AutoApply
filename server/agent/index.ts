@@ -4,6 +4,7 @@ export {
   isAutoApplySmokeTestEnabled,
   startSmokeTestCampaign,
   processSmokeTestCampaign,
+  queueDirectSmokeTestJob,
   selectSmokeTestJob,
   resetSmokeTestStateForTests,
 } from './smoke-test'

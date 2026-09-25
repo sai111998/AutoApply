@@ -42,6 +42,10 @@ import { renderResumePdf } from './tailor/pdf'
 import { HttpError } from './types'
 import { registerExtensionRoutes } from './extension/routes'
 import { registerBrowserWorkerRoutes } from './browser-worker/routes'
+import { rememberLiveJobs } from './jobs/live-store'
+import { queueDirectSmokeTestJob } from './agent/smoke-test'
+import { getBrowserWorker } from './browser-worker/worker'
+import { readAutomationHeartbeats } from './automation/heartbeat'
 
 function sendApplyError(res: Response, error: unknown, fallback: string) {
   if (isApplyError(error)) {
@@ -144,10 +148,41 @@ export function createApp(options: AppOptions): Express {
     res.json({ applications: records })
   })
 
+  app.post('/api/automation/smoke-test', async (req: Request, res: Response) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
+      const headerUserId = req.header('x-jobpilot-user-id')?.trim() ?? ''
+      const userId =
+        headerUserId ||
+        (typeof body.userId === 'string' ? body.userId.trim() : '') ||
+        (typeof req.query.userId === 'string' ? req.query.userId.trim() : '')
+      const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
+      if (process.env.VITEST !== 'true') {
+        const workerRunning = Boolean(getBrowserWorker()?.running()) || readAutomationHeartbeats().worker.running
+        if (!workerRunning) {
+          res.status(503).json({ success: false, error: 'The browser worker is not running.' })
+          return
+        }
+      }
+      const queued = await queueDirectSmokeTestJob({ userId, jobId, serverConfig: options.config })
+      res.json({
+        success: true,
+        applicationId: queued.item.applicationId,
+        status: queued.item.applicationStatus,
+        runId: queued.run.id,
+        itemId: queued.item.id,
+        jobId: queued.job.id,
+      })
+    } catch (error) {
+      sendApplyError(res, error, 'Could not queue the smoke-test job.')
+    }
+  })
+
   app.get('/api/jobs', async (req: Request, res: Response) => {
     try {
       const request = parseLiveJobsRequest(req.query)
       const result = await listLiveJobs(options.config, request, options.fetchImpl)
+      rememberLiveJobs(result.jobs)
       res.json(result)
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500

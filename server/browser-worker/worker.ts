@@ -96,6 +96,10 @@ async function runClaimedJob(
     return item
   }
   if (smoke) markSmokeTestJobProcessed()
+  if (smoke) {
+    logSmokeTest('Worker picked up job')
+    logSmokeTest('Worker picked job')
+  }
   if (isSyntheticExecutionUrl(item.applicationUrl)) {
     logExecution('WORKER_PICKED_UP')
     persistExecutionState(item.id, 'opening')
@@ -190,6 +194,9 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
     async start() {
       if (!stopped && loop) return
       stopped = false
+      if (process.env.AUTO_APPLY_SMOKE_TEST?.trim().toLowerCase() === 'true') {
+        logSmokeTest('Worker started')
+      }
       startWorkerHeartbeatLoop()
       const runs = memoryStore.listAll ? await memoryStore.listAll() : []
       for (const stored of runs) {

@@ -272,6 +272,7 @@ describe('browser worker architecture', () => {
       const processed = await worker.processOnce()
       expect(processed?.applicationStatus).toBe('submitted')
       expect(processed?.failureReason).toBeNull()
+      expect(processed?.preflight?.pageType).toBe('APPLICATION_PAGE')
       expect(processed?.confirmationNumber).toBe('ABC12345')
       expect(processed?.applicationStatus).not.toBe('opening')
       const confirmed = listConfirmedApplications('user-1')
