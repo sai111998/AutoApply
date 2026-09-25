@@ -10,6 +10,15 @@ import { runExecutionBrowser } from './browser'
 import { isIsolatedRealEmployerUrl, isSyntheticExecutionUrl, isolateRealEmployerItem } from '../agent/worker'
 import { logExecution } from '../agent/campaign'
 import { persistExecutionState } from '../agent/state'
+import {
+  canProcessAnotherSmokeTestJob,
+  executionStateForSmokeStatus,
+  isSmokeTestItem,
+  logSmokeTest,
+  mapAgentStatusToSmokeStatus,
+  markSmokeTestJobProcessed,
+  shouldIsolateRealEmployerUrl,
+} from '../agent/smoke-test'
 import { recoverStuckBrowserJobs } from './recovery'
 import { resolveUserIntervention } from './intervention'
 import { getBrowserApplicationSession, listBrowserApplicationSessions, markBrowserSessionState } from './session'
@@ -70,12 +79,23 @@ async function runClaimedJob(
 ): Promise<AutoApplyQueueItem> {
   const { stored, item } = claimed
   const userId = stored.run.userId
-  if (isIsolatedRealEmployerUrl(item.applicationUrl)) {
+  if (shouldIsolateRealEmployerUrl(isIsolatedRealEmployerUrl(item.applicationUrl), item)) {
     isolateRealEmployerItem(item)
     await persistBrowserJob(stored, item)
     releaseBrowserJob(item.id)
     return item
   }
+  const smoke = isSmokeTestItem(item)
+  if (smoke && !canProcessAnotherSmokeTestJob()) {
+    item.applicationStatus = 'submission_failed'
+    item.failureReason = 'Smoke test already processed one job.'
+    item.updatedAt = new Date().toISOString()
+    persistExecutionState(item.id, 'failed', item.failureReason)
+    await persistBrowserJob(stored, item)
+    releaseBrowserJob(item.id)
+    return item
+  }
+  if (smoke) markSmokeTestJobProcessed()
   if (isSyntheticExecutionUrl(item.applicationUrl)) {
     logExecution('WORKER_PICKED_UP')
     persistExecutionState(item.id, 'opening')
@@ -99,14 +119,16 @@ async function runClaimedJob(
   }
   const profile = profileForJob(userId, item).profile ?? getStoredProfile(userId)
   if (!profile) {
-    item.applicationStatus = 'failed'
+    item.applicationStatus = smoke ? 'needs_user_input' : 'failed'
     item.failureReason = 'The JobPilot profile required for this application is missing.'
+    persistExecutionState(item.id, 'needs_user_input', item.failureReason)
     await persistBrowserJob(stored, item)
     releaseBrowserJob(item.id)
     return item
   }
   const opened = await runtime.newPage()
   try {
+    if (smoke) logSmokeTest('Browser started')
     const resume = profileForJob(userId, item).resume
     if (resume?.text) item.tailoredResumeText = resume.text
     const result = await runApplicationAgent({
@@ -116,9 +138,10 @@ async function runClaimedJob(
       page: opened.page,
       pageId: opened.id,
       contextId: runtime.contextId,
-      autoSubmit: options.autoSubmit,
+      autoSubmit: smoke ? true : options.autoSubmit,
     })
-    item.applicationStatus = result.status
+    const submitClicked = Boolean(result.confirmation?.confirmed || result.status === 'needs_confirmation' || result.status === 'submitted')
+    item.applicationStatus = smoke ? mapAgentStatusToSmokeStatus(result.status, submitClicked) : result.status
     item.failureReason = result.failureReason
     item.questions = result.questions
     item.sessionId = result.session.pageId
@@ -127,12 +150,20 @@ async function runClaimedJob(
         ...result.confirmation,
         detected: Boolean(result.confirmation.detected ?? result.confirmation.confirmed),
       })
+      if (smoke && item.applicationStatus !== 'submitted') {
+        item.applicationStatus = mapAgentStatusToSmokeStatus(result.status, submitClicked)
+      }
     }
+    persistExecutionState(item.id, executionStateForSmokeStatus(item.applicationStatus), item.failureReason)
     await persistBrowserJob(stored, item)
     if (item.applicationStatus === 'submitted') {
       await persistConfirmedSubmission({ userId, item, provider: result.session.provider, config: getServerConfig() })
+      if (smoke) logSmokeTest('Application persisted')
     }
-    if (['captcha_required', 'mfa_required', 'login_required', 'needs_user_input', 'ready_for_submission', 'needs_user_confirmation', 'needs_confirmation'].includes(item.applicationStatus)) {
+    if (
+      !smoke &&
+      ['captcha_required', 'mfa_required', 'login_required', 'needs_user_input', 'ready_for_submission', 'needs_user_confirmation', 'needs_confirmation'].includes(item.applicationStatus)
+    ) {
       livePages.set(item.id, opened)
     } else {
       await opened.close()
@@ -140,7 +171,7 @@ async function runClaimedJob(
     releaseBrowserJob(item.id)
     return item
   } catch (error) {
-    item.applicationStatus = 'failed'
+    item.applicationStatus = smoke ? 'submission_failed' : 'failed'
     item.failureReason = error instanceof Error ? error.message : 'The browser worker could not complete this application.'
     await persistBrowserJob(stored, item)
     await opened.close().catch(() => undefined)

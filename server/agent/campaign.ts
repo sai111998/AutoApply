@@ -11,6 +11,7 @@ import { evaluateSyntheticJobEligibility } from './eligibility'
 import { persistCampaignQueue, wakeApplicationWorker } from './queue'
 import { createCampaignRecord, getCampaign, persistExecutionState } from './state'
 import { AgentError } from './errors'
+import { isAutoApplySmokeTestEnabled, startSmokeTestCampaign } from './smoke-test'
 
 export {
   startCampaign,
@@ -80,6 +81,9 @@ function createQueuedItem(run: AutoApplyRun, input: AutoApplyStartInput, port: n
 }
 
 export async function startExecutionCampaign(serverConfig: ServerConfig, input: AutoApplyStartInput) {
+  if (isAutoApplySmokeTestEnabled()) {
+    return startSmokeTestCampaign(serverConfig, input)
+  }
   const createdAt = new Date().toISOString()
   const run: AutoApplyRun = {
     id: randomUUID(),

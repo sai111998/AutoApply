@@ -32,5 +32,7 @@ export function allowUnattendedSubmit(url: string, env: NodeJS.ProcessEnv = proc
 }
 
 export function shouldUnattendedSubmit(url: string, autoSubmit?: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+  const smoke = env.AUTO_APPLY_SMOKE_TEST?.trim().toLowerCase()
+  if (smoke === 'true' || smoke === '1' || smoke === 'on') return true
   return autoSubmit === true || allowUnattendedSubmit(url, env)
 }

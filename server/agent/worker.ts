@@ -3,6 +3,7 @@ import { AgentError } from './errors'
 import { persistExecutionState } from './state'
 import { memoryStore } from '../apply/store'
 import type { AutoApplyQueueItem } from '../apply/types'
+import { shouldIsolateRealEmployerUrl } from './smoke-test'
 
 export function isIsolatedRealEmployerUrl(url: string | null | undefined): boolean {
   if (!url?.trim()) return false
@@ -48,7 +49,7 @@ export async function dispatchQueuedApplication(itemId: string) {
   for (const stored of runs) {
     const item = stored.items.find((entry) => entry.id === itemId)
     if (!item) continue
-    if (isIsolatedRealEmployerUrl(item.applicationUrl)) {
+    if (shouldIsolateRealEmployerUrl(isIsolatedRealEmployerUrl(item.applicationUrl), item)) {
       isolateRealEmployerItem(item)
       await persistCampaignQueue(stored)
       return item

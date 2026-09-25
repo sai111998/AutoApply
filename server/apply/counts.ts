@@ -1,6 +1,6 @@
 import type { AutoApplyCounts, AutoApplyQueueItem, AutoApplyRun } from './types'
 
-const FAILED_STATUSES = new Set(['failed', 'blocked', 'automation_blocked', 'extension_not_connected'])
+const FAILED_STATUSES = new Set(['failed', 'submission_failed', 'blocked', 'automation_blocked', 'extension_not_connected'])
 const BLOCKED_STATUSES = new Set(['captcha_required', 'mfa_required', 'login_required', 'blocked', 'automation_blocked'])
 const PROCESSED_STATUSES = new Set([
   'opening',
@@ -12,6 +12,8 @@ const PROCESSED_STATUSES = new Set([
   'needs_user_input',
   'needs_user_confirmation',
   'needs_confirmation',
+  'submission_uncertain',
+  'submission_failed',
   'captcha_required',
   'mfa_required',
   'login_required',
@@ -25,6 +27,7 @@ const TERMINAL_STATUSES = new Set([
   'skipped',
   'cancelled',
   'failed',
+  'submission_failed',
   'blocked',
   'automation_blocked',
 ])
@@ -32,6 +35,7 @@ const ATTENTION_STATUSES = new Set([
   'needs_user_input',
   'needs_user_confirmation',
   'needs_confirmation',
+  'submission_uncertain',
   'captcha_required',
   'mfa_required',
   'login_required',

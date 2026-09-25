@@ -52,6 +52,11 @@ export function getCandidateProfile(userId: string): StoredCandidateRecord | nul
   return records.get(userId.trim()) ?? null
 }
 
+export function listCandidateUserIds(): string[] {
+  reloadCandidates()
+  return [...records.keys()]
+}
+
 export function candidateRequiredFieldsExist(profile: AutoApplyProfile | null | undefined): {
   firstName: 'yes' | 'no'
   lastName: 'yes' | 'no'

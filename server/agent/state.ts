@@ -114,6 +114,10 @@ export const EXECUTION_STATES = [
   'failed',
   'needs_user_input',
   'submission_uncertain',
+  'submission_failed',
+  'captcha_required',
+  'login_required',
+  'mfa_required',
 ] as const
 
 export type ExecutionState = (typeof EXECUTION_STATES)[number]

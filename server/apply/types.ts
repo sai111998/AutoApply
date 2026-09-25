@@ -46,6 +46,8 @@ export type AutoApplyQueueStatus =
   | 'submitting'
   | 'needs_user_confirmation'
   | 'needs_confirmation'
+  | 'submission_uncertain'
+  | 'submission_failed'
   | 'submitted'
   | 'failed'
   | 'skipped'

@@ -23,6 +23,7 @@ import { selectedResumeForUpload } from '../application/resume'
 import { persistStepState } from '../application/navigation'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus } from '../apply/types'
 import { shouldUnattendedSubmit } from './profile'
+import { isSmokeTestItem, logSmokeTest, shouldSkipCapabilityGate } from '../agent/smoke-test'
 import { detectAtsAdapter } from './providers'
 import { recordUserIntervention } from './intervention'
 import {
@@ -167,6 +168,26 @@ export async function runApplicationAgent(input: {
   input.item.captchaDetectionConfidence = input.item.preflight.captchaDetectionConfidence
   input.item.captchaEvidence = input.item.preflight.captchaEvidence
 
+  const smoke = isSmokeTestItem(input.item)
+  if (smoke) {
+    logSmokeTest('Employer page opened', {
+      hostname: (() => {
+        try {
+          return new URL(currentUrl).hostname
+        } catch {
+          return 'invalid'
+        }
+      })(),
+      pageTitle: (await input.page.title?.()) ?? '',
+    })
+    if (decision.applyActionAvailable) logSmokeTest('Apply action detected')
+    if (decision.pageType === 'APPLICATION_PAGE' || decision.applicationDetected) {
+      logSmokeTest('Application page detected')
+    }
+    if (decision.provider) {
+      logSmokeTest('Provider detected', { applicationProvider: decision.provider, evidence: decision.evidence?.slice(0, 6) })
+    }
+  }
   const mapped = statusFromCapability(decision)
   if (mapped.status === 'captcha_required') {
     recordUserIntervention({
@@ -198,7 +219,7 @@ export async function runApplicationAgent(input: {
     session = markBrowserSessionState(session.itemId, 'mfa_required', { currentUrl, provider: decision.provider })
     return { session, status: 'mfa_required', questions: [], failureReason: null }
   }
-  if (!canEnterAutonomousApply(decision.capability)) {
+  if (!shouldSkipCapabilityGate(input.item) && !canEnterAutonomousApply(decision.capability)) {
     session = markBrowserSessionState(session.itemId, mapped.status === 'needs_user_input' ? 'needs_user_input' : 'skipped', {
       currentUrl,
       failureReason: mapped.failureReason,
@@ -240,6 +261,10 @@ export async function runApplicationAgent(input: {
   }
 
   session = markBrowserSessionState(session.itemId, 'application_page', { currentUrl, provider: adapter.id })
+  if (smoke) {
+    logSmokeTest('Application page detected')
+    logSmokeTest('Provider detected', { applicationProvider: adapter.id })
+  }
   const values = profileValues(input.profile, {
     userId: input.userId,
     resumeText: input.item.tailoredResumeText,
@@ -278,6 +303,7 @@ export async function runApplicationAgent(input: {
       capability: input.item.applicationCapability,
       code: resolved.unknown.length ? 'needs_user_input' : 'mapped',
     })
+    if (smoke) logSmokeTest('Fields detected', { known: resolved.answered.length, unknownRequired: resolved.unknown.length })
     if (resolved.unknown.length && surface.kind === 'application') {
       recordUserIntervention({
         applicationId: input.item.applicationId || input.item.id,
@@ -296,12 +322,14 @@ export async function runApplicationAgent(input: {
     session = markBrowserSessionState(session.itemId, 'filling', { currentUrl, provider: adapter.id })
     persistStepState({ step: advanced + 1, pageType: surface.kind, url: currentUrl })
     await adapter.fillFields(input.page, values)
+    if (smoke) logSmokeTest('Fields filled', { mapped: Object.keys(values).length })
     if (resumeUpload) {
       await adapter.uploadResume(input.page, {
         fileName: resumeUpload.fileName,
         mimeType: resumeUpload.mimeType,
         buffer: resumeUpload.buffer,
       })
+      if (smoke) logSmokeTest('Resume uploaded')
     }
     const labels = await visibleControlLabels(input.page)
     const hasVisibleNext = labels.some((label) => /^(next|continue|save and continue)$/i.test(label))
@@ -311,9 +339,14 @@ export async function runApplicationAgent(input: {
       const title = (await input.page.title?.()) ?? ''
       const shouldSubmit = shouldUnattendedSubmit(currentUrl, input.autoSubmit)
       if (shouldSubmit) {
+        if (smoke) {
+          logSmokeTest('Review page reached')
+          logSmokeTest('Final submit found')
+        }
         logSubmitTrace('READY_TO_SUBMIT', { url: currentUrl, title })
         session = markBrowserSessionState(session.itemId, 'submitting', { currentUrl })
         const submitted = await adapter.submit(input.page)
+        if (smoke && submitted) logSmokeTest('Final submit clicked')
         logSubmitTrace(submitted ? 'FINAL_SUBMIT_ACTION_PERFORMED' : 'FINAL_SUBMIT_NOT_PERFORMED')
         await input.page.waitForLoadState?.('domcontentloaded', { timeout: 8_000 }).catch(() => undefined)
         const confirmationHtml = await input.page.content()
@@ -348,6 +381,7 @@ export async function runApplicationAgent(input: {
         session = markBrowserSessionState(session.itemId, 'submitted', { currentUrl: confirmationUrl })
         input.item.finalApplicationUrl = confirmationUrl
         input.item.applicationUrl = confirmationUrl
+        if (smoke) logSmokeTest('Confirmation detected')
         return {
           session,
           status: 'submitted',
