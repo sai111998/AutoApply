@@ -90,6 +90,16 @@ export interface AutoApplyProfile {
   preferredWorkArrangement: string | null
   targetSalaryMin: number | null
   targetSalaryMax: number | null
+  phone?: string | null
+  linkedin?: string | null
+  github?: string | null
+  portfolio?: string | null
+  address?: string | null
+  city?: string | null
+  state?: string | null
+  zip?: string | null
+  country?: string | null
+  preferredName?: string | null
 }
 
 export interface AutoApplyQuestion {

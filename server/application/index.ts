@@ -11,6 +11,12 @@ export { answerKnownQuestion, resolveApplicationQuestions, rememberUserAnswers }
 export { detectSubmissionConfirmation } from './submission'
 export { createBrowserApplicationSession, queueStatusFromSession } from './session'
 export { buildCandidateApplicationProfile, candidateFillValues, verifiedSkillYears } from './profile'
+export {
+  getCandidateApplicationProfile,
+  normalizeStoredCandidate,
+  splitCandidateName,
+  type CanonicalCandidateProfile,
+} from './candidate-profile'
 export { applicationQuestionMapper, mapApplicationQuestions } from './mapper'
 export {
   applyRegistryToCapabilityDecision,

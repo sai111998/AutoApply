@@ -1,6 +1,7 @@
 import { extractResumeLocal } from '../match/extract-local'
 import type { EvidenceItem, ResumeProfile } from '../match/types'
 import type { AutoApplyProfile } from '../apply/types'
+import { splitCandidateName } from './candidate-profile'
 
 export interface CandidateExperience {
   employer: string
@@ -105,8 +106,7 @@ export interface CandidateProfileInput {
 }
 
 function splitName(fullName: string): { firstName: string; lastName: string } {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean)
-  return { firstName: parts[0] ?? '', lastName: parts.slice(1).join(' ') }
+  return splitCandidateName(fullName)
 }
 
 function parseLocation(raw: string): { city: string; state: string; zip: string; country: string } {

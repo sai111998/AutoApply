@@ -32,6 +32,11 @@ function asStringList(value: unknown): string[] {
   return text ? text.split(',').map((item) => item.trim()).filter(Boolean) : []
 }
 
+function asOptionalString(value: unknown): string | null {
+  const text = asString(value)
+  return text || null
+}
+
 function asProfile(value: unknown): AutoApplyProfile {
   const record = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
   return {
@@ -44,6 +49,16 @@ function asProfile(value: unknown): AutoApplyProfile {
     preferredWorkArrangement: asString(record.preferredWorkArrangement) || null,
     targetSalaryMin: typeof record.targetSalaryMin === 'number' ? record.targetSalaryMin : null,
     targetSalaryMax: typeof record.targetSalaryMax === 'number' ? record.targetSalaryMax : null,
+    phone: asOptionalString(record.phone),
+    linkedin: asOptionalString(record.linkedin),
+    github: asOptionalString(record.github),
+    portfolio: asOptionalString(record.portfolio),
+    address: asOptionalString(record.address),
+    city: asOptionalString(record.city),
+    state: asOptionalString(record.state),
+    zip: asOptionalString(record.zip),
+    country: asOptionalString(record.country),
+    preferredName: asOptionalString(record.preferredName),
   }
 }
 
