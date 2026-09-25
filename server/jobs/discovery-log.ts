@@ -14,13 +14,16 @@ export interface ProviderDiscoveryCounts {
   raw: number
   normalized: number
   deduplicated: number
+  duplicatesRemoved: number
+  usableApplicationUrls: number
   filtered: number
+  warning?: string
 }
 
 export function logDiscoveryCounts(entry: ProviderDiscoveryCounts): void {
   logApplyEvent('discovery-provider', {
     provider: entry.provider,
-    code: 'OK',
+    code: entry.warning ?? 'OK',
     error: null,
   })
   console.info('[AutoApply] discovery-provider', {
@@ -32,6 +35,9 @@ export function logDiscoveryCounts(entry: ProviderDiscoveryCounts): void {
     raw: entry.raw,
     normalized: entry.normalized,
     deduplicated: entry.deduplicated,
+    duplicatesRemoved: entry.duplicatesRemoved,
+    usableApplicationUrls: entry.usableApplicationUrls,
     filtered: entry.filtered,
+    warning: entry.warning ?? null,
   })
 }
