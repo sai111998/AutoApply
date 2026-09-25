@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import type { ServerConfig } from '../config'
 import { logApplyEvent } from './log'
@@ -17,23 +20,68 @@ export interface AutoApplyStore {
 }
 
 const runs = new Map<string, StoredRun>()
+let hydrated = false
+
+function storeFile(): string {
+  const directory = process.env.JOBPILOT_RUNTIME_DIR?.trim()
+    ? path.resolve(process.env.JOBPILOT_RUNTIME_DIR)
+    : path.join(os.tmpdir(), 'jobpilot-automation')
+  return path.join(directory, 'auto-apply-store.json')
+}
+
+function shouldPersistFile(): boolean {
+  return process.env.VITEST !== 'true'
+}
+
+function hydrateFromDisk() {
+  if (hydrated || !shouldPersistFile()) {
+    hydrated = true
+    return
+  }
+  hydrated = true
+  try {
+    const file = storeFile()
+    if (!existsSync(file)) return
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as StoredRun[]
+    for (const entry of parsed) {
+      if (entry?.run?.id) runs.set(entry.run.id, entry)
+    }
+  } catch {
+    // Keep an empty in-memory store if the runtime file is unreadable.
+  }
+}
+
+function flushToDisk() {
+  if (!shouldPersistFile()) return
+  const directory = path.dirname(storeFile())
+  mkdirSync(directory, { recursive: true })
+  const file = storeFile()
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify([...runs.values()]))
+  renameSync(tmp, file)
+}
 
 export const memoryStore: AutoApplyStore = {
   async save(run, items) {
+    hydrateFromDisk()
     runs.set(run.id, { run: { ...run }, items: items.map((item) => ({ ...item })) })
+    flushToDisk()
   },
   async get(runId) {
+    hydrateFromDisk()
     const current = runs.get(runId)
     if (!current) return null
     return { run: { ...current.run }, items: current.items.map((item) => ({ ...item })) }
   },
   async list(userId) {
+    hydrateFromDisk()
     return [...runs.values()]
       .filter((item) => item.run.userId === userId)
       .sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt))
       .map((item) => ({ run: { ...item.run }, items: item.items.map((entry) => ({ ...entry })) }))
   },
   async listAll() {
+    hydrateFromDisk()
     return [...runs.values()].map((item) => ({
       run: { ...item.run },
       items: item.items.map((entry) => ({ ...entry })),
@@ -43,6 +91,14 @@ export const memoryStore: AutoApplyStore = {
 
 export function clearAutoApplyMemory() {
   runs.clear()
+  hydrated = true
+  if (shouldPersistFile()) {
+    try {
+      flushToDisk()
+    } catch {
+      // Tests and local resets should not fail if the runtime file cannot be written.
+    }
+  }
 }
 
 function database(config?: ServerConfig) {

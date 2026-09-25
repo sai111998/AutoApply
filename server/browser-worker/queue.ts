@@ -1,4 +1,5 @@
 import { getStoredProfile, getStoredResume } from '../extension/profile-store'
+import { getCandidateProfile } from '../application/candidate-store'
 import { memoryStore, persistRun, type StoredRun } from '../apply/store'
 import { recountWithDiscovery, syncRunStatus } from '../apply/counts'
 import type { AutoApplyQueueItem } from '../apply/types'
@@ -99,8 +100,11 @@ export async function persistBrowserJob(stored: StoredRun, item: AutoApplyQueueI
 }
 
 export function profileForJob(userId: string, item: AutoApplyQueueItem) {
+  const jobpilot = getCandidateProfile(userId)
   return {
-    profile: getStoredProfile(userId),
-    resume: getStoredResume(userId, item.applicationId || item.id),
+    profile: jobpilot?.profile ?? getStoredProfile(userId),
+    resume: jobpilot?.resumeText
+      ? { text: jobpilot.resumeText, versionId: jobpilot.resumeVersionId }
+      : getStoredResume(userId, item.applicationId || item.id),
   }
 }

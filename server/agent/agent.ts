@@ -13,7 +13,9 @@ import type { FetchLike } from '../jobs/http'
 import { AgentError } from './errors'
 import { recordAgentEvent } from './events'
 import { persistCampaignQueue, wakeApplicationWorker } from './queue'
-import { canSearchAgain } from './policy'
+import { saveCandidateProfile } from '../application/candidate-store'
+import { touchAgentHeartbeat } from '../automation/heartbeat'
+import { agentIntervalMs, canSearchAgain } from './policy'
 import {
   createCampaignRecord,
   getCampaign,
@@ -46,6 +48,17 @@ export async function startCampaign(
     counters: started.run.counts,
   })
   recordAgentEvent('campaign_started', campaign.runId, { queued: started.items.length }, input.userId)
+  saveCandidateProfile({
+    userId: input.userId,
+    profile: input.profile,
+    resumeText: input.resumeText ?? input.masterResumeText,
+    resumeVersionId: input.resumeVersionId,
+  })
+  touchAgentHeartbeat({
+    currentCampaignId: campaign.runId,
+    lastDiscoveryAt: started.funnel.lastDiscoveryAt ?? new Date().toISOString(),
+    nextDiscoveryAt: new Date(Date.now() + agentIntervalMs()).toISOString(),
+  })
   if (started.items.length) wakeApplicationWorker()
   if (options.schedule === true || (options.schedule !== false && process.env.VITEST !== 'true')) {
     const { startAgentScheduler } = await import('./scheduler')
@@ -74,6 +87,11 @@ export async function tickCampaign(runId: string, now = Date.now()) {
     counters: refreshed.run.counts,
     lastTickAt: now,
     ticks: campaign.ticks + 1,
+  })
+  touchAgentHeartbeat({
+    currentCampaignId: runId,
+    lastDiscoveryAt: new Date(now).toISOString(),
+    nextDiscoveryAt: new Date(now + agentIntervalMs()).toISOString(),
   })
   if (refreshed.added > 0) {
     recordAgentEvent('jobs_queued', runId, { added: refreshed.added }, campaign.userId)

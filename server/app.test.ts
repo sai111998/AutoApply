@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import request from 'supertest'
 import { createApp } from './app'
+import { resetAgentForTests } from './agent'
+import { resetAutomationHeartbeatsForTests } from './automation/heartbeat'
 import type { ServerConfig } from './config'
 import type { LlmClient } from './services/llm'
 
@@ -343,6 +345,11 @@ Java, Spring Boot, PostgreSQL
 })
 
 describe('GET /api/automation/health', () => {
+  afterEach(() => {
+    resetAgentForTests()
+    resetAutomationHeartbeatsForTests()
+  })
+
   it('reports browser availability without exposing secrets or filesystem paths', async () => {
     const app = createApp({
       config,
@@ -356,15 +363,14 @@ describe('GET /api/automation/health', () => {
     })
     const response = await request(app).get('/api/automation/health')
     expect(response.status).toBe(200)
-    expect(response.body).toEqual({
-      available: false,
-      browser: null,
-      playwright: true,
-      worker: false,
-      queue: { depth: 0, processing: 0 },
-      runtime: 'node-server',
-      reason: 'Chromium executable not found',
-    })
+    expect(response.body.available).toBe(false)
+    expect(response.body.browser).toEqual({ available: false })
+    expect(response.body.playwright).toBe(true)
+    expect(response.body.worker).toEqual({ running: false, lastHeartbeat: null })
+    expect(response.body.agent.running).toBe(false)
+    expect(response.body.queue).toEqual({ queued: 0, processing: 0 })
+    expect(response.body.runtime).toBe('node-server')
+    expect(response.body.reason).toBe('Chromium executable not found')
     expect(JSON.stringify(response.body)).not.toContain('test-key')
     expect(JSON.stringify(response.body)).not.toMatch(/\/home\/|\/root\/|SECRET|bearer/i)
   })
@@ -380,14 +386,13 @@ describe('GET /api/automation/health', () => {
       }),
     })
     const response = await request(app).get('/api/automation/health')
-    expect(response.body).toEqual({
-      available: true,
-      browser: 'chromium',
-      playwright: true,
-      worker: false,
-      queue: { depth: 0, processing: 0 },
-      runtime: 'node-server',
-    })
+    expect(response.body.available).toBe(true)
+    expect(response.body.browser).toEqual({ available: true })
+    expect(response.body.playwright).toBe(true)
+    expect(response.body.worker.running).toBe(false)
+    expect(response.body.agent.running).toBe(false)
+    expect(response.body.queue).toEqual({ queued: 0, processing: 0 })
+    expect(response.body.runtime).toBe('node-server')
   })
 })
 

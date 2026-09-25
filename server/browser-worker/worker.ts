@@ -21,6 +21,7 @@ import {
 } from './queue'
 import { launchPersistentBrowser, resetBrowserRuntimeForTests, type PersistentBrowserRuntime } from './runtime'
 import { detectAtsAdapter } from './providers'
+import { markWorkerStopped, touchWorkerHeartbeat } from '../automation/heartbeat'
 
 const livePages = new Map<string, { close: () => Promise<void>; page: import('./types').BrowserPageLike }>()
 
@@ -64,7 +65,7 @@ async function runClaimedJob(
 ): Promise<AutoApplyQueueItem> {
   const { stored, item } = claimed
   const userId = stored.run.userId
-  const profile = getStoredProfile(userId) ?? profileForJob(userId, item).profile
+  const profile = profileForJob(userId, item).profile ?? getStoredProfile(userId)
   if (!profile) {
     item.applicationStatus = 'failed'
     item.failureReason = 'The JobPilot profile required for this application is missing.'
@@ -126,6 +127,7 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
     async start() {
       if (!stopped && loop) return
       stopped = false
+      touchWorkerHeartbeat()
       const runs = memoryStore.listAll ? await memoryStore.listAll() : []
       for (const stored of runs) {
         recoverStuckBrowserJobs(stored.items, {
@@ -137,6 +139,7 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
       }
       loop = (async () => {
         while (!stopped) {
+          touchWorkerHeartbeat()
           await instance.processOnce()
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, options.pollMs ?? 750)
@@ -165,6 +168,7 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
       await loop?.catch(() => undefined)
       loop = null
       await runtime.close()
+      markWorkerStopped()
       if (worker === instance) worker = null
     },
   }

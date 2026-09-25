@@ -1,3 +1,5 @@
+import { queryTokensMatch } from '../query-expand'
+
 export function parseCsvBoards(value: string | string[] | null | undefined): string[] {
   const items = Array.isArray(value) ? value : (value ?? '').split(',')
   return [...new Set(items.map((item) => item.trim().toLowerCase()).filter(Boolean))]
@@ -13,12 +15,8 @@ export function matchesProviderQuery(
   job: { title: string; company: string; description?: string | null; location?: string | null },
   params: { q?: string; keywords?: string; location?: string },
 ): boolean {
-  const query = (params.q || params.keywords || '').trim().toLowerCase()
-  if (query) {
-    const haystack = `${job.title} ${job.company} ${job.description ?? ''} ${job.location ?? ''}`.toLowerCase()
-    const tokens = query.split(/\s+/).filter((item) => item.length > 1)
-    if (tokens.length && !tokens.every((token) => haystack.includes(token))) return false
-  }
+  const query = (params.q || params.keywords || '').trim()
+  if (query && !queryTokensMatch(job, query)) return false
   const location = params.location?.trim().toLowerCase() ?? ''
   if (location && !/^(united states|usa|us|u\.s\.?|remote|nationwide|anywhere)$/i.test(location)) {
     const haystack = `${job.location ?? ''} ${job.description ?? ''}`.toLowerCase()

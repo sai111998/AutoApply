@@ -29,10 +29,9 @@ import {
 import { startCampaign, pauseCampaign, resumeCampaign } from './agent'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
-import { getAutomationHealth, publicAutomationHealth, type AutomationHealth } from './apply/health'
+import { publicAutomationHealth, type AutomationHealth } from './apply/health'
 import { logApplyEvent } from './apply/log'
-import { memoryStore } from './apply/store'
-import { getBrowserWorker } from './browser-worker/worker'
+import { buildAutomationHealthPayload } from './automation/status'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
 import { tailorResume, validateSubmittedResume } from './tailor/engine'
@@ -90,24 +89,33 @@ export function createApp(options: AppOptions): Express {
   })
 
   app.get('/api/automation/health', async (_req, res) => {
-    const health = publicAutomationHealth(
-      await (options.automationHealth ?? (() => getAutomationHealth({ probe: true })))(),
-    )
-    const runs = memoryStore.listAll ? await memoryStore.listAll() : []
-    const items = runs.flatMap((entry) => entry.items)
-    const processing = new Set(['opening', 'filling', 'preparing', 'tailoring', 'submitting'])
-    res.json({
-      available: health.available,
-      browser: health.browser,
-      playwright: health.playwright,
-      worker: Boolean(getBrowserWorker()?.running()),
-      queue: {
-        depth: items.filter((item) => item.applicationStatus === 'queued' || item.applicationStatus === 'ready').length,
-        processing: items.filter((item) => processing.has(item.applicationStatus)).length,
-      },
-      runtime: health.runtime,
-      ...(health.reason ? { reason: health.reason } : {}),
-    })
+    try {
+      if (options.automationHealth) {
+        const health = publicAutomationHealth(await options.automationHealth())
+        const payload = await buildAutomationHealthPayload({ probe: false })
+        res.json({
+          ...payload,
+          available: health.available,
+          playwright: health.playwright,
+          runtime: health.runtime,
+          browser: { available: Boolean(health.available && health.browser === 'chromium') },
+          ...(health.reason ? { reason: health.reason } : {}),
+        })
+        return
+      }
+      res.json(await buildAutomationHealthPayload({ probe: true }))
+    } catch {
+      res.json({
+        agent: { running: false, lastHeartbeat: null, lastDiscoveryAt: null, nextDiscoveryAt: null, currentCampaignId: null },
+        worker: { running: false, lastHeartbeat: null },
+        browser: { available: false },
+        queue: { queued: 0, processing: 0 },
+        available: false,
+        playwright: false,
+        runtime: 'node-server',
+        reason: 'Automation health is unavailable.',
+      })
+    }
   })
 
   app.get('/api/jobs', async (req: Request, res: Response) => {

@@ -39,6 +39,7 @@ import {
   type ApplyTimeouts,
 } from './timeouts'
 import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/profile-store'
+import { saveCandidateProfile } from '../application/candidate-store'
 import { releaseExtensionItem } from '../extension/connection'
 import { assertCanPrepareItem } from './validate'
 import { persistConfirmedSubmission, applyConfirmationToQueueItem } from './confirmed'
@@ -456,6 +457,12 @@ export async function startAutoApply(
   syncRunStatus(run, items)
   run.updatedAt = now
   rememberAutoApplyProfile(input.userId, input.profile)
+  saveCandidateProfile({
+    userId: input.userId,
+    profile: input.profile,
+    resumeText: input.resumeText ?? input.masterResumeText,
+    resumeVersionId: input.resumeVersionId,
+  })
   for (const item of items) rememberQueueResume(input.userId, item)
   await persistRun(store, run, items, config)
   notifyBrowserWorker()
@@ -494,6 +501,12 @@ export async function refreshAutoApplyRun(
   syncRunStatus(current.run, current.items)
   current.run.updatedAt = nowIso()
   rememberAutoApplyProfile(input.userId, input.profile)
+  saveCandidateProfile({
+    userId: input.userId,
+    profile: input.profile,
+    resumeText: input.resumeText ?? input.masterResumeText,
+    resumeVersionId: input.resumeVersionId,
+  })
   for (const item of current.items) rememberQueueResume(input.userId, item)
   await persistRun(store, current.run, current.items, config)
   if (added) notifyBrowserWorker()

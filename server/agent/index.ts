@@ -1,6 +1,6 @@
 export { startCampaign, tickCampaign, pauseCampaign, resumeCampaign, cancelCampaign, resumeIntervention } from './agent'
 export { startAgentScheduler, stopAgentScheduler, tickActiveCampaigns, resetAgentSchedulerForTests } from './scheduler'
-export { resetAgentStateForTests, getCampaign, listCampaigns } from './state'
+export { resetAgentStateForTests, getCampaign, listCampaigns, listActiveCampaigns } from './state'
 export { resetAgentEventsForTests, listAgentEvents } from './events'
 export { isEligibleForAutoApply, meetsMatchThreshold, campaignJobEligible } from './eligibility'
 export { agentIntervalMs, campaignMaxJobs, dailyApplyCount, remainingDailySlots, utcDayKey, DEFAULT_AGENT_INTERVAL_MS } from './policy'
@@ -12,6 +12,8 @@ import { resetAgentSchedulerForTests } from './scheduler'
 import { resetAgentStateForTests } from './state'
 import { resetAnswerLibraryForTests } from '../application/answers'
 import { resetCapabilityCacheForTests } from '../apply/capability-cache'
+import { resetCandidateStoreForTests } from '../application/candidate-store'
+import { resetAutomationHeartbeatsForTests } from '../automation/heartbeat'
 
 export function resetAgentForTests() {
   resetAgentStateForTests()
@@ -19,4 +21,6 @@ export function resetAgentForTests() {
   resetAgentSchedulerForTests()
   resetAnswerLibraryForTests()
   resetCapabilityCacheForTests()
+  resetCandidateStoreForTests()
+  resetAutomationHeartbeatsForTests()
 }

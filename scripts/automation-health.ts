@@ -1,5 +1,5 @@
-import { getAutomationHealth, publicAutomationHealth } from '../server/apply/health'
+import { buildAutomationHealthPayload } from '../server/automation/status'
 
-const health = publicAutomationHealth(await getAutomationHealth({ probe: true }))
+const health = await buildAutomationHealthPayload({ probe: true })
 console.log(JSON.stringify(health, null, 2))
-if (!health.available) process.exitCode = 1
+if (!health.browser.available) process.exitCode = 1

@@ -42,14 +42,17 @@ export async function getAutomationHealth(): Promise<{
     if (!response.ok) return { available: false, browser: null, playwright: false, reason: 'Automation health is unavailable.' }
     const body = (await response.json()) as {
       available?: boolean
-      browser?: 'chromium' | null
+      browser?: 'chromium' | null | { available?: boolean }
       playwright?: boolean
       runtime?: string
       reason?: string
     }
+    const browserAvailable =
+      body.browser === 'chromium' ||
+      (body.browser && typeof body.browser === 'object' && body.browser.available === true)
     return {
-      available: Boolean(body.available),
-      browser: body.browser === 'chromium' ? 'chromium' : null,
+      available: Boolean(body.available ?? browserAvailable),
+      browser: browserAvailable ? 'chromium' : null,
       playwright: Boolean(body.playwright),
       runtime: body.runtime,
       reason: body.reason,

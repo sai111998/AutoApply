@@ -3,6 +3,8 @@ import { classifyC2c, matchesJobTypeFilter, type C2cClassification, type JobType
 import { deduplicateJobs } from './deduplicate'
 import type { FetchLike } from './http'
 import { annotateCanonicalJob } from './aggregator'
+import { expandSearchQueries } from './query-expand'
+import { logDiscoveryCounts, type ProviderDiscoveryCounts } from './discovery-log'
 import { createJobProviders } from './provider'
 import { emptyLiveMatch, scoreJobAgainstResume, type LiveJobMatch } from './score'
 import type {
@@ -75,6 +77,7 @@ export interface LiveJobsResponse {
   hasMore: boolean
   source: string
   warning?: ProviderWarning
+  diagnostics?: import('./discovery-log').ProviderDiscoveryCounts[]
 }
 
 export function toLiveJob(job: NormalizedJob, match: LiveJobMatch = emptyLiveMatch()): LiveJob {
@@ -148,9 +151,26 @@ function providerParams(request: LiveJobsRequest, overrides: Partial<ProviderSea
 }
 
 async function searchLiveJobs(
-  provider: { search(params: ProviderSearchParams): Promise<ProviderSearchResult> },
+  provider: { search(params: ProviderSearchParams): Promise<ProviderSearchResult>; providerName?: () => string },
   request: LiveJobsRequest,
 ): Promise<ProviderSearchResult> {
+  const name = provider.providerName?.() ?? ''
+  if (request.jobType !== 'c2c' && name === 'job-opportunities') {
+    const queries = expandSearchQueries(request.q)
+    const collected: ProviderSearchResult[] = []
+    for (const q of queries) {
+      collected.push(await provider.search(providerParams(request, { q })))
+    }
+    return {
+      provider: 'job-opportunities',
+      jobs: deduplicateJobs(collected.flatMap((item) => item.jobs)),
+      total: collected.reduce((sum, item) => sum + (item.total ?? item.jobs.length), 0),
+      page: request.page,
+      pageSize: request.limit,
+      hasMore: collected.some((item) => item.hasMore),
+      warning: collected.find((item) => item.warning)?.warning,
+    }
+  }
   if (request.jobType !== 'c2c') {
     return provider.search(providerParams(request))
   }
@@ -224,23 +244,44 @@ export async function listLiveJobs(
   const merged = deduplicateJobs(results.flatMap((item) => item.jobs)).map(annotateCanonicalJob)
   const resumeText = request.resumeText?.trim() ?? ''
   const jobType = request.jobType || 'all'
+  const scored = merged.map((job) => {
+    const match = resumeText
+      ? scoreJobAgainstResume(job, resumeText, request.resumeVersionId)
+      : emptyLiveMatch(request.resumeVersionId ?? null)
+    return toLiveJob(job, match)
+  })
   const jobs = sortLiveJobs(
-    merged
-      .map((job) => {
-        const match = resumeText
-          ? scoreJobAgainstResume(job, resumeText, request.resumeVersionId)
-          : emptyLiveMatch(request.resumeVersionId ?? null)
-        return toLiveJob(job, match)
-      })
-      .filter((job) =>
-        matchesJobTypeFilter(
-          job,
-          { status: job.c2cStatus, evidence: job.c2cEvidence },
-          jobType,
-        ),
+    scored.filter((job) =>
+      matchesJobTypeFilter(
+        job,
+        { status: job.c2cStatus, evidence: job.c2cEvidence },
+        jobType,
       ),
+    ),
     request,
   )
+  const diagnostics: ProviderDiscoveryCounts[] = results.map((result) => {
+    const fromProvider = merged.filter((job) => (job.discoveryProvider || job.provider) === result.provider)
+    const afterFilter = jobs.filter((job) => (job.discoveryProvider || job.provider) === result.provider)
+    const entry: ProviderDiscoveryCounts = {
+      provider: result.provider,
+      query: request.q,
+      country: request.country || 'US',
+      state: request.state || '',
+      filters: {
+        remote: request.remote,
+        employmentType: request.employmentType,
+        jobType,
+        keywords: [],
+      },
+      raw: result.jobs.length,
+      normalized: result.jobs.length,
+      deduplicated: fromProvider.length,
+      filtered: afterFilter.length,
+    }
+    logDiscoveryCounts(entry)
+    return entry
+  })
   const joa = results.find((item) => item.provider === 'job-opportunities')
   const nonEmptyWarning = (warning?: { code: string } | null) => warning && warning.code !== 'empty'
   return {
@@ -253,5 +294,6 @@ export async function listLiveJobs(
     warning:
       (nonEmptyWarning(joa?.warning) ? joa?.warning : undefined) ??
       results.find((item) => nonEmptyWarning(item.warning))?.warning,
+    diagnostics,
   }
 }
