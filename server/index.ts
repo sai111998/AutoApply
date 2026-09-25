@@ -1,7 +1,7 @@
 import { createApp } from './app'
 import { startV2Worker } from './autoapply-v2/worker'
 import { startEmbeddedWorker } from './browser-worker'
-import { retireLegacySyntheticRuns, startAgentScheduler } from './agent'
+import { retireLegacyAutoApplyRuns, startAgentScheduler } from './agent'
 import { getAutomationHealth } from './apply/health'
 import { getServerConfig } from './config'
 
@@ -14,8 +14,8 @@ app.listen(config.port, '0.0.0.0', () => {
   void getAutomationHealth({ probe: false }).then((health) => {
     console.log(`Browser automation: ${health.available ? 'chromium ready' : health.reason ?? 'unavailable'}`)
   })
-  void retireLegacySyntheticRuns(config).then((retired) => {
-    if (retired) console.log(`Auto Apply: cancelled ${retired} stale synthetic Test Employer run(s)`)
+  void retireLegacyAutoApplyRuns(config).then((retired) => {
+    if (retired) console.log(`Auto Apply: cancelled ${retired} stale legacy run(s)`)
   })
   if (process.env.VITEST !== 'true' && process.env.JOBPILOT_EMBED_AGENT !== '0') {
     startAgentScheduler()

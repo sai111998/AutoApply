@@ -8,7 +8,7 @@ import { clearAutoApplyMemory } from '../apply/store'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyStartInput } from '../apply/types'
 import type { ServerConfig } from '../config'
 import { memoryStore } from '../apply/store'
-import { retireLegacySyntheticRuns, startSyntheticSliceCampaign } from './campaign'
+import { retireLegacyAutoApplyRuns, startSyntheticSliceCampaign } from './campaign'
 import { resetAgentForTests } from './index'
 import { createCampaignRecord, getCampaign } from './state'
 
@@ -109,30 +109,35 @@ afterEach(async () => {
   clearAutoApplyMemory()
 })
 
-describe('stale legacy synthetic runs', () => {
-  it('cancels active Test Employer runs and their campaigns without touching real-job runs', async () => {
-    const now = '2026-09-24T00:00:00.000Z'
-    const legacyRun = (id: string, status: 'running' | 'needs_attention') => ({
-      id,
-      userId: USER_ID,
-      status,
-      config: defaultAutoApplyConfig({ maxJobs: 1, includeSynthetic: true }),
-      counts: emptyCounts(),
-      createdAt: now,
-      updatedAt: now,
-    })
+describe('stale legacy Auto Apply runs', () => {
+  const OTHER_USER_ID = '22222222-2222-4222-8222-222222222222'
+  const now = '2026-09-24T00:00:00.000Z'
+  const legacyRun = (id: string, status: 'running' | 'needs_attention' | 'paused' | 'completed', userId = USER_ID) => ({
+    id,
+    userId,
+    status,
+    config: defaultAutoApplyConfig({ maxJobs: 1, includeSynthetic: true }),
+    counts: emptyCounts(),
+    createdAt: now,
+    updatedAt: now,
+  })
+  const realItem = (runId: string, id: string): AutoApplyQueueItem => ({
+    ...syntheticItem(),
+    id,
+    runId,
+    identityKey: `live:${id}`,
+    applicationUrl: `https://jobs.example.com/${id}/apply`,
+  })
+
+  it('cancels every active legacy run and its campaign without deleting queue items', async () => {
     await memoryStore.save(legacyRun('legacy-synthetic', 'needs_attention'), [
       { ...syntheticItem(), id: 'item-synthetic', runId: 'legacy-synthetic', applicationStatus: 'needs_user_input' },
     ])
-    await memoryStore.save(legacyRun('legacy-real', 'running'), [
-      {
-        ...syntheticItem(),
-        id: 'item-real',
-        runId: 'legacy-real',
-        identityKey: 'live:real-1',
-        applicationUrl: 'https://jobs.example.com/real-1/apply',
-      },
+    await memoryStore.save(legacyRun('legacy-paused', 'paused'), [
+      realItem('legacy-paused', 'item-paused'),
+      { ...realItem('legacy-paused', 'item-submitted'), applicationStatus: 'submitted' },
     ])
+    await memoryStore.save(legacyRun('legacy-done', 'completed'), [realItem('legacy-done', 'item-done')])
     createCampaignRecord({
       runId: 'legacy-synthetic',
       userId: USER_ID,
@@ -141,12 +146,26 @@ describe('stale legacy synthetic runs', () => {
       serverConfig: { ...config, supabaseUrl: '', supabaseServiceRoleKey: '' },
     })
 
-    expect(await retireLegacySyntheticRuns()).toBe(1)
+    expect(await retireLegacyAutoApplyRuns()).toBe(2)
     const synthetic = await memoryStore.get('legacy-synthetic')
     expect(synthetic?.run.status).toBe('cancelled')
     expect(synthetic?.items[0].applicationStatus).toBe('cancelled')
     expect(getCampaign('legacy-synthetic')?.status).toBe('cancelled')
-    expect((await memoryStore.get('legacy-real'))?.run.status).toBe('running')
+    const paused = await memoryStore.get('legacy-paused')
+    expect(paused?.run.status).toBe('cancelled')
+    expect(paused?.items.map((item) => item.applicationStatus)).toEqual(['cancelled', 'submitted'])
+    expect((await memoryStore.get('legacy-done'))?.run.status).toBe('completed')
+  })
+
+  it("only retires the signed-in user's runs when a user id is given", async () => {
+    await memoryStore.save(legacyRun('mine', 'paused'), [realItem('mine', 'item-mine')])
+    await memoryStore.save(legacyRun('theirs', 'running', OTHER_USER_ID), [
+      { ...realItem('theirs', 'item-theirs'), runId: 'theirs' },
+    ])
+
+    expect(await retireLegacyAutoApplyRuns(undefined, USER_ID)).toBe(1)
+    expect((await memoryStore.get('mine'))?.run.status).toBe('cancelled')
+    expect((await memoryStore.get('theirs'))?.run.status).toBe('running')
   })
 })
 

@@ -3,8 +3,7 @@ export {
   startSyntheticSliceCampaign,
   processExecutionCampaign,
   logExecution,
-  isLegacySyntheticRun,
-  retireLegacySyntheticRuns,
+  retireLegacyAutoApplyRuns,
 } from './campaign'
 export {
   isAutoApplySmokeTestEnabled,

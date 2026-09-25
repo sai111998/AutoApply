@@ -21,13 +21,12 @@ import {
   cancelQueueItem,
   cancelRun,
   getAutoApplyRun,
-  listAutoApplyRuns,
   prepareQueueItem,
   skipQueueItem,
   submitQueueItem,
 } from './apply/engine'
 import { startCampaign, pauseCampaign, resumeCampaign } from './agent'
-import { isLegacySyntheticRun } from './agent/campaign'
+import { retireLegacyAutoApplyRuns } from './agent/campaign'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
 import { publicAutomationHealth, type AutomationHealth } from './apply/health'
@@ -296,6 +295,7 @@ export function createApp(options: AppOptions): Express {
         return
       }
       const user = await authenticate(req)
+      await retireLegacyAutoApplyRuns(options.config, user.id)
       res.json(await startV2AutoApplyCampaign({ ...request, userId: user.id }, user.accessToken))
     } catch (error) {
       sendApplyError(res, error, 'Could not start Auto Apply.')
@@ -307,9 +307,7 @@ export function createApp(options: AppOptions): Express {
       const queryUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
       const userId = req.header('authorization') ? (await authenticate(req)).id : queryUserId
       if (!userId) throw new HttpError(400, 'userId is required')
-      const legacyRuns = (await listAutoApplyRuns(userId, {}, options.config)).filter((entry) => !isLegacySyntheticRun(entry))
-      const v2Runs = listV2RunsForUser(userId).map(toAutoApplyRunResult)
-      res.json({ runs: [...v2Runs, ...legacyRuns].sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt)) })
+      res.json({ runs: listV2RunsForUser(userId).map(toAutoApplyRunResult) })
     } catch (error) {
       sendApplyError(res, error, 'Could not load Auto Apply.')
     }

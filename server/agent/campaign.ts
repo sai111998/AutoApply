@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { cancelRun, defaultAutoApplyConfig } from '../apply/engine'
+import { cancelRun, defaultAutoApplyConfig, listAutoApplyRuns } from '../apply/engine'
 import { emptyCounts, recount, syncRunStatus } from '../apply/counts'
 import { memoryStore, persistRun } from '../apply/store'
 import { saveCandidateProfile } from '../application/candidate-store'
@@ -38,37 +38,21 @@ export function logExecution(event: string) {
   console.info(`[AutoApply] ${event}`)
 }
 
-function isLocalTestEmployerUrl(url: string | null | undefined): boolean {
-  try {
-    const parsed = new URL(url ?? '')
-    const loopback = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname.toLowerCase())
-    return loopback && (parsed.pathname.startsWith('/test-employer') || parsed.pathname.startsWith('/browser-worker/synthetic'))
-  } catch {
-    return false
-  }
-}
-
-export function isLegacySyntheticRun(stored: { items: AutoApplyQueueItem[] }): boolean {
-  return stored.items.some(
-    (item) =>
-      item.identityKey?.startsWith('synthetic:') ||
-      item.discoverySource === 'synthetic' ||
-      item.applicationSource === 'synthetic' ||
-      isLocalTestEmployerUrl(item.applicationUrl),
-  )
-}
-
-export async function retireLegacySyntheticRuns(serverConfig?: ServerConfig): Promise<number> {
-  const runs = memoryStore.listAll ? await memoryStore.listAll() : []
+export async function retireLegacyAutoApplyRuns(serverConfig?: ServerConfig, userId?: string): Promise<number> {
+  const runs = userId
+    ? await listAutoApplyRuns(userId, {}, serverConfig)
+    : memoryStore.listAll
+      ? await memoryStore.listAll()
+      : []
   let retired = 0
   for (const stored of runs) {
     if (!['running', 'needs_attention', 'paused'].includes(stored.run.status)) continue
-    if (!isLegacySyntheticRun(stored)) continue
     await cancelRun(stored.run.id, {}, serverConfig)
     patchCampaign(stored.run.id, { status: 'cancelled' })
     retired += 1
   }
   for (const campaign of listActiveCampaigns()) {
+    if (userId && campaign.userId !== userId) continue
     const stored = await memoryStore.get(campaign.runId)
     if (!stored || stored.run.status === 'cancelled') patchCampaign(campaign.runId, { status: 'cancelled' })
   }
