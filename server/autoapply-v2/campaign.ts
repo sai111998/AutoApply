@@ -92,7 +92,7 @@ async function queueV2Job(input: {
 export async function startV2AutoApply(
   input: { userId: string; jobId: string; accessToken?: string | null } & V2JobOptions,
 ): Promise<{ runId: string; status: 'queued' }> {
-  if (!input.userId?.trim()) throw new V2Error('PROFILE_AUTH_REQUIRED', 'Authentication required.', 401)
+  if (!input.userId?.trim()) throw new V2Error('AUTH_NOT_AVAILABLE', 'Authentication required.', 401)
   if (!input.jobId?.trim()) throw new V2Error('JOB_NOT_FOUND', 'jobId is required.', 400)
   const job = loadV2Job(input.userId, input.jobId, input)
   const source: V2RunSource = input.allowSyntheticEmployer ? 'synthetic-test' : 'start-one'
@@ -111,7 +111,7 @@ export async function startV2AutoApply(
 }
 
 export async function startV2AutoApplyCampaign(input: AutoApplyStartInput, accessToken?: string | null) {
-  if (!input.userId?.trim()) throw new V2Error('PROFILE_AUTH_REQUIRED', 'Authentication required.', 401)
+  if (!input.userId?.trim()) throw new V2Error('AUTH_NOT_AVAILABLE', 'Authentication required.', 401)
   const liveJobs = listLiveJobSnapshots()
     .filter((job) => job.provider !== 'synthetic' && job.source !== 'synthetic')
     .sort((left, right) => (right.fetchedAt ?? '').localeCompare(left.fetchedAt ?? ''))

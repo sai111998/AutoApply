@@ -1,5 +1,5 @@
 import { getCandidateProfile, saveCandidateProfile } from './candidate-store'
-import { ProfileAccessError, supabaseDataClient, type SupabaseAccess } from './supabase-access'
+import { ProfileAccessError, supabaseDataClient, supabaseQueryFailure, type SupabaseAccess } from './supabase-access'
 
 export interface CanonicalCandidateProfile {
   userId: string
@@ -82,19 +82,17 @@ function isUuidValue(value: string): boolean {
 export async function fetchSupabaseProfileRow(userId: string, access: SupabaseAccess): Promise<SupabaseProfileRow> {
   const id = userId.trim()
   if (!isUuidValue(id)) {
-    throw new ProfileAccessError('PROFILE_AUTH_REQUIRED', 'The signed-in user id is not a Supabase user id.', 401)
+    throw new ProfileAccessError('AUTH_NOT_AVAILABLE', 'The signed-in user id is not a Supabase user id.', 401)
   }
   const supabase = supabaseDataClient(access)
-  let result: { data: unknown; error: { code?: string } | null }
+  let result: { data: unknown; error: { code?: string; message?: string } | null; status: number }
   try {
     // '*' keeps the read working on databases that predate the application profile columns (migration 011).
     result = await supabase.from('profiles').select('*').eq('id', id).maybeSingle()
   } catch {
-    throw new ProfileAccessError('PROFILE_DATABASE_ERROR', 'The profile query could not reach Supabase.', 503)
+    throw new ProfileAccessError('SUPABASE_UNREACHABLE', 'The profile query could not reach Supabase.', 503)
   }
-  if (result.error) {
-    throw new ProfileAccessError('PROFILE_DATABASE_ERROR', `The profile query failed (${result.error.code || 'unknown error'}).`, 503)
-  }
+  if (result.error) throw supabaseQueryFailure('profile query', result.error, result.status)
   if (!result.data) {
     throw new ProfileAccessError(
       'PROFILE_NOT_FOUND',

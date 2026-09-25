@@ -58,18 +58,25 @@ describe('auto apply client result parsing', () => {
     expect(prepareErrorMessage({ error: 'service.role key leaked' })).toBe('Could not prepare the application.')
   })
 
-  it('keeps the four profile errors distinct without echoing credential names', () => {
+  it('keeps sign-in, Supabase, and profile errors distinct without echoing credential names', () => {
     const fallback = 'Could not start Auto Apply.'
     const withheld = prepareErrorMessage(
-      { code: 'PROFILE_DATABASE_ERROR', error: 'The server cannot read profiles: SUPABASE_SERVICE_ROLE_KEY is not set.' },
+      { code: 'SUPABASE_NOT_CONFIGURED', error: 'The server cannot read profiles: SUPABASE_SERVICE_ROLE_KEY is not set.' },
       fallback,
     )
-    expect(withheld).toMatch(/PROFILE_DATABASE_ERROR/)
+    expect(withheld).toMatch(/SUPABASE_NOT_CONFIGURED/)
     expect(withheld).not.toMatch(/key|secret|service.role/i)
     expect(prepareErrorMessage({ code: 'PROFILE_DATABASE_ERROR', error: 'The profile query failed (42703).' }, fallback)).toBe(
       'The profile query failed (42703).',
     )
-    expect(prepareErrorMessage({ code: 'PROFILE_AUTH_REQUIRED', error: 'Your Supabase session is invalid or expired. Sign in again.' }, fallback)).toMatch(/sign in again/i)
+    expect(prepareErrorMessage({ code: 'AUTH_NOT_AVAILABLE', error: 'Your Supabase session is invalid or expired. Sign in again.' }, fallback)).toMatch(/sign in again/i)
+    expect(prepareErrorMessage({ code: 'SUPABASE_UNREACHABLE', error: 'Supabase could not be reached to verify the sign-in (ENOTFOUND).' }, fallback)).toMatch(/ENOTFOUND/)
+    expect(
+      prepareErrorMessage(
+        { code: 'SUPABASE_PROJECT_MISMATCH', error: "Your sign-in session comes from a different Supabase project than the server's SUPABASE_URL." },
+        fallback,
+      ),
+    ).toMatch(/different Supabase project/)
     expect(prepareErrorMessage({ code: 'PROFILE_NOT_FOUND', error: 'No public.profiles row exists for the signed-in user.' }, fallback)).toMatch(/public\.profiles/)
     expect(prepareErrorMessage({ code: 'PROFILE_INCOMPLETE', error: 'Profile incomplete. Add lastName, phone on the Profile page.' }, fallback)).toMatch(/lastName, phone/)
   })

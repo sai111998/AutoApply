@@ -49,6 +49,7 @@ import {
   getApplicationProfileAvailability,
   getCandidateApplicationProfile,
 } from './application/candidate-profile'
+import { checkAuthHealth } from './application/auth-health'
 import {
   authenticateSupabaseUser,
   describeSupabaseServer,
@@ -213,6 +214,14 @@ export function createApp(options: AppOptions): Express {
     }
   })
 
+  app.get('/api/auth/health', async (req: Request, res: Response) => {
+    try {
+      res.json(await checkAuthHealth(req.header('authorization'), options.config))
+    } catch (error) {
+      sendApplyError(res, error, 'Could not check sign-in health.')
+    }
+  })
+
   const authenticate = (req: Request) => authenticateSupabaseUser(req.header('authorization'), options.config)
 
   const startOneJob = async (req: Request, res: Response) => {
@@ -295,7 +304,9 @@ export function createApp(options: AppOptions): Express {
         return
       }
       const user = await authenticate(req)
-      await retireLegacyAutoApplyRuns(options.config, user.id)
+      await retireLegacyAutoApplyRuns(options.config, user.id).catch((error: unknown) => {
+        console.warn(`[AutoApply] Stale legacy runs were not retired: ${error instanceof Error ? error.message.split('\n')[0] : error}`)
+      })
       res.json(await startV2AutoApplyCampaign({ ...request, userId: user.id }, user.accessToken))
     } catch (error) {
       sendApplyError(res, error, 'Could not start Auto Apply.')

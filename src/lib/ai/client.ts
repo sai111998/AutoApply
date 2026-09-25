@@ -690,6 +690,11 @@ export function normalizeAutoApplyResult(body: unknown): AutoApplyRunResult | nu
   return null
 }
 
+const WITHHELD_ERROR_MESSAGES: Record<string, string> = {
+  SUPABASE_NOT_CONFIGURED: "The server's Supabase settings are missing or invalid (SUPABASE_NOT_CONFIGURED).",
+  PROFILE_DATABASE_ERROR: 'The server could not read your profile from Supabase (PROFILE_DATABASE_ERROR).',
+}
+
 export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare the application.'): string {
   if (!body || typeof body !== 'object') return fallback
   const record = body as { code?: unknown; message?: unknown; error?: unknown }
@@ -698,10 +703,8 @@ export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare
   }
   const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
   if (raw && !/key|secret|service.role/i.test(raw)) return raw
-  if (record.code === 'PROFILE_DATABASE_ERROR') {
-    return 'The server could not load your profile: its Supabase connection is not configured correctly (PROFILE_DATABASE_ERROR).'
-  }
-  return fallback
+  const withheld = typeof record.code === 'string' ? WITHHELD_ERROR_MESSAGES[record.code] : undefined
+  return withheld ?? fallback
 }
 
 async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {

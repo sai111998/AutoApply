@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseAutoApplyStart } from '../apply/parse'
 import { mapSyntheticApplicationFields, candidateFromStoredProfile } from '../agent/eligibility'
 import { resetAgentForTests } from '../agent'
@@ -127,15 +127,27 @@ describe('canonical application profile (public.profiles)', () => {
     expect(profile).toMatchObject({ firstName: 'Alex', lastName: 'Rivera', email: 'alex.rivera@example.com', phone: '' })
   })
 
+  it('reports an unreachable Supabase as SUPABASE_UNREACHABLE after the client retries', async () => {
+    installFakeSupabase({ profiles: [profilesRow()], failures: { network: 'ECONNREFUSED' } })
+    vi.useFakeTimers()
+    try {
+      const outcome = expect(getCandidateApplicationProfile(USER_ID, access())).rejects.toMatchObject({ code: 'SUPABASE_UNREACHABLE' })
+      await vi.runAllTimersAsync()
+      await outcome
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('distinguishes a missing row, a non-UUID id, a missing server config, and a failed query', async () => {
     installFakeSupabase({ profiles: [profilesRow()] })
     await expect(getCandidateApplicationProfile('22222222-2222-4222-8222-222222222222', access())).rejects.toMatchObject({
       code: 'PROFILE_NOT_FOUND',
     })
-    await expect(getCandidateApplicationProfile('not-a-uuid', access())).rejects.toMatchObject({ code: 'PROFILE_AUTH_REQUIRED' })
+    await expect(getCandidateApplicationProfile('not-a-uuid', access())).rejects.toMatchObject({ code: 'AUTH_NOT_AVAILABLE' })
     await expect(
       fetchSupabaseProfileRow(USER_ID, { config: { ...getServerConfig(), supabaseUrl: '' } }),
-    ).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
+    ).rejects.toMatchObject({ code: 'SUPABASE_NOT_CONFIGURED' })
     uninstallFakeSupabase()
     installFakeSupabase({ profiles: [profilesRow()], failures: { profiles: 500 } })
     await expect(getCandidateApplicationProfile(USER_ID, access())).rejects.toMatchObject({
@@ -147,7 +159,7 @@ describe('canonical application profile (public.profiles)', () => {
   it('reads the profile as the signed-in user when the server has no service-role key', async () => {
     const { reads } = installFakeSupabase({ profiles: [profilesRow()] }, { serviceRoleKey: null })
     const token = fakeSessionToken(USER_ID)
-    await expect(getCandidateApplicationProfile(USER_ID, access())).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
+    await expect(getCandidateApplicationProfile(USER_ID, access())).rejects.toMatchObject({ code: 'SUPABASE_NOT_CONFIGURED' })
     const profile = await getCandidateApplicationProfile(USER_ID, access(token))
     expect(profile).toMatchObject({ firstName: 'Alex', lastName: 'Rivera', phone: '5125550100' })
     expect(reads.at(-1)).toMatchObject({ path: '/rest/v1/profiles', authorization: `Bearer ${token}`, apikey: FAKE_ANON_KEY })

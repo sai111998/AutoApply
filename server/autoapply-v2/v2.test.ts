@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import request from 'supertest'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../app'
 import { getServerConfig } from '../config'
 import { resetConfirmedApplicationsForTests } from '../apply/confirmed'
@@ -233,7 +233,7 @@ describe('V2 profile precheck', () => {
   })
 
   it('keeps missing server config, missing rows, and failed queries distinct from an incomplete profile', async () => {
-    await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
+    await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({ code: 'SUPABASE_NOT_CONFIGURED' })
     seedAccount({ profile: null })
     await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({ code: 'PROFILE_NOT_FOUND' })
     uninstallFakeSupabase()
@@ -694,7 +694,7 @@ describe('V2 HTTP endpoints', () => {
     const app = createApp({ config: getServerConfig() })
     const missingAuth = await request(app).post('/api/autoapply-v2/start-one').set('x-jobpilot-user-id', USER_ID).send({ jobId: 'job-1' })
     expect(missingAuth.status).toBe(401)
-    expect(missingAuth.body.code).toBe('PROFILE_AUTH_REQUIRED')
+    expect(missingAuth.body.code).toBe('AUTH_NOT_AVAILABLE')
     await request(app).post('/api/autoapply-v2/start-one').set('Authorization', 'Bearer not-a-session').send({ jobId: 'job-1' }).expect(401)
     await request(app).post('/api/autoapply-v2/start-one').set('Authorization', bearer()).send({}).expect(400)
     await request(app).post('/api/autoapply-v2/start-one').set('Authorization', bearer()).send({ jobId: 'missing' }).expect(404)
@@ -720,7 +720,7 @@ describe('V2 HTTP endpoints', () => {
     const app = createApp({ config: getServerConfig() })
     const missingAuth = await request(app).get('/api/autoapply-v2/profile-check')
     expect(missingAuth.status).toBe(401)
-    expect(missingAuth.body.code).toBe('PROFILE_AUTH_REQUIRED')
+    expect(missingAuth.body.code).toBe('AUTH_NOT_AVAILABLE')
 
     const present = await request(app).get('/api/autoapply-v2/profile-check').set('Authorization', bearer())
     expect(present.status).toBe(200)
@@ -747,7 +747,32 @@ describe('V2 HTTP endpoints', () => {
     uninstallFakeSupabase()
     const noServer = await request(createApp({ config: getServerConfig() })).get('/api/autoapply-v2/profile-check').set('Authorization', bearer())
     expect(noServer.status).toBe(503)
-    expect(noServer.body.code).toBe('PROFILE_DATABASE_ERROR')
+    expect(noServer.body.code).toBe('SUPABASE_NOT_CONFIGURED')
+  })
+
+  it('Start Auto Apply verifies the session before the profile, also on Node.js without a built-in WebSocket', async () => {
+    const productionStart = (profile?: Record<string, unknown>) => {
+      seedAccount({ profile })
+      vi.stubEnv('VITEST', 'false')
+      vi.stubGlobal('WebSocket', undefined)
+      rememberLiveJobs([liveJob({ id: 'real-1', jobUrl: 'https://jobs.example.com/real-1/apply' })])
+      return createApp({ config: getServerConfig() })
+    }
+    const body = { userId: OTHER_USER_ID, resumeId: RESUME_ID, resumeVersionId: RESUME_ID, resumeText: 'resume', profile: startProfile }
+
+    const incompleteApp = productionStart({ last_name: null, full_name: 'Ada' })
+    const unauthenticated = await request(incompleteApp).post('/api/jobs/auto-apply/start').send(body)
+    expect(unauthenticated.status).toBe(401)
+    expect(unauthenticated.body.code).toBe('AUTH_NOT_AVAILABLE')
+    const incomplete = await request(incompleteApp).post('/api/jobs/auto-apply/start').set('Authorization', bearer()).send(body)
+    expect(incomplete.status).toBe(422)
+    expect(incomplete.body).toMatchObject({ code: 'PROFILE_INCOMPLETE', missingFields: ['lastName'] })
+
+    uninstallFakeSupabase()
+    const started = await request(productionStart()).post('/api/jobs/auto-apply/start').set('Authorization', bearer()).send(body)
+    expect(started.status).toBe(200)
+    expect(started.body.items[0]).toMatchObject({ jobId: 'real-1', applicationStatus: 'queued' })
+    expect(getV2Run(started.body.campaignId)?.userId).toBe(USER_ID)
   })
 
   it('shows V2 runs in the Auto Apply panel and hides stale legacy Test Employer runs', async () => {

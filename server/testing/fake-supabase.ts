@@ -9,7 +9,7 @@ export interface FakeSupabaseData {
   resumes?: Array<Record<string, unknown>>
   files?: Record<string, { body: Buffer | string; contentType?: string }>
   users?: Array<{ id: string; email?: string }>
-  failures?: { profiles?: number }
+  failures?: { profiles?: number; auth?: number; network?: string; apiKey?: boolean }
 }
 
 export interface FakeSupabaseOptions {
@@ -98,7 +98,12 @@ export function installFakeSupabase(data: FakeSupabaseData, options: FakeSupabas
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
       if (url.origin !== FAKE_SUPABASE_URL) return new Response('not found', { status: 404 })
+      if (data.failures?.network) {
+        throw new TypeError('fetch failed', { cause: Object.assign(new Error('simulated network failure'), { code: data.failures.network }) })
+      }
+      if (data.failures?.apiKey) return json({ message: 'Invalid API key' }, 401)
       if (url.pathname === '/auth/v1/user') {
+        if (data.failures?.auth) return json({ message: 'simulated auth outage' }, data.failures.auth)
         const token = headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
         const payload = tokenPayload(token)
         const user = data.users?.find((entry) => entry.id === payload?.sub)
@@ -123,7 +128,7 @@ export function installFakeSupabase(data: FakeSupabaseData, options: FakeSupabas
           return new Response(null, { status: 201 })
         }
         reads.push({ path: url.pathname, authorization: headers.get('authorization'), apikey: headers.get('apikey') })
-        const failure = data.failures?.[table as keyof NonNullable<FakeSupabaseData['failures']>]
+        const failure = table === 'profiles' ? data.failures?.profiles : undefined
         if (failure) return json({ code: 'XX000', message: 'simulated database failure' }, failure)
         const rows = ((data as Record<string, unknown>)[table] as Array<Record<string, unknown>> | undefined) ?? []
         const ordered = applyOrder(rows.filter((row) => matchesFilters(row, url.searchParams)), url.searchParams.get('order'))

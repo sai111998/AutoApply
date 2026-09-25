@@ -3,7 +3,9 @@ import { startV2Worker } from './autoapply-v2/worker'
 import { startEmbeddedWorker } from './browser-worker'
 import { retireLegacyAutoApplyRuns, startAgentScheduler } from './agent'
 import { getAutomationHealth } from './apply/health'
+import { describeSupabaseServer } from './application/supabase-access'
 import { getServerConfig } from './config'
+import { hasBuiltInWebSocket } from './supabase-client'
 
 const config = getServerConfig()
 const app = createApp({ config })
@@ -11,6 +13,12 @@ const app = createApp({ config })
 app.listen(config.port, '0.0.0.0', () => {
   console.log(`JobPilot API listening on http://127.0.0.1:${config.port}`)
   console.log(`LLM configured: ${Boolean(config.llmApiKey)}`)
+  console.log(`Supabase: ${JSON.stringify(describeSupabaseServer(config))}`)
+  if (!hasBuiltInWebSocket()) {
+    console.warn(
+      `Node.js ${process.version} has no built-in WebSocket. Sign-in checks, profile reads, and resume reads use a compatible Supabase client; other server-side Supabase reads and writes need Node.js 22 or newer.`,
+    )
+  }
   void getAutomationHealth({ probe: false }).then((health) => {
     console.log(`Browser automation: ${health.available ? 'chromium ready' : health.reason ?? 'unavailable'}`)
   })
