@@ -133,7 +133,7 @@ export function submissionStatusFromResult(
 ): AutoApplyQueueStatus {
   if (blocked) return blocked
   if (result.success && result.confirmationDetected && result.finalActionCompleted) return 'submitted'
-  if (result.finalActionCompleted && !result.confirmationDetected) return 'needs_user_confirmation'
+  if (result.finalActionCompleted && !result.confirmationDetected) return 'needs_confirmation'
   if (result.reason?.toLowerCase().includes('could not')) return 'failed'
   return 'needs_user_confirmation'
 }
@@ -173,4 +173,53 @@ export function isDevAutoApplyLog(): boolean {
 export function logExternalSubmit(message: string) {
   if (!isDevAutoApplyLog()) return
   console.info(`[AutoApply] ${message}`)
+}
+
+const SECRET_LABEL = /password|token|secret|cookie|authorization/i
+
+function redactVisibleText(text: string): string {
+  return text
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[redacted-email]')
+    .replace(/\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[redacted-phone]')
+    .replace(/\b(?:sk|pk|rk|key|token|bearer)[-_]?[A-Za-z0-9]{8,}\b/gi, '[redacted]')
+    .slice(0, 240)
+}
+
+export function capturePostSubmitEvidence(input: {
+  html: string
+  url?: string | null
+  title?: string | null
+}): {
+  finalUrl: string | null
+  pageTitle: string
+  formCount: number
+  inputCount: number
+  buttonLabels: string[]
+  confirmationNumber?: string
+  matchedPhrase?: string
+  visibleText: string
+} {
+  const text = visiblePageText(input.html)
+  const title = (input.title ?? '').trim()
+  const haystack = `${title} ${text}`
+  const phrase = CONFIRMATION_PHRASES.find((pattern) => pattern.test(haystack))
+  const buttons = [...input.html.matchAll(/<(?:button|a)[^>]*>([\s\S]*?)<\/(?:button|a)>/gi)]
+    .map((match) => match[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter((label) => label && !SECRET_LABEL.test(label))
+    .slice(0, 12)
+  return {
+    finalUrl: input.url ?? null,
+    pageTitle: title,
+    formCount: (input.html.match(/<form\b/gi) || []).length,
+    inputCount: (input.html.match(/<input\b/gi) || []).length,
+    buttonLabels: buttons,
+    confirmationNumber: extractConfirmationNumber(haystack),
+    matchedPhrase: phrase ? haystack.match(phrase)?.[0] : undefined,
+    visibleText: redactVisibleText(text),
+  }
+}
+
+export function logSubmitTrace(step: string, extras?: Record<string, unknown>) {
+  const suffix = extras && Object.keys(extras).length ? ` ${JSON.stringify(extras)}` : ''
+  logExternalSubmit(`${step}${suffix}`)
 }

@@ -12,7 +12,12 @@ import { documentsFromEvidencePage } from '../apply/page-evidence'
 import { logApplyEvent } from '../apply/log'
 import { mergeSurfaceDocuments } from '../apply/surface'
 import { resolveApplicationQuestions } from '../apply/questions'
-import { detectSubmissionConfirmation, isFinalSubmitLabel } from '../apply/confirm'
+import {
+  capturePostSubmitEvidence,
+  detectSubmissionConfirmation,
+  isFinalSubmitLabel,
+  logSubmitTrace,
+} from '../apply/confirm'
 import { buildCandidateApplicationProfile, candidateFillValues } from '../application/profile'
 import { selectedResumeForUpload } from '../application/resume'
 import { persistStepState } from '../application/navigation'
@@ -306,25 +311,38 @@ export async function runApplicationAgent(input: {
       const title = (await input.page.title?.()) ?? ''
       const shouldSubmit = shouldUnattendedSubmit(currentUrl, input.autoSubmit)
       if (shouldSubmit) {
+        logSubmitTrace('READY_TO_SUBMIT', { url: currentUrl, title })
         session = markBrowserSessionState(session.itemId, 'submitting', { currentUrl })
         const submitted = await adapter.submit(input.page)
+        logSubmitTrace(submitted ? 'FINAL_SUBMIT_ACTION_PERFORMED' : 'FINAL_SUBMIT_NOT_PERFORMED')
         await input.page.waitForLoadState?.('domcontentloaded', { timeout: 8_000 }).catch(() => undefined)
         const confirmationHtml = await input.page.content()
         const confirmationTitle = (await input.page.title?.()) ?? title
         const confirmationUrl = pageUrl(input.page, currentUrl)
+        const evidence = capturePostSubmitEvidence({
+          html: confirmationHtml,
+          title: confirmationTitle,
+          url: confirmationUrl,
+        })
+        logSubmitTrace('POST_SUBMIT_URL', { url: confirmationUrl })
+        logSubmitTrace('POST_SUBMIT_TITLE', { title: confirmationTitle })
+        logSubmitTrace('POST_SUBMIT_STATE', evidence)
         const confirmation = detectSubmissionConfirmation({ html: confirmationHtml, title: confirmationTitle, url: confirmationUrl, provider: adapter.id })
         if (!submitted || !confirmation.confirmed) {
-          session = markBrowserSessionState(session.itemId, 'failed', {
+          const reason = submitted
+            ? confirmation.reason ?? 'No reliable submission confirmation was found.'
+            : 'FINAL_SUBMIT_NOT_PERFORMED'
+          session = markBrowserSessionState(session.itemId, submitted ? 'submitting' : 'failed', {
             currentUrl: confirmationUrl,
-            failureReason: confirmation.reason ?? 'Submission could not be confirmed on the employer site.',
+            failureReason: reason,
           })
           return {
             session,
             status: submitted ? 'needs_confirmation' : 'needs_user_confirmation',
             questions: resolved.answered,
-            failureReason: confirmation.reason ?? 'Submission could not be confirmed on the employer site.',
+            failureReason: reason,
             confirmationDetected: false,
-            confirmation: { ...confirmation, success: false, confirmed: false },
+            confirmation: { ...confirmation, success: false, confirmed: false, reason },
           }
         }
         session = markBrowserSessionState(session.itemId, 'submitted', { currentUrl: confirmationUrl })

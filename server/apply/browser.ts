@@ -1,8 +1,10 @@
 import {
+  capturePostSubmitEvidence,
   detectSubmissionConfirmation,
   inspectPostSubmitPage,
   isFinalSubmitLabel,
   logExternalSubmit,
+  logSubmitTrace,
   safeEmployerHost,
   type BrowserSubmitContext,
   type ExternalSubmissionResult,
@@ -479,18 +481,27 @@ export async function evaluateExternalSubmission(
   logExternalSubmit(`Job: ${context.identityKey || context.jobId || 'unknown'}`)
   logExternalSubmit(`Application ID: ${context.applicationId || 'unknown'}`)
   logExternalSubmit(`Employer hostname: ${safeEmployerHost(currentUrl) || 'unknown'}`)
+  logSubmitTrace('READY_TO_SUBMIT', { url: currentUrl })
 
   const clicked = await clickFinalSubmit(page)
+  logSubmitTrace(clicked.clicked ? 'SUBMIT_ACTION_FOUND' : 'SUBMIT_ACTION_FOUND', { found: clicked.clicked })
   if (!clicked.clicked) {
+    logSubmitTrace('FINAL_SUBMIT_NOT_PERFORMED')
     return resultFromInspection('needs_user_input', clicked.reason, { resultingUrl: currentUrl, reason: clicked.reason })
   }
 
+  logSubmitTrace('SUBMIT_ACTION_CLICK_STARTED')
+  logSubmitTrace('SUBMIT_ACTION_CLICK_COMPLETED')
+  logSubmitTrace('FINAL_SUBMIT_ACTION_PERFORMED')
   logExternalSubmit('Final submit action completed')
   await waitForPage(page)
 
   const resultingUrl = pageUrl(page, currentUrl)
   const title = await pageTitle(page)
   const html = await page.content()
+  logSubmitTrace('POST_SUBMIT_URL', { url: resultingUrl })
+  logSubmitTrace('POST_SUBMIT_TITLE', { title })
+  logSubmitTrace('POST_SUBMIT_STATE', capturePostSubmitEvidence({ html, url: resultingUrl, title }))
   const blocked = inspectPostSubmitPage(html)
   if (blocked) {
     logExternalSubmit(`Post-submit pause: ${blocked.status}`)
@@ -515,13 +526,13 @@ export async function evaluateExternalSubmission(
 
   if (!confirmation.detected) {
     return resultFromInspection(
-      'needs_user_confirmation',
-      'Submission could not be confirmed on the employer site. Complete or verify it there.',
+      'needs_confirmation',
+      'No reliable submission confirmation was found.',
       {
         finalActionCompleted: true,
         resultingUrl,
         pageTitle: title,
-        reason: 'No reliable employer confirmation was detected after the final submit action.',
+        reason: 'No reliable submission confirmation was found.',
       },
     )
   }

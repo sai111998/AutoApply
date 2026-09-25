@@ -8,6 +8,7 @@ import {
   type PlaywrightPage,
 } from './browser'
 import {
+  capturePostSubmitEvidence,
   detectSubmissionConfirmation,
   isFinalSubmitLabel,
   isWeakConfirmationText,
@@ -75,6 +76,7 @@ describe('submission confirmation detection', () => {
 
   it('marks confirmation from reliable employer text or a confirmation number', () => {
     expect(detectSubmissionConfirmation({ html: '<p>Thank you for applying to this role.</p>' }).confirmed).toBe(true)
+    expect(detectSubmissionConfirmation({ html: '<h1>Application submitted successfully</h1><p>Confirmation number ABC12345</p>' }).confirmed).toBe(true)
     expect(detectSubmissionConfirmation({ html: '<p>Your application has been submitted.</p>' }).confirmed).toBe(true)
     expect(detectSubmissionConfirmation({ html: '<p>We have received your application.</p>' }).confirmed).toBe(true)
     const numbered = detectSubmissionConfirmation({
@@ -82,6 +84,14 @@ describe('submission confirmation detection', () => {
     })
     expect(numbered.detected).toBe(true)
     expect(numbered.confirmationNumber).toBe('APP-9X22Q')
+    const evidence = capturePostSubmitEvidence({
+      html: '<form></form><h1>Application submitted successfully</h1><p>Confirmation number ABC12345</p>',
+      url: 'http://127.0.0.1:8787/test-employer/submit',
+      title: 'Application submitted',
+    })
+    expect(evidence.formCount).toBe(1)
+    expect(evidence.confirmationNumber).toBe('ABC12345')
+    expect(evidence.matchedPhrase).toMatch(/application submitted/i)
   })
 
   it('requires a confirmed final action before submitted', () => {
@@ -100,7 +110,7 @@ describe('submission confirmation detection', () => {
         finalActionCompleted: true,
         resultingUrl: 'https://company.com/thank-you',
       }),
-    ).toBe('needs_user_confirmation')
+    ).toBe('needs_confirmation')
     expect(
       submissionStatusFromResult({
         success: true,
@@ -133,7 +143,7 @@ describe('external submit automation', () => {
     expect(result.finalActionCompleted).toBe(true)
     expect(result.resultingUrl).toContain('thank-you')
     expect(result.confirmationDetected).toBeFalsy()
-    expect(result.status).toBe('needs_user_confirmation')
+    expect(result.status).toBe('needs_confirmation')
     expect(result.status).not.toBe('submitted')
   })
 

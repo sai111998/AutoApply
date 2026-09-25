@@ -1,6 +1,6 @@
 import { clickApplyControl, clickNextControl, isLegitimateApplyLabel } from '../apply/apply-action'
 import { inspectApplicationPage } from '../apply/detect'
-import { detectSubmissionConfirmation } from '../apply/confirm'
+import { detectSubmissionConfirmation, logSubmitTrace } from '../apply/confirm'
 import { detectApplicationProvider } from '../apply/providers'
 import { preflightApplication } from '../apply/preflight'
 import { analyzeApplicationSurface } from '../apply/surface'
@@ -117,8 +117,14 @@ function createAdapter(id: ApplicationProviderId): AtsProviderAdapter {
       const clicked = page.getByRole?.('button', { name: /^(submit( my)? application|send application|submit)$/i })
       const target = clicked?.first?.() ?? clicked
       const count = target?.count ? await target.count() : 0
-      if (!count) return false
+      if (!count) {
+        logSubmitTrace('SUBMIT_ACTION_FOUND', { found: false })
+        return false
+      }
+      logSubmitTrace('SUBMIT_ACTION_FOUND', { found: true })
+      logSubmitTrace('SUBMIT_ACTION_CLICK_STARTED')
       await target?.click?.({ timeout: 5_000 })
+      logSubmitTrace('SUBMIT_ACTION_CLICK_COMPLETED')
       return true
     },
     detectConfirmation(input) {

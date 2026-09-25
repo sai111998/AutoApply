@@ -74,7 +74,7 @@ const CONFIRM_PAGE = `<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /><title>Application submitted</title></head>
   <body>
-    <h1>Thank you for applying</h1>
+    <h1>Application submitted successfully</h1>
     <p>Your application was submitted.</p>
     <p>Confirmation number ABC12345</p>
   </body>
