@@ -2,7 +2,7 @@ import type { ServerConfig } from '../config'
 import { classifyC2c, matchesJobTypeFilter, type C2cClassification, type JobTypeFilter } from './c2c'
 import { deduplicateJobs } from './deduplicate'
 import type { FetchLike } from './http'
-import { annotateCanonicalJob } from './aggregator'
+import { annotateCanonicalJob, canonicalApplicationUrl, isolateProviderSearch } from './aggregator'
 import { expandSearchQueries } from './query-expand'
 import { logDiscoveryCounts, type ProviderDiscoveryCounts } from './discovery-log'
 import { createJobProviders } from './provider'
@@ -121,7 +121,7 @@ export function toLiveJob(job: NormalizedJob, match: LiveJobMatch = emptyLiveMat
     missingSkills: match.missingSkills,
     c2cStatus: c2c.status,
     c2cEvidence: c2c.evidence,
-    applicationUrl: annotated.applicationUrl ?? annotated.jobUrl,
+    applicationUrl: canonicalApplicationUrl(annotated),
     discoveryProvider: annotated.discoveryProvider ?? annotated.provider,
     applicationProvider: annotated.applicationProvider ?? null,
     applicationCapability: annotated.applicationCapability ?? null,
@@ -216,7 +216,7 @@ export function sortLiveJobs(jobs: LiveJob[], request: LiveJobsRequest): LiveJob
   return copy
 }
 
-const LIVE_DISCOVERY_PROVIDERS = new Set(['job-opportunities', 'greenhouse', 'lever', 'ashby'])
+const LIVE_DISCOVERY_PROVIDERS = new Set(['job-opportunities', 'greenhouse', 'lever', 'ashby', 'jsearch'])
 
 export async function listLiveJobs(
   config: ServerConfig,
@@ -244,7 +244,13 @@ export async function listLiveJobs(
     }
   }
 
-  const results = await Promise.all(providers.map((provider) => searchLiveJobs(provider, request)))
+  const results = await Promise.all(
+    providers.map((provider) =>
+      isolateProviderSearch(provider.providerName(), { page: request.page, pageSize: request.limit }, () =>
+        searchLiveJobs(provider, request),
+      ),
+    ),
+  )
   const syntheticJobs = includeSynthetic ? [createSyntheticTestJob(config.port)] : []
   const merged = deduplicateJobs([...syntheticJobs, ...results.flatMap((item) => item.jobs)]).map(annotateCanonicalJob)
   const resumeText = request.resumeText?.trim() ?? ''
@@ -281,6 +287,8 @@ export async function listLiveJobs(
       raw: syntheticJobs.length,
       normalized: syntheticJobs.length,
       deduplicated: merged.filter((job) => (job.discoveryProvider || job.provider) === 'synthetic').length,
+      duplicatesRemoved: 0,
+      usableApplicationUrls: syntheticJobs.filter((job) => canonicalApplicationUrl(job)).length,
       filtered: jobs.filter((job) => (job.discoveryProvider || job.provider) === 'synthetic').length,
     }
     logDiscoveryCounts(syntheticEntry)
@@ -300,10 +308,13 @@ export async function listLiveJobs(
         jobType,
         keywords: [],
       },
-      raw: result.jobs.length,
+      raw: result.rawCount ?? result.jobs.length,
       normalized: result.jobs.length,
       deduplicated: fromProvider.length,
+      duplicatesRemoved: Math.max(0, result.jobs.length - fromProvider.length),
+      usableApplicationUrls: result.jobs.filter((job) => canonicalApplicationUrl(job)).length,
       filtered: afterFilter.length,
+      ...(result.warning && result.warning.code !== 'empty' ? { warning: result.warning.code } : {}),
     }
     logDiscoveryCounts(entry)
     diagnostics.push(entry)

@@ -24,6 +24,7 @@
     "playwright:install": "playwright install chromium",
     "automation:health": "tsx scripts/automation-health.ts",
     "verify:automation": "tsx scripts/verify-automation-pipeline.ts",
+    "jobs:jsearch-smoke": "tsx scripts/jsearch-smoke.ts",
     "postinstall": "playwright install chromium || echo Playwright Chromium install skipped"
   },
   "dependencies": {

@@ -21,8 +21,15 @@ export interface AggregatedJobs {
   source: string
 }
 
+const PROVIDERS_WITH_SEPARATE_APPLY_URL = new Set<JobProviderName>(['jsearch'])
+
+export function canonicalApplicationUrl(job: Pick<NormalizedJob, 'provider' | 'applicationUrl' | 'jobUrl'>): string | null {
+  if (PROVIDERS_WITH_SEPARATE_APPLY_URL.has(job.provider)) return job.applicationUrl ?? null
+  return job.applicationUrl || job.jobUrl
+}
+
 export function annotateCanonicalJob(job: NormalizedJob): NormalizedJob {
-  const applicationUrl = job.applicationUrl || job.jobUrl
+  const applicationUrl = canonicalApplicationUrl(job)
   const capability = classifyApplicationCapability({
     url: applicationUrl,
     applicationUrl,
@@ -38,12 +45,32 @@ export function annotateCanonicalJob(job: NormalizedJob): NormalizedJob {
   }
 }
 
+export async function isolateProviderSearch(
+  providerName: JobProviderName,
+  params: Pick<ProviderSearchParams, 'page' | 'pageSize'>,
+  search: () => Promise<ProviderSearchResult>,
+): Promise<ProviderSearchResult> {
+  try {
+    return await search()
+  } catch {
+    return {
+      provider: providerName,
+      jobs: [],
+      total: 0,
+      page: params.page,
+      pageSize: params.pageSize,
+      hasMore: false,
+      warning: { provider: providerName, code: 'unavailable', message: 'Live job source temporarily unavailable.' },
+    }
+  }
+}
+
 export async function searchProviderJobs(
   provider: JobProvider,
   params: ProviderSearchParams,
 ): Promise<ProviderSearchResult> {
   const search = provider.searchJobs?.bind(provider) ?? provider.search.bind(provider)
-  return search(params)
+  return isolateProviderSearch(provider.providerName(), params, () => search(params))
 }
 
 export async function aggregateProviderJobs(

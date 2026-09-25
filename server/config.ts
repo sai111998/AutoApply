@@ -22,8 +22,9 @@ function loadEnvFile(fileName: string) {
   }
 }
 
-loadEnvFile('.env')
-loadEnvFile('.env.local')
+// Same files and precedence as Vite, so the API and the browser bundle resolve the same Supabase project.
+const envMode = process.env.NODE_ENV?.trim() || 'development'
+for (const fileName of [`.env.${envMode}.local`, `.env.${envMode}`, '.env.local', '.env']) loadEnvFile(fileName)
 
 function envFlag(name: string, fallback: boolean): boolean {
   const raw = process.env[name]?.trim().toLowerCase()
@@ -49,6 +50,8 @@ export function getServerConfig() {
     llmModel: process.env.LLM_MODEL?.trim() || 'gpt-4o-mini',
     supabaseUrl: process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim() || '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '',
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY?.trim() || process.env.VITE_SUPABASE_ANON_KEY?.trim() || '',
+    frontendSupabaseUrl: process.env.VITE_SUPABASE_URL?.trim() || '',
     joobleApiKey: process.env.JOOBLE_API_KEY?.trim() ?? '',
     joobleEnabled: envFlag('JOOBLE_ENABLED', true),
     joobleApiBaseUrl: (process.env.JOOBLE_API_BASE_URL?.trim() || 'https://jooble.org/api').replace(/\/$/, ''),
@@ -66,6 +69,10 @@ export function getServerConfig() {
     leverSites: envList('LEVER_SITES', []),
     ashbyEnabled: envFlag('ASHBY_ENABLED', true),
     ashbyBoards: envList('ASHBY_BOARDS', []),
+    rapidApiKey: process.env.RAPIDAPI_KEY?.trim() ?? '',
+    jsearchEnabled: envFlag('JSEARCH_ENABLED', true),
+    jsearchApiBaseUrl: (process.env.JSEARCH_API_BASE_URL?.trim() || 'https://jsearch.p.rapidapi.com').replace(/\/$/, ''),
+    jsearchMaxPages: Number(process.env.JSEARCH_MAX_PAGES ?? 1),
   }
 }
 
@@ -78,7 +85,16 @@ type AtsDiscoveryFields =
   | 'ashbyEnabled'
   | 'ashbyBoards'
 
-export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscoveryFields> & {
+type JsearchDiscoveryFields = 'rapidApiKey' | 'jsearchEnabled' | 'jsearchApiBaseUrl' | 'jsearchMaxPages'
+
+type SupabaseSessionFields = 'supabaseAnonKey' | 'frontendSupabaseUrl'
+
+export type ServerConfig = Omit<
+  ReturnType<typeof getServerConfig>,
+  AtsDiscoveryFields | JsearchDiscoveryFields | SupabaseSessionFields
+> & {
+  supabaseAnonKey?: string
+  frontendSupabaseUrl?: string
   greenhouseEnabled?: boolean
   greenhouseBoardTokens?: string[]
   greenhouseJobBoardApiKey?: string
@@ -86,6 +102,10 @@ export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscovery
   leverSites?: string[]
   ashbyEnabled?: boolean
   ashbyBoards?: string[]
+  rapidApiKey?: string
+  jsearchEnabled?: boolean
+  jsearchApiBaseUrl?: string
+  jsearchMaxPages?: number
 }
 
 export function atsDiscoveryConfig(config: ServerConfig) {

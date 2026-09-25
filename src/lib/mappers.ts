@@ -15,7 +15,10 @@ import type {
 type ProfileRow = {
   id: string
   full_name: string | null
+  first_name: string | null
+  last_name: string | null
   email: string | null
+  phone: string | null
   location: string | null
   target_job_titles: string[] | null
   years_of_experience: number | null
@@ -139,7 +142,10 @@ export function mapProfile(row: ProfileRow, fallbackEmail: string): Profile {
   return {
     id: row.id,
     fullName: row.full_name ?? '',
+    firstName: row.first_name ?? '',
+    lastName: row.last_name ?? '',
     email: row.email ?? fallbackEmail,
+    phone: row.phone ?? '',
     location: row.location ?? '',
     targetJobTitles: row.target_job_titles ?? [],
     yearsOfExperience: row.years_of_experience ?? 0,
@@ -156,7 +162,10 @@ export function profileToRow(profile: Profile) {
   return {
     id: profile.id,
     full_name: profile.fullName,
+    first_name: profile.firstName,
+    last_name: profile.lastName,
     email: profile.email,
+    phone: profile.phone,
     location: profile.location,
     target_job_titles: profile.targetJobTitles,
     years_of_experience: profile.yearsOfExperience,
@@ -534,7 +543,10 @@ export function emptyWorkspace(userId: string, email: string, fullName = ''): Wo
     profile: {
       id: userId,
       fullName,
+      firstName: '',
+      lastName: '',
       email,
+      phone: '',
       location: '',
       targetJobTitles: [],
       yearsOfExperience: 0,
