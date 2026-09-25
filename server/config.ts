@@ -22,8 +22,9 @@ function loadEnvFile(fileName: string) {
   }
 }
 
-loadEnvFile('.env')
-loadEnvFile('.env.local')
+// Same files and precedence as Vite, so the API and the browser bundle resolve the same Supabase project.
+const envMode = process.env.NODE_ENV?.trim() || 'development'
+for (const fileName of [`.env.${envMode}.local`, `.env.${envMode}`, '.env.local', '.env']) loadEnvFile(fileName)
 
 function envFlag(name: string, fallback: boolean): boolean {
   const raw = process.env[name]?.trim().toLowerCase()
