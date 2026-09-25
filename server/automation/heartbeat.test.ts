@@ -5,6 +5,8 @@ import {
   HEARTBEAT_STALE_MS,
   readAutomationHeartbeats,
   resetAutomationHeartbeatsForTests,
+  startWorkerHeartbeatLoop,
+  stopWorkerHeartbeatLoop,
   touchAgentHeartbeat,
   touchWorkerHeartbeat,
 } from './heartbeat'
@@ -25,6 +27,18 @@ describe('automation heartbeats', () => {
     expect(beats.agent.lastHeartbeat).toBeTruthy()
     stopAgentScheduler()
     expect(schedulerRunning()).toBe(false)
+  })
+
+  it('keeps the worker heartbeat fresh while the process loop is running', async () => {
+    startWorkerHeartbeatLoop(40)
+    const first = Date.parse(readAutomationHeartbeats().worker.lastHeartbeat ?? '')
+    expect(readAutomationHeartbeats().worker.running).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    const second = readAutomationHeartbeats().worker
+    expect(second.running).toBe(true)
+    expect(Date.parse(second.lastHeartbeat ?? '')).toBeGreaterThan(first)
+    stopWorkerHeartbeatLoop()
+    expect(readAutomationHeartbeats().worker.running).toBe(false)
   })
 
   it('treats a stale heartbeat as not running', () => {

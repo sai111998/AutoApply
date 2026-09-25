@@ -45,6 +45,7 @@ import { assertCanPrepareItem } from './validate'
 import { persistConfirmedSubmission, applyConfirmationToQueueItem } from './confirmed'
 import { getBrowserWorker, notifyBrowserWorker, submitBrowserWorkerItem, waitForBrowserJob } from '../browser-worker/worker'
 import { remainingDailySlots, utcDayKey } from '../agent/policy'
+import { readAutomationHeartbeats } from '../automation/heartbeat'
 import { discoverCampaignJobs } from '../agent/discovery'
 import { rememberUserAnswers } from './questions'
 import { evaluateJobEligibility, emptyEligibilityFunnel, type EligibilityFunnel } from '../agent/pipeline'
@@ -559,6 +560,7 @@ const IN_PROGRESS_PREPARE_STATUSES = new Set(['preparing', 'filling', 'opening',
 function isStuckPreparation(item: AutoApplyQueueItem, stuckMs: number, now = Date.now()) {
   if (!IN_PROGRESS_PREPARE_STATUSES.has(item.applicationStatus)) return false
   if (inFlightPrepares.has(prepareKey(item.runId, item.id))) return false
+  if (readAutomationHeartbeats(now).worker.running) return false
   const updated = Date.parse(item.updatedAt)
   if (!Number.isFinite(updated)) return true
   return now - updated > stuckMs

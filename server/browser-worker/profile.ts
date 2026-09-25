@@ -30,3 +30,7 @@ export function allowUnattendedSubmit(url: string, env: NodeJS.ProcessEnv = proc
     return false
   }
 }
+
+export function shouldUnattendedSubmit(url: string, autoSubmit?: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+  return autoSubmit === true || allowUnattendedSubmit(url, env)
+}

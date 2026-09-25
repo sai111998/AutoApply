@@ -230,7 +230,7 @@ describe('browser worker architecture', () => {
   it('launches Chromium, consumes the queue, and completes the synthetic employer flow', async () => {
     const site = await startSyntheticEmployer()
     const profileDir = mkdtempSync(path.join(os.tmpdir(), 'jobpilot-profile-'))
-    const worker = await createBrowserWorker({ headless: true, userDataDir: profileDir, autoSubmit: true })
+    const worker = await createBrowserWorker({ headless: true, userDataDir: profileDir })
     try {
       const started = await startAutoApply(
         {

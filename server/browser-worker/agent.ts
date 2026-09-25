@@ -17,7 +17,7 @@ import { buildCandidateApplicationProfile, candidateFillValues } from '../applic
 import { selectedResumeForUpload } from '../application/resume'
 import { persistStepState } from '../application/navigation'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyQueueStatus } from '../apply/types'
-import { allowUnattendedSubmit } from './profile'
+import { shouldUnattendedSubmit } from './profile'
 import { detectAtsAdapter } from './providers'
 import { recordUserIntervention } from './intervention'
 import {
@@ -304,7 +304,7 @@ export async function runApplicationAgent(input: {
     const onReview = adapter.detectReview(html) && hasVisibleSubmit && !hasVisibleNext
     if (onReview || (hasVisibleSubmit && !hasVisibleNext)) {
       const title = (await input.page.title?.()) ?? ''
-      const shouldSubmit = input.autoSubmit ?? allowUnattendedSubmit(currentUrl)
+      const shouldSubmit = shouldUnattendedSubmit(currentUrl, input.autoSubmit)
       if (shouldSubmit) {
         session = markBrowserSessionState(session.itemId, 'submitting', { currentUrl })
         const submitted = await adapter.submit(input.page)

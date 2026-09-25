@@ -21,7 +21,7 @@ import {
 } from './queue'
 import { launchPersistentBrowser, resetBrowserRuntimeForTests, type PersistentBrowserRuntime } from './runtime'
 import { detectAtsAdapter } from './providers'
-import { markWorkerStopped, touchWorkerHeartbeat } from '../automation/heartbeat'
+import { startWorkerHeartbeatLoop, stopWorkerHeartbeatLoop, touchWorkerHeartbeat } from '../automation/heartbeat'
 
 const livePages = new Map<string, { close: () => Promise<void>; page: import('./types').BrowserPageLike }>()
 
@@ -54,6 +54,7 @@ export async function resetBrowserWorkerForTests() {
   stopped = true
   processing = false
   livePages.clear()
+  stopWorkerHeartbeatLoop(false)
   resetBrowserWorkerQueueForTests()
   await resetBrowserRuntimeForTests()
 }
@@ -127,7 +128,7 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
     async start() {
       if (!stopped && loop) return
       stopped = false
-      touchWorkerHeartbeat()
+      startWorkerHeartbeatLoop()
       const runs = memoryStore.listAll ? await memoryStore.listAll() : []
       for (const stored of runs) {
         recoverStuckBrowserJobs(stored.items, {
@@ -168,7 +169,7 @@ export async function createBrowserWorker(options: BrowserWorkerOptions = {}): P
       await loop?.catch(() => undefined)
       loop = null
       await runtime.close()
-      markWorkerStopped()
+      stopWorkerHeartbeatLoop()
       if (worker === instance) worker = null
     },
   }

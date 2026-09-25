@@ -11,6 +11,7 @@ import {
 } from './engine'
 import { inspectApplicationPage } from './detect'
 import { clearAutoApplyMemory, memoryStore } from './store'
+import { resetAutomationHeartbeatsForTests, touchWorkerHeartbeat } from '../automation/heartbeat'
 import type { ApplyBrowser, AutoApplyProfile, AutoApplyQueueItem, ListedAutoApplyJob } from './types'
 import type { ServerConfig } from '../config'
 import { classifyC2c } from '../jobs/c2c'
@@ -128,6 +129,7 @@ function readyBrowser(result?: Partial<Awaited<ReturnType<ApplyBrowser['prepare'
 afterEach(() => {
   clearAutoApplyMemory()
   resetAutoApplyEngineForTests()
+  resetAutomationHeartbeatsForTests()
 })
 
 describe('auto apply preparation hang recovery', () => {
@@ -452,6 +454,18 @@ describe('auto apply preparation hang recovery', () => {
     expect(started.items[0].applicationStatus).toBe('failed')
     const loaded = await getAutoApplyRun(started.run.id, { timeouts: shortTimeouts })
     expect(loaded?.items[0].applicationStatus).toBe('failed')
+  })
+
+  it('does not fail an in-progress item while the browser worker heartbeat is fresh', async () => {
+    const started = await startReadyRun({
+      applicationStatus: 'opening',
+      updatedAt: new Date(Date.now() - 120_000).toISOString(),
+    })
+    touchWorkerHeartbeat()
+    failStuckPreparations(started.items, 30)
+    expect(started.items[0].applicationStatus).toBe('opening')
+    const loaded = await getAutoApplyRun(started.run.id, { timeouts: shortTimeouts })
+    expect(loaded?.items[0].applicationStatus).toBe('opening')
   })
 
   it('does not let one hung job block a second job after the lock timeout', async () => {

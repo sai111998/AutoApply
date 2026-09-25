@@ -39,6 +39,8 @@ function emptyState(): AutomationHeartbeatState {
 }
 
 let memory = emptyState()
+let workerBeatTimer: ReturnType<typeof setInterval> | null = null
+const WORKER_HEARTBEAT_INTERVAL_MS = 2_000
 
 function runtimeDir(): string {
   const configured = process.env.JOBPILOT_RUNTIME_DIR?.trim()
@@ -87,7 +89,25 @@ function fresh(iso: string | null | undefined, now: number): boolean {
 }
 
 export function resetAutomationHeartbeatsForTests() {
+  stopWorkerHeartbeatLoop(false)
   memory = emptyState()
+}
+
+export function startWorkerHeartbeatLoop(intervalMs = WORKER_HEARTBEAT_INTERVAL_MS) {
+  stopWorkerHeartbeatLoop(false)
+  touchWorkerHeartbeat()
+  workerBeatTimer = setInterval(() => {
+    touchWorkerHeartbeat()
+  }, Math.max(20, intervalMs))
+  workerBeatTimer.unref?.()
+}
+
+export function stopWorkerHeartbeatLoop(markStopped = true) {
+  if (workerBeatTimer) {
+    clearInterval(workerBeatTimer)
+    workerBeatTimer = null
+  }
+  if (markStopped) markWorkerStopped()
 }
 
 export function touchAgentHeartbeat(
@@ -149,4 +169,4 @@ export function readAutomationHeartbeats(now = Date.now()): AutomationHeartbeatS
   }
 }
 
-export { STALE_MS as HEARTBEAT_STALE_MS }
+export { STALE_MS as HEARTBEAT_STALE_MS, WORKER_HEARTBEAT_INTERVAL_MS }

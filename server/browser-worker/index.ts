@@ -15,7 +15,7 @@ async function main() {
   }
   const worker = await createBrowserWorker({
     headless: process.env.JOBPILOT_BROWSER_HEADLESS !== '0',
-    autoSubmit: process.env.JOBPILOT_AUTO_SUBMIT === '1',
+    autoSubmit: process.env.JOBPILOT_AUTO_SUBMIT === '1' ? true : undefined,
   })
   await worker.start()
   console.log('JobPilot browser worker is running headless. Queue: existing Auto Apply jobs. Concurrency: 1.')

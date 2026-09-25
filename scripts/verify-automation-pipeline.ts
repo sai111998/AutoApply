@@ -53,13 +53,14 @@ async function main() {
   const health = await json<Record<string, unknown>>('/api/automation/health')
   console.log('HEALTH', JSON.stringify(health, null, 2))
 
+  const syntheticUserId = `verify-synthetic-${Date.now()}`
   const started = await json<{
     run: { id: string; counts: Record<string, number> }
     items: Array<Record<string, unknown>>
   }>('/api/jobs/auto-apply/start', {
     method: 'POST',
     body: JSON.stringify({
-      userId: 'verify-synthetic',
+      userId: syntheticUserId,
       resumeId: 'resume-1',
       resumeVersionId: 'resume-1',
       resumeText: JAVA_RESUME_TEXT,
@@ -85,11 +86,17 @@ async function main() {
     (current) => current.items.some((item) => ['submitted', 'failed', 'needs_user_input', 'needs_confirmation'].includes(item.applicationStatus)),
   )
   const applications = await json<{ applications: Array<Record<string, unknown>> }>(
-    '/api/automation/applications?userId=verify-synthetic',
+    `/api/automation/applications?userId=${encodeURIComponent(syntheticUserId)}`,
   )
+  const syntheticItem = finished.items[0]
+  if (syntheticItem?.applicationStatus !== 'submitted') {
+    throw new Error(
+      `synthetic application ${syntheticItem?.applicationStatus ?? 'missing'}: ${JSON.stringify(syntheticItem)}`,
+    )
+  }
   console.log('SYNTHETIC_DONE', {
-    status: finished.items[0]?.applicationStatus,
-    confirmationNumber: finished.items[0]?.confirmationNumber,
+    status: syntheticItem.applicationStatus,
+    confirmationNumber: syntheticItem.confirmationNumber,
     applications: applications.applications.length,
   })
 
@@ -136,7 +143,7 @@ async function main() {
   }>('/api/jobs/auto-apply/start', {
     method: 'POST',
     body: JSON.stringify({
-      userId: 'verify-real',
+      userId: `verify-real-${Date.now()}`,
       resumeId: 'resume-1',
       resumeVersionId: 'resume-1',
       resumeText: JAVA_RESUME_TEXT,
