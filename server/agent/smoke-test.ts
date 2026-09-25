@@ -540,7 +540,7 @@ export async function startSmokeTestCampaign(serverConfig: ServerConfig, input: 
     resumeText: input.resumeText ?? input.masterResumeText,
     resumeVersionId: input.resumeVersionId,
   })
-  await hydrateCandidateStoreFromSupabase(input.userId, serverConfig)
+  await hydrateCandidateStoreFromSupabase(input.userId, { config: serverConfig })
   rememberAutoApplyProfile(input.userId, input.profile)
   touchAgentHeartbeat({ currentCampaignId: run.id, lastDiscoveryAt: createdAt })
   logSmokeTest('Started')
@@ -716,7 +716,7 @@ export async function queueDirectSmokeTestJob(input: { userId: string; jobId: st
   if (!urlCheck.ok || !urlCheck.url) {
     throw new HttpError(422, urlCheck.reason ?? 'Application URL is missing or invalid.')
   }
-  await hydrateCandidateStoreFromSupabase(userId, input.serverConfig)
+  await hydrateCandidateStoreFromSupabase(userId, { config: input.serverConfig })
   const candidate = getCandidateProfile(userId)
   if (!candidate?.profile) {
     throw new HttpError(422, 'The JobPilot profile required for this application is missing.')

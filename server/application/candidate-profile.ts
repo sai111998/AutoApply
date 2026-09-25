@@ -1,6 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
-import type { ServerConfig } from '../config'
 import { getCandidateProfile, saveCandidateProfile } from './candidate-store'
+import { ProfileAccessError, supabaseDataClient, type SupabaseAccess } from './supabase-access'
 
 export interface CanonicalCandidateProfile {
   userId: string
@@ -80,48 +79,53 @@ function isUuidValue(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 }
 
-export async function fetchSupabaseProfileRow(
-  userId: string,
-  config?: ServerConfig,
-): Promise<SupabaseProfileRow | null> {
+export async function fetchSupabaseProfileRow(userId: string, access: SupabaseAccess): Promise<SupabaseProfileRow> {
   const id = userId.trim()
-  if (!id || !isUuidValue(id)) return null
-  if (!config?.supabaseUrl || !config.supabaseServiceRoleKey) return null
-  try {
-    const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    })
-    // '*' keeps the read working on databases that predate the application profile columns (migration 011).
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', id).maybeSingle()
-    if (error || !data) return null
-    return data as SupabaseProfileRow
-  } catch {
-    return null
+  if (!isUuidValue(id)) {
+    throw new ProfileAccessError('PROFILE_AUTH_REQUIRED', 'The signed-in user id is not a Supabase user id.', 401)
   }
+  const supabase = supabaseDataClient(access)
+  let result: { data: unknown; error: { code?: string } | null }
+  try {
+    // '*' keeps the read working on databases that predate the application profile columns (migration 011).
+    result = await supabase.from('profiles').select('*').eq('id', id).maybeSingle()
+  } catch {
+    throw new ProfileAccessError('PROFILE_DATABASE_ERROR', 'The profile query could not reach Supabase.', 503)
+  }
+  if (result.error) {
+    throw new ProfileAccessError('PROFILE_DATABASE_ERROR', `The profile query failed (${result.error.code || 'unknown error'}).`, 503)
+  }
+  if (!result.data) {
+    throw new ProfileAccessError(
+      'PROFILE_NOT_FOUND',
+      'No public.profiles row exists for the signed-in user. Save the Profile page to create it.',
+      404,
+    )
+  }
+  return result.data as SupabaseProfileRow
 }
 
 export async function getCandidateApplicationProfile(
   userId: string,
-  config?: ServerConfig,
-): Promise<CanonicalCandidateProfile | null> {
-  const id = userId.trim()
-  const row = await fetchSupabaseProfileRow(id, config)
-  if (!row) return null
-  return { userId: id, ...normalizeStoredCandidate(row as unknown as Record<string, unknown>) }
+  access: SupabaseAccess,
+): Promise<CanonicalCandidateProfile> {
+  const row = await fetchSupabaseProfileRow(userId, access)
+  return { userId: userId.trim(), ...normalizeStoredCandidate(row as unknown as Record<string, unknown>) }
 }
 
 function hasCandidateLastName(fullName: string): boolean {
   return splitCandidateName(fullName).lastName !== ''
 }
 
-export async function hydrateCandidateStoreFromSupabase(
-  userId: string,
-  config?: ServerConfig,
-): Promise<boolean> {
+export async function hydrateCandidateStoreFromSupabase(userId: string, access: SupabaseAccess): Promise<boolean> {
   const id = userId.trim()
   if (!id) return false
-  const row = await fetchSupabaseProfileRow(id, config)
-  if (!row) return false
+  let row: SupabaseProfileRow
+  try {
+    row = await fetchSupabaseProfileRow(id, access)
+  } catch {
+    return false
+  }
   const canonical = normalizeStoredCandidate(row as unknown as Record<string, unknown>)
   const existing = getCandidateProfile(id)
   const profile = existing?.profile

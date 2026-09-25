@@ -6,6 +6,7 @@ import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import { runV2Application, type V2AgentResult } from './agent'
 import { isV2BrowserAvailable, launchV2Browser, type V2BrowserHandle } from './browser'
 import { isV2Error } from './errors'
+import { takeV2RunInputs } from './inputs'
 import { logV2 } from './log'
 import { requireV2Profile } from './profile'
 import { getV2Run, listV2Runs, updateV2Run, v2QueueDepth } from './queue'
@@ -114,17 +115,23 @@ async function processV2Run(runId: string): Promise<V2QueueItem | null> {
     resumeVersionId: run.resumeVersionId,
   })
 
-  let profile
-  try {
-    profile = await requireV2Profile(run.userId)
-  } catch (error) {
-    const missing = isV2Error(error) && error.missingFields?.length ? error.missingFields.join(',') : 'profile'
-    return stopV2Run(runId, 'needs_user_input', `PROFILE_INCOMPLETE: missing ${missing}`)
+  const handedOver = takeV2RunInputs(runId)
+  let profile = handedOver?.profile
+  if (!profile) {
+    try {
+      profile = await requireV2Profile(run.userId)
+    } catch (error) {
+      if (isV2Error(error) && error.code === 'PROFILE_INCOMPLETE') {
+        return stopV2Run(runId, 'needs_user_input', `PROFILE_INCOMPLETE: missing ${error.missingFields?.join(',') ?? 'profile'}`)
+      }
+      const code = isV2Error(error) ? error.code : 'PROFILE_DATABASE_ERROR'
+      return stopV2Run(runId, 'failed', `${code}: ${error instanceof Error ? error.message : 'profile unavailable.'}`)
+    }
   }
 
   let resume: V2Resume
   try {
-    resume = await loadV2Resume(run.userId, run.resumeVersionId)
+    resume = handedOver?.resume ?? (await loadV2Resume(run.userId, run.resumeVersionId))
   } catch (error) {
     return stopV2Run(runId, 'failed', `RESUME_NOT_FOUND: ${error instanceof Error ? error.message : 'resume unavailable.'}`)
   }

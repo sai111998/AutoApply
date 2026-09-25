@@ -36,6 +36,8 @@ describe('persistProfileRow', () => {
     expect(result).toEqual({ error: null, applicationFieldsStored: true })
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
+      id: profile.id,
+      email: 'jordan.hale@example.com',
       full_name: 'Jordan Hale',
       first_name: 'Jordan',
       last_name: 'Hale',

@@ -11,8 +11,9 @@ import type {
 import { listLiveJobSnapshots } from '../jobs/live-store'
 import { firstValidV2Job, loadV2Job, resolveV2ApplicationUrl, type V2JobOptions } from './application'
 import { V2Error } from './errors'
+import { rememberV2RunInputs } from './inputs'
 import { logV2 } from './log'
-import { requireV2Profile } from './profile'
+import { requireV2Profile, v2Access } from './profile'
 import { createV2Run } from './queue'
 import { loadV2Resume } from './resume'
 import { V2_TERMINAL_STATUSES, type V2JobRef, type V2QueueItem, type V2RunSource, type V2RunStatus } from './types'
@@ -41,9 +42,11 @@ async function queueV2Job(input: {
   campaignConfig: AutoApplyConfig
   jobsFound: number
   resumeId?: string | null
+  accessToken?: string | null
 }): Promise<V2QueueItem> {
-  await requireV2Profile(input.userId)
-  const resume = await loadV2Resume(input.userId, input.resumeId)
+  const access = v2Access(input.accessToken)
+  const profile = await requireV2Profile(input.userId, access)
+  const resume = await loadV2Resume(input.userId, input.resumeId, access)
   const now = new Date().toISOString()
   const run = createV2Run({
     runId: randomUUID(),
@@ -81,26 +84,34 @@ async function queueV2Job(input: {
     createdAt: now,
     updatedAt: now,
   })
+  rememberV2RunInputs(run.runId, { profile, resume })
   logV2('RUN_QUEUED', { runId: run.runId, jobId: run.jobId, source: run.source })
   return run
 }
 
 export async function startV2AutoApply(
-  input: { userId: string; jobId: string } & V2JobOptions,
+  input: { userId: string; jobId: string; accessToken?: string | null } & V2JobOptions,
 ): Promise<{ runId: string; status: 'queued' }> {
-  if (!input.userId?.trim()) throw new V2Error('PROFILE_INCOMPLETE', 'Authentication required.', 401)
+  if (!input.userId?.trim()) throw new V2Error('PROFILE_AUTH_REQUIRED', 'Authentication required.', 401)
   if (!input.jobId?.trim()) throw new V2Error('JOB_NOT_FOUND', 'jobId is required.', 400)
   const job = loadV2Job(input.userId, input.jobId, input)
   const source: V2RunSource = input.allowSyntheticEmployer ? 'synthetic-test' : 'start-one'
   if (source === 'start-one') {
     logV2('REAL_JOB_SELECTED', { jobId: job.id, company: job.company, applicationUrl: job.applicationUrl })
   }
-  const run = await queueV2Job({ userId: input.userId, job, source, campaignConfig: V2_START_ONE_CONFIG, jobsFound: 1 })
+  const run = await queueV2Job({
+    userId: input.userId,
+    job,
+    source,
+    campaignConfig: V2_START_ONE_CONFIG,
+    jobsFound: 1,
+    accessToken: input.accessToken,
+  })
   return { runId: run.runId, status: 'queued' }
 }
 
-export async function startV2AutoApplyCampaign(input: AutoApplyStartInput) {
-  if (!input.userId?.trim()) throw new V2Error('PROFILE_INCOMPLETE', 'Authentication required.', 401)
+export async function startV2AutoApplyCampaign(input: AutoApplyStartInput, accessToken?: string | null) {
+  if (!input.userId?.trim()) throw new V2Error('PROFILE_AUTH_REQUIRED', 'Authentication required.', 401)
   const liveJobs = listLiveJobSnapshots()
     .filter((job) => job.provider !== 'synthetic' && job.source !== 'synthetic')
     .sort((left, right) => (right.fetchedAt ?? '').localeCompare(left.fetchedAt ?? ''))
@@ -130,6 +141,7 @@ export async function startV2AutoApplyCampaign(input: AutoApplyStartInput) {
     campaignConfig: input.config,
     jobsFound: liveJobs.length,
     resumeId: input.resumeId,
+    accessToken,
   })
   return { campaignId: run.runId, status: 'running' as const, ...toAutoApplyRunResult(run) }
 }

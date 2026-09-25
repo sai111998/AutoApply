@@ -3,7 +3,13 @@ import { parseAutoApplyStart } from '../apply/parse'
 import { mapSyntheticApplicationFields, candidateFromStoredProfile } from '../agent/eligibility'
 import { resetAgentForTests } from '../agent'
 import { getServerConfig } from '../config'
-import { FAKE_SUPABASE_URL, installFakeSupabase, uninstallFakeSupabase } from '../testing/fake-supabase'
+import {
+  FAKE_ANON_KEY,
+  FAKE_SUPABASE_URL,
+  fakeSessionToken,
+  installFakeSupabase,
+  uninstallFakeSupabase,
+} from '../testing/fake-supabase'
 import { applicationQuestionMapper } from './mapper'
 import { buildCandidateApplicationProfile } from './profile'
 import {
@@ -19,6 +25,8 @@ import { getCandidateProfile, resetCandidateStoreForTests, saveCandidateProfile 
 import type { AutoApplyProfile } from '../apply/types'
 
 const USER_ID = '11111111-1111-4111-8111-111111111111'
+
+const access = (accessToken?: string) => ({ config: getServerConfig(), accessToken: accessToken ?? null })
 
 const canonicalFixture: AutoApplyProfile = {
   fullName: 'Alex Rivera',
@@ -68,7 +76,7 @@ afterEach(() => {
 describe('canonical application profile (public.profiles)', () => {
   it('reads first_name, last_name, email, and phone for profiles.id = auth user id', async () => {
     installFakeSupabase({ profiles: [profilesRow()] })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(profile).toMatchObject({
       userId: USER_ID,
       firstName: 'Alex',
@@ -83,19 +91,19 @@ describe('canonical application profile (public.profiles)', () => {
 
   it('prefers the first_name and last_name columns over full_name', async () => {
     installFakeSupabase({ profiles: [profilesRow({ full_name: 'Alexander Rivera-Lopez', first_name: 'Alex', last_name: 'Rivera' })] })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(profile).toMatchObject({ firstName: 'Alex', lastName: 'Rivera' })
   })
 
   it('derives first and last name from a two-word full_name when the columns are empty', async () => {
     installFakeSupabase({ profiles: [profilesRow({ first_name: null, last_name: '', full_name: 'Alex Rivera' })] })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(profile).toMatchObject({ firstName: 'Alex', lastName: 'Rivera' })
   })
 
   it('leaves last name missing for a one-word full_name and never invents one', async () => {
     installFakeSupabase({ profiles: [profilesRow({ first_name: null, last_name: null, full_name: 'Alex' })] })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(profile).toMatchObject({ firstName: 'Alex', lastName: '' })
     expect(isApplicationProfileComplete(profile)).toEqual({ complete: false, missingFields: ['lastName'] })
   })
@@ -105,7 +113,7 @@ describe('canonical application profile (public.profiles)', () => {
       profiles: [profilesRow({ phone: null })],
       resumes: [{ id: 'resume-1', user_id: USER_ID, parsed_text: 'Alex Rivera · 512-555-0100 · alex@example.com' }],
     })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(profile?.phone).toBe('')
     expect(isApplicationProfileComplete(profile)).toEqual({ complete: false, missingFields: ['phone'] })
   })
@@ -115,21 +123,39 @@ describe('canonical application profile (public.profiles)', () => {
       Object.entries(profilesRow()).filter(([key]) => !['first_name', 'last_name', 'phone'].includes(key)),
     )
     installFakeSupabase({ profiles: [legacyRow] })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(profile).toMatchObject({ firstName: 'Alex', lastName: 'Rivera', email: 'alex.rivera@example.com', phone: '' })
   })
 
-  it('returns null for other users, non-UUID ids, and servers without Supabase', async () => {
+  it('distinguishes a missing row, a non-UUID id, a missing server config, and a failed query', async () => {
     installFakeSupabase({ profiles: [profilesRow()] })
-    expect(await getCandidateApplicationProfile('22222222-2222-4222-8222-222222222222', getServerConfig())).toBeNull()
-    expect(await getCandidateApplicationProfile('not-a-uuid', getServerConfig())).toBeNull()
-    expect(await getCandidateApplicationProfile(USER_ID, undefined)).toBeNull()
-    expect(await fetchSupabaseProfileRow(USER_ID, { supabaseUrl: '', supabaseServiceRoleKey: '' } as never)).toBeNull()
+    await expect(getCandidateApplicationProfile('22222222-2222-4222-8222-222222222222', access())).rejects.toMatchObject({
+      code: 'PROFILE_NOT_FOUND',
+    })
+    await expect(getCandidateApplicationProfile('not-a-uuid', access())).rejects.toMatchObject({ code: 'PROFILE_AUTH_REQUIRED' })
+    await expect(
+      fetchSupabaseProfileRow(USER_ID, { config: { ...getServerConfig(), supabaseUrl: '' } }),
+    ).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
+    uninstallFakeSupabase()
+    installFakeSupabase({ profiles: [profilesRow()], failures: { profiles: 500 } })
+    await expect(getCandidateApplicationProfile(USER_ID, access())).rejects.toMatchObject({
+      code: 'PROFILE_DATABASE_ERROR',
+      message: expect.stringContaining('XX000'),
+    })
+  })
+
+  it('reads the profile as the signed-in user when the server has no service-role key', async () => {
+    const { reads } = installFakeSupabase({ profiles: [profilesRow()] }, { serviceRoleKey: null })
+    const token = fakeSessionToken(USER_ID)
+    await expect(getCandidateApplicationProfile(USER_ID, access())).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
+    const profile = await getCandidateApplicationProfile(USER_ID, access(token))
+    expect(profile).toMatchObject({ firstName: 'Alex', lastName: 'Rivera', phone: '5125550100' })
+    expect(reads.at(-1)).toMatchObject({ path: '/rest/v1/profiles', authorization: `Bearer ${token}`, apikey: FAKE_ANON_KEY })
   })
 
   it('reports availability booleans without values', async () => {
     installFakeSupabase({ profiles: [profilesRow({ last_name: null, full_name: 'Alex', phone: null })] })
-    const profile = await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    const profile = await getCandidateApplicationProfile(USER_ID, access())
     expect(getApplicationProfileAvailability(profile)).toMatchObject({
       firstName: true,
       lastName: false,
@@ -144,7 +170,7 @@ describe('canonical application profile (public.profiles)', () => {
 
   it('selects every column so a missing phone column cannot hide the name', async () => {
     installFakeSupabase({ profiles: [profilesRow()] })
-    await getCandidateApplicationProfile(USER_ID, getServerConfig())
+    await getCandidateApplicationProfile(USER_ID, access())
     const calls = (globalThis.fetch as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls
     const urls = calls.map(([input]) => (input instanceof Request ? input.url : String(input)))
     expect(urls.some((url) => url.startsWith(`${FAKE_SUPABASE_URL}/rest/v1/profiles`) && url.includes('select=*'))).toBe(true)
@@ -158,7 +184,7 @@ describe('canonical application profile (public.profiles)', () => {
       resumeVersionId: 'resume-1',
     })
     installFakeSupabase({ profiles: [profilesRow()] })
-    expect(await hydrateCandidateStoreFromSupabase(USER_ID, getServerConfig())).toBe(true)
+    expect(await hydrateCandidateStoreFromSupabase(USER_ID, access())).toBe(true)
     expect(getCandidateProfile(USER_ID)).toMatchObject({
       profile: { fullName: 'Alex Rivera', phone: '5125550100' },
       resumeText: 'resume',

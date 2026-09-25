@@ -49,6 +49,8 @@ export function getServerConfig() {
     llmModel: process.env.LLM_MODEL?.trim() || 'gpt-4o-mini',
     supabaseUrl: process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim() || '',
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '',
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY?.trim() || process.env.VITE_SUPABASE_ANON_KEY?.trim() || '',
+    frontendSupabaseUrl: process.env.VITE_SUPABASE_URL?.trim() || '',
     joobleApiKey: process.env.JOOBLE_API_KEY?.trim() ?? '',
     joobleEnabled: envFlag('JOOBLE_ENABLED', true),
     joobleApiBaseUrl: (process.env.JOOBLE_API_BASE_URL?.trim() || 'https://jooble.org/api').replace(/\/$/, ''),
@@ -84,7 +86,14 @@ type AtsDiscoveryFields =
 
 type JsearchDiscoveryFields = 'rapidApiKey' | 'jsearchEnabled' | 'jsearchApiBaseUrl' | 'jsearchMaxPages'
 
-export type ServerConfig = Omit<ReturnType<typeof getServerConfig>, AtsDiscoveryFields | JsearchDiscoveryFields> & {
+type SupabaseSessionFields = 'supabaseAnonKey' | 'frontendSupabaseUrl'
+
+export type ServerConfig = Omit<
+  ReturnType<typeof getServerConfig>,
+  AtsDiscoveryFields | JsearchDiscoveryFields | SupabaseSessionFields
+> & {
+  supabaseAnonKey?: string
+  frontendSupabaseUrl?: string
   greenhouseEnabled?: boolean
   greenhouseBoardTokens?: string[]
   greenhouseJobBoardApiKey?: string

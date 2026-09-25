@@ -157,7 +157,7 @@ export async function startSyntheticSliceCampaign(serverConfig: ServerConfig, in
     resumeText: input.resumeText ?? input.masterResumeText,
     resumeVersionId: input.resumeVersionId,
   })
-  await hydrateCandidateStoreFromSupabase(input.userId, serverConfig)
+  await hydrateCandidateStoreFromSupabase(input.userId, { config: serverConfig })
   rememberAutoApplyProfile(input.userId, input.profile)
   touchAgentHeartbeat({ currentCampaignId: run.id, lastDiscoveryAt: createdAt })
   logExecution('AGENT_STARTED')

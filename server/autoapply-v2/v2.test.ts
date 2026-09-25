@@ -12,7 +12,7 @@ import { rememberLiveJobs, resetLiveJobStoreForTests } from '../jobs/live-store'
 import type { LiveJob } from '../jobs/list'
 import { emptyLiveMatch } from '../jobs/score'
 import { useAutomationRuntimeForTests } from '../automation/runtime-io'
-import { installFakeSupabase, uninstallFakeSupabase } from '../testing/fake-supabase'
+import { fakeSessionToken, installFakeSupabase, uninstallFakeSupabase } from '../testing/fake-supabase'
 import { classifyV2Page, detectV2Provider } from './agent'
 import { firstValidV2Job, isV2JobAlreadyApplied, loadV2Job, validateV2ApplicationUrl } from './application'
 import { startV2AutoApply, startV2AutoApplyCampaign, toAutoApplyRunResult, V2_START_ONE_CONFIG } from './campaign'
@@ -27,6 +27,7 @@ import { resetV2SessionsForTests } from './session'
 import { persistV2Application, processV2QueueOnce, resetV2WorkerForTests } from './worker'
 
 const USER_ID = '33333333-3333-4333-8333-333333333333'
+const OTHER_USER_ID = '55555555-5555-4555-8555-555555555555'
 const RESUME_ID = '44444444-4444-4444-8444-444444444444'
 const RESUME_PATH = `${USER_ID}/${RESUME_ID}/Master_Resume.pdf`
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -98,17 +99,30 @@ function resumeRow(overrides: Record<string, unknown> = {}) {
 }
 
 function seedAccount(
-  options: { profile?: Record<string, unknown> | null; resume?: Record<string, unknown> | null; file?: boolean } = {},
+  options: {
+    profile?: Record<string, unknown> | null
+    resume?: Record<string, unknown> | null
+    file?: boolean
+    failures?: { profiles?: number }
+    serviceRoleKey?: string | null
+  } = {},
 ) {
-  return installFakeSupabase({
-    profiles: options.profile === null ? [] : [profileRow(options.profile ?? {})],
-    resumes: options.resume === null ? [] : [resumeRow(options.resume ?? {})],
-    files:
-      options.file === false
-        ? {}
-        : { [`resumes/${RESUME_PATH}`]: { body: Buffer.from('%PDF-1.4 master resume bytes'), contentType: 'application/pdf' } },
-  })
+  return installFakeSupabase(
+    {
+      users: [{ id: USER_ID }, { id: OTHER_USER_ID }],
+      profiles: options.profile === null ? [] : [profileRow(options.profile ?? {})],
+      resumes: options.resume === null ? [] : [resumeRow(options.resume ?? {})],
+      files:
+        options.file === false
+          ? {}
+          : { [`resumes/${RESUME_PATH}`]: { body: Buffer.from('%PDF-1.4 master resume bytes'), contentType: 'application/pdf' } },
+      failures: options.failures,
+    },
+    { serviceRoleKey: options.serviceRoleKey },
+  )
 }
+
+const bearer = (userId = USER_ID) => `Bearer ${fakeSessionToken(userId)}`
 
 const startProfile: AutoApplyProfile = {
   fullName: 'Ada',
@@ -218,11 +232,13 @@ describe('V2 profile precheck', () => {
     })
   })
 
-  it('treats a server without the profile source as PROFILE_INCOMPLETE', async () => {
-    await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({
-      code: 'PROFILE_INCOMPLETE',
-      missingFields: ['firstName', 'lastName', 'email', 'phone'],
-    })
+  it('keeps missing server config, missing rows, and failed queries distinct from an incomplete profile', async () => {
+    await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
+    seedAccount({ profile: null })
+    await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({ code: 'PROFILE_NOT_FOUND' })
+    uninstallFakeSupabase()
+    seedAccount({ failures: { profiles: 500 } })
+    await expect(requireV2Profile(USER_ID)).rejects.toMatchObject({ code: 'PROFILE_DATABASE_ERROR' })
   })
 })
 
@@ -668,41 +684,70 @@ describe('V2 HTTP endpoints', () => {
       browserAvailable: expect.any(Boolean),
       queueDepth: expect.any(Number),
       currentState: expect.any(String),
+      supabase: { urlConfigured: false, serviceRole: 'missing', anonConfigured: false, frontendProject: 'unknown' },
     })
     expect(JSON.stringify(response.body)).not.toMatch(/key|secret|token/i)
   })
 
-  it('validates start-one requests and returns immediately with queued', async () => {
+  it('authenticates start-one with the Supabase session and returns immediately with queued', async () => {
     seedAccount({ profile: { last_name: null, full_name: 'Ada', phone: null } })
     const app = createApp({ config: getServerConfig() })
-    await request(app).post('/api/autoapply-v2/start-one').send({ jobId: 'job-1' }).expect(401)
-    await request(app).post('/api/autoapply-v2/start-one').set('x-jobpilot-user-id', USER_ID).send({}).expect(400)
-    await request(app).post('/api/autoapply-v2/start-one').set('x-jobpilot-user-id', USER_ID).send({ jobId: 'missing' }).expect(404)
+    const missingAuth = await request(app).post('/api/autoapply-v2/start-one').set('x-jobpilot-user-id', USER_ID).send({ jobId: 'job-1' })
+    expect(missingAuth.status).toBe(401)
+    expect(missingAuth.body.code).toBe('PROFILE_AUTH_REQUIRED')
+    await request(app).post('/api/autoapply-v2/start-one').set('Authorization', 'Bearer not-a-session').send({ jobId: 'job-1' }).expect(401)
+    await request(app).post('/api/autoapply-v2/start-one').set('Authorization', bearer()).send({}).expect(400)
+    await request(app).post('/api/autoapply-v2/start-one').set('Authorization', bearer()).send({ jobId: 'missing' }).expect(404)
 
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    const incomplete = await request(app).post('/api/autoapply-v2/start-one').set('x-jobpilot-user-id', USER_ID).send({ jobId: 'job-1' })
+    const incomplete = await request(app).post('/api/autoapply-v2/start-one').set('Authorization', bearer()).send({ jobId: 'job-1' })
     expect(incomplete.status).toBe(422)
     expect(incomplete.body).toMatchObject({ success: false, code: 'PROFILE_INCOMPLETE', missingFields: ['lastName', 'phone'] })
 
     uninstallFakeSupabase()
     seedAccount()
-    const response = await request(app).post('/api/autoapply-v2/start-one').set('x-jobpilot-user-id', USER_ID).send({ jobId: 'job-1' })
+    const response = await request(app)
+      .post('/api/autoapply-v2/start-one')
+      .set('Authorization', bearer())
+      .send({ jobId: 'job-1', userId: OTHER_USER_ID })
     expect(response.status).toBe(200)
     expect(response.body).toEqual({ success: true, status: 'queued', runId: expect.any(String) })
+    expect(getV2Run(response.body.runId)?.userId).toBe(USER_ID)
   })
 
-  it('reports only the four profile availability booleans', async () => {
-    const app = createApp({ config: getServerConfig() })
-    await request(app).get('/api/autoapply-v2/profile-check').expect(401)
-    const unavailable = await request(app).get('/api/autoapply-v2/profile-check').set('x-jobpilot-user-id', USER_ID)
-    expect(unavailable.body).toEqual({ firstName: false, lastName: false, email: false, phone: false })
-
+  it('profile-check finds the authenticated user profile and returns only availability', async () => {
     seedAccount()
-    const present = await request(createApp({ config: getServerConfig() }))
-      .get('/api/autoapply-v2/profile-check')
-      .set('x-jobpilot-user-id', USER_ID)
-    expect(present.body).toEqual({ firstName: true, lastName: true, email: true, phone: true })
+    const app = createApp({ config: getServerConfig() })
+    const missingAuth = await request(app).get('/api/autoapply-v2/profile-check')
+    expect(missingAuth.status).toBe(401)
+    expect(missingAuth.body.code).toBe('PROFILE_AUTH_REQUIRED')
+
+    const present = await request(app).get('/api/autoapply-v2/profile-check').set('Authorization', bearer())
+    expect(present.status).toBe(200)
+    expect(present.body).toEqual({ profileFound: true, firstName: true, lastName: true, email: true, phone: true })
     expect(JSON.stringify(present.body)).not.toMatch(/Ada|Lovelace|555-0100|ada@example.com/)
+
+    const otherUser = await request(app).get('/api/autoapply-v2/profile-check').set('Authorization', bearer(OTHER_USER_ID))
+    expect(otherUser.body).toEqual({ profileFound: false, firstName: false, lastName: false, email: false, phone: false })
+  })
+
+  it('profile-check reports database failures and reads as the user without a service-role key', async () => {
+    seedAccount({ failures: { profiles: 500 } })
+    const failing = await request(createApp({ config: getServerConfig() })).get('/api/autoapply-v2/profile-check').set('Authorization', bearer())
+    expect(failing.status).toBe(503)
+    expect(failing.body.code).toBe('PROFILE_DATABASE_ERROR')
+
+    uninstallFakeSupabase()
+    seedAccount({ serviceRoleKey: null })
+    const userScoped = await request(createApp({ config: getServerConfig() }))
+      .get('/api/autoapply-v2/profile-check')
+      .set('Authorization', bearer())
+    expect(userScoped.body).toEqual({ profileFound: true, firstName: true, lastName: true, email: true, phone: true })
+
+    uninstallFakeSupabase()
+    const noServer = await request(createApp({ config: getServerConfig() })).get('/api/autoapply-v2/profile-check').set('Authorization', bearer())
+    expect(noServer.status).toBe(503)
+    expect(noServer.body.code).toBe('PROFILE_DATABASE_ERROR')
   })
 
   it('shows V2 runs in the Auto Apply panel and hides stale legacy Test Employer runs', async () => {
@@ -716,6 +761,8 @@ describe('V2 HTTP endpoints', () => {
     const list = await request(app).get('/api/jobs/auto-apply').query({ userId: USER_ID })
     expect(list.status).toBe(200)
     expect(list.body.runs.map((entry: { run: { id: string } }) => entry.run.id)).toEqual([runId])
+    const authenticated = await request(app).get('/api/jobs/auto-apply').query({ userId: OTHER_USER_ID }).set('Authorization', bearer())
+    expect(authenticated.body.runs.map((entry: { run: { id: string } }) => entry.run.id)).toEqual([runId])
 
     const current = await request(app).get(`/api/jobs/auto-apply/${runId}`)
     expect(current.body.items[0]).toMatchObject({ title: 'Senior Engineer', company: 'Acme', applicationStatus: 'queued' })

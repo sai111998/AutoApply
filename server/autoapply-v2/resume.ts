@@ -1,7 +1,8 @@
-import { createClient } from '@supabase/supabase-js'
-import { getServerConfig } from '../config'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { isProfileAccessError, supabaseDataClient, type SupabaseAccess } from '../application/supabase-access'
 import { V2Error } from './errors'
 import { logV2 } from './log'
+import { v2Access } from './profile'
 import type { V2Resume } from './types'
 
 const RESUME_BUCKET = 'resumes'
@@ -31,14 +32,18 @@ function resumeMimeType(row: ResumeRow): string {
   return MIME_BY_EXTENSION[extension] ?? 'application/octet-stream'
 }
 
-export async function loadV2Resume(userId: string, resumeId?: string | null): Promise<V2Resume> {
-  const config = getServerConfig()
-  if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
-    throw new V2Error('RESUME_NOT_FOUND', 'Resume storage is not configured on this server.', 422)
+export async function loadV2Resume(
+  userId: string,
+  resumeId?: string | null,
+  access: SupabaseAccess = v2Access(),
+): Promise<V2Resume> {
+  let supabase: SupabaseClient
+  try {
+    supabase = supabaseDataClient(access)
+  } catch (error) {
+    const reason = isProfileAccessError(error) ? error.message : 'Resume storage is not configured on this server.'
+    throw new V2Error('RESUME_NOT_FOUND', reason.replace('cannot read profiles', 'cannot read resumes'), 422)
   }
-  const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
   let query = supabase
     .from('resumes')
     .select('id,file_name,file_type,version_label,is_master,storage_path,parsed_text')

@@ -50,6 +50,11 @@ import {
   getApplicationProfileAvailability,
   getCandidateApplicationProfile,
 } from './application/candidate-profile'
+import {
+  authenticateSupabaseUser,
+  describeSupabaseServer,
+  isProfileAccessError,
+} from './application/supabase-access'
 import { startV2AutoApply, startV2AutoApplyCampaign, toAutoApplyRunResult } from './autoapply-v2/campaign'
 import { isV2Error, V2Error, v2ErrorBody } from './autoapply-v2/errors'
 import { cancelV2Run, getV2Run, listV2RunsForUser } from './autoapply-v2/queue'
@@ -58,6 +63,10 @@ import { v2Health } from './autoapply-v2/worker'
 function sendApplyError(res: Response, error: unknown, fallback: string) {
   if (isV2Error(error)) {
     res.status(error.status).json(v2ErrorBody(error))
+    return
+  }
+  if (isProfileAccessError(error)) {
+    res.status(error.status).json({ success: false, code: error.code, error: error.message, message: error.message })
     return
   }
   if (isApplyError(error)) {
@@ -192,7 +201,7 @@ export function createApp(options: AppOptions): Express {
 
   app.get('/api/autoapply-v2/health', async (_req, res) => {
     try {
-      res.json(await v2Health())
+      res.json({ ...(await v2Health()), supabase: describeSupabaseServer(options.config) })
     } catch {
       res.json({
         agentRunning: false,
@@ -205,20 +214,14 @@ export function createApp(options: AppOptions): Express {
     }
   })
 
+  const authenticate = (req: Request) => authenticateSupabaseUser(req.header('authorization'), options.config)
+
   const startOneJob = async (req: Request, res: Response) => {
     try {
+      const user = await authenticate(req)
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
-      const headerUserId = req.header('x-jobpilot-user-id')?.trim() ?? ''
-      const userId =
-        headerUserId ||
-        (typeof body.userId === 'string' ? body.userId.trim() : '') ||
-        (typeof req.query.userId === 'string' ? req.query.userId.trim() : '')
-      if (!userId) {
-        res.status(401).json({ success: false, error: 'Authentication required.' })
-        return
-      }
       const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
-      const started = await startV2AutoApply({ userId, jobId })
+      const started = await startV2AutoApply({ userId: user.id, jobId, accessToken: user.accessToken })
       res.json({ success: true, runId: started.runId, status: started.status })
     } catch (error) {
       sendApplyError(res, error, 'Could not start Auto Apply V2.')
@@ -229,17 +232,15 @@ export function createApp(options: AppOptions): Express {
 
   app.get('/api/autoapply-v2/profile-check', async (req: Request, res: Response) => {
     try {
-      const headerUserId = req.header('x-jobpilot-user-id')?.trim() ?? ''
-      const userId =
-        headerUserId || (typeof req.query.userId === 'string' ? req.query.userId.trim() : '')
-      if (!userId) {
-        res.status(401).json({ success: false, error: 'Authentication required.' })
+      const user = await authenticate(req)
+      const profile = await getCandidateApplicationProfile(user.id, { config: options.config, accessToken: user.accessToken })
+      const { firstName, lastName, email, phone } = getApplicationProfileAvailability(profile)
+      res.json({ profileFound: true, firstName, lastName, email, phone })
+    } catch (error) {
+      if (isProfileAccessError(error) && error.code === 'PROFILE_NOT_FOUND') {
+        res.json({ profileFound: false, firstName: false, lastName: false, email: false, phone: false })
         return
       }
-      const profile = await getCandidateApplicationProfile(userId, options.config)
-      const { firstName, lastName, email, phone } = getApplicationProfileAvailability(profile)
-      res.json({ firstName, lastName, email, phone })
-    } catch (error) {
       sendApplyError(res, error, 'Could not check the application profile.')
     }
   })
@@ -294,7 +295,8 @@ export function createApp(options: AppOptions): Express {
         res.json({ run: started.run, items: started.items, campaignId: started.run.id, status: started.run.status })
         return
       }
-      res.json(await startV2AutoApplyCampaign(request))
+      const user = await authenticate(req)
+      res.json(await startV2AutoApplyCampaign({ ...request, userId: user.id }, user.accessToken))
     } catch (error) {
       sendApplyError(res, error, 'Could not start Auto Apply.')
     }
@@ -302,7 +304,8 @@ export function createApp(options: AppOptions): Express {
 
   app.get('/api/jobs/auto-apply', async (req: Request, res: Response) => {
     try {
-      const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
+      const queryUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
+      const userId = req.header('authorization') ? (await authenticate(req)).id : queryUserId
       if (!userId) throw new HttpError(400, 'userId is required')
       const legacyRuns = (await listAutoApplyRuns(userId, {}, options.config)).filter((entry) => !isLegacySyntheticRun(entry))
       const v2Runs = listV2RunsForUser(userId).map(toAutoApplyRunResult)

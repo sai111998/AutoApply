@@ -1,9 +1,15 @@
 import type { AnalyzeJobApiRequest, AnalyzeJobApiResult, AnalyzeJobClientResponse } from './types'
 import type { Job } from '@/types/domain'
+import { supabase } from '@/lib/supabase'
 
 function apiUrl(path: string): string {
   const base = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') ?? ''
   return `${base}${path}`
+}
+
+async function sessionHeaders(): Promise<Record<string, string>> {
+  const token = supabase ? (await supabase.auth.getSession()).data.session?.access_token : null
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 function isAnalysisResult(value: unknown): value is AnalyzeJobApiResult {
@@ -692,6 +698,9 @@ export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare
   }
   const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
   if (raw && !/key|secret|service.role/i.test(raw)) return raw
+  if (record.code === 'PROFILE_DATABASE_ERROR') {
+    return 'The server could not load your profile: its Supabase connection is not configured correctly (PROFILE_DATABASE_ERROR).'
+  }
   return fallback
 }
 
@@ -721,14 +730,16 @@ export async function startAutoApplyRequest(payload: {
 }): Promise<AutoApplyRunResult> {
   const response = await fetch(apiUrl('/api/jobs/auto-apply/start'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
     body: JSON.stringify(payload),
   })
   return readAutoApplyResult(response, 'Could not start Auto Apply.')
 }
 
 export async function listAutoApplyRunsRequest(userId: string): Promise<AutoApplyRunResult[]> {
-  const response = await fetch(apiUrl(`/api/jobs/auto-apply?userId=${encodeURIComponent(userId)}`))
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply?userId=${encodeURIComponent(userId)}`), {
+    headers: await sessionHeaders(),
+  })
   const body = (await response.json().catch(() => null)) as { runs?: AutoApplyRunResult[]; error?: string } | null
   if (!response.ok || !body) {
     throw new Error(body?.error && !/key|secret|service.role/i.test(body.error) ? body.error : 'Could not load Auto Apply.')
@@ -737,7 +748,9 @@ export async function listAutoApplyRunsRequest(userId: string): Promise<AutoAppl
 }
 
 export async function getAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
-  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}`))
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}`), {
+    headers: await sessionHeaders(),
+  })
   return readAutoApplyResult(response, 'Could not load Auto Apply.')
 }
 
@@ -837,7 +850,7 @@ export async function resumeAutoApplyRunRequest(runId: string): Promise<AutoAppl
 export async function cancelAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
   const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/cancel`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
   })
   return readAutoApplyResult(response, 'Could not cancel Auto Apply.')
 }
