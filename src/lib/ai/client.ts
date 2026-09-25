@@ -531,6 +531,7 @@ export interface AutoApplyConfigPayload {
 export interface AutoApplyProfilePayload {
   fullName: string
   email: string
+  phone?: string | null
   location: string
   yearsOfExperience: number | null
   workAuthorization: string | null

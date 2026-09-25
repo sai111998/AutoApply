@@ -5,7 +5,12 @@ import { resetAgentForTests } from '../agent'
 import { applicationQuestionMapper } from './mapper'
 import { buildCandidateApplicationProfile } from './profile'
 import {
+  fetchSupabaseProfileRow,
+  getApplicationProfileAvailability,
   getCandidateApplicationProfile,
+  getCandidateApplicationProfileAsync,
+  hydrateCandidateStoreFromSupabase,
+  isApplicationProfileComplete,
   normalizeStoredCandidate,
   splitCandidateName,
 } from './candidate-profile'
@@ -174,5 +179,75 @@ describe('canonical candidate profile service', () => {
     expect(agentView.identity.lastName).toBe('Rivera')
     expect(agentView.contact.email).toBe('alex.rivera@example.com')
     expect(agentView.contact.phone).toBe('5125550100')
+  })
+})
+
+describe('canonical profile Supabase source', () => {
+  it('normalizes a public.profiles row including phone and split names', () => {
+    const normalized = normalizeStoredCandidate({
+      id: '11111111-1111-4111-8111-111111111111',
+      full_name: 'Alex Rivera',
+      email: 'alex.rivera@example.com',
+      phone: '5125550100',
+      location: 'Austin, TX',
+      work_authorization: 'us_citizen',
+      sponsorship_required: false,
+    })
+    expect(normalized.firstName).toBe('Alex')
+    expect(normalized.lastName).toBe('Rivera')
+    expect(normalized.email).toBe('alex.rivera@example.com')
+    expect(normalized.phone).toBe('5125550100')
+    expect(normalized.workAuthorization).toBe('us_citizen')
+  })
+
+  it('falls back to the stored profile when Supabase is unavailable', async () => {
+    saveCandidateProfile({ userId: 'user-1', profile: canonicalFixture, resumeText: 'resume', resumeVersionId: 'resume-1' })
+    expect(await fetchSupabaseProfileRow('user-1', undefined)).toBeNull()
+    expect(await fetchSupabaseProfileRow('not-a-uuid', { supabaseUrl: 'https://x', supabaseServiceRoleKey: 'y' } as never)).toBeNull()
+    expect(await hydrateCandidateStoreFromSupabase('user-1', undefined)).toBe(false)
+    const canonical = await getCandidateApplicationProfileAsync('user-1', undefined)
+    expect(canonical?.lastName).toBe('Rivera')
+    expect(canonical?.phone).toBe('5125550100')
+    expect(await getCandidateApplicationProfileAsync('unknown-user', undefined)).toBeNull()
+  })
+})
+
+describe('application profile completeness', () => {
+  it('requires firstName, lastName, email, and phone', () => {
+    saveCandidateProfile({ userId: 'user-1', profile: canonicalFixture, resumeText: 'resume', resumeVersionId: 'resume-1' })
+    expect(isApplicationProfileComplete(getCandidateApplicationProfile('user-1'))).toEqual({
+      complete: true,
+      missingFields: [],
+    })
+    expect(isApplicationProfileComplete(null)).toEqual({
+      complete: false,
+      missingFields: ['firstName', 'lastName', 'email', 'phone'],
+    })
+  })
+
+  it('reports exactly the missing fields without values', () => {
+    saveCandidateProfile({
+      userId: 'user-1',
+      profile: { ...canonicalFixture, fullName: 'Madonna', phone: null },
+      resumeText: 'resume',
+      resumeVersionId: 'resume-1',
+    })
+    expect(isApplicationProfileComplete(getCandidateApplicationProfile('user-1'))).toEqual({
+      complete: false,
+      missingFields: ['lastName', 'phone'],
+    })
+    expect(getApplicationProfileAvailability(getCandidateApplicationProfile('user-1'))).toEqual({
+      firstName: true,
+      lastName: false,
+      email: true,
+      phone: false,
+      address: true,
+      city: true,
+      state: true,
+      zip: true,
+      country: true,
+      linkedin: true,
+      github: false,
+    })
   })
 })

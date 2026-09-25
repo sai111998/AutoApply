@@ -28,6 +28,7 @@ export interface Profile {
   id: string
   fullName: string
   email: string
+  phone: string
   location: string
   targetJobTitles: string[]
   yearsOfExperience: number

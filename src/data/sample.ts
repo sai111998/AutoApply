@@ -44,6 +44,7 @@ export const sampleProfile: Profile = {
   id: DEMO_USER_ID,
   fullName: 'Alex Rivera',
   email: 'alex.rivera@example.com',
+  phone: '',
   location: 'Austin, TX',
   targetJobTitles: ['Senior Frontend Engineer', 'Full Stack Engineer', 'Product Engineer'],
   yearsOfExperience: 8,

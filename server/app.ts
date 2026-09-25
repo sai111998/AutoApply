@@ -46,6 +46,10 @@ import { rememberLiveJobs } from './jobs/live-store'
 import { queueDirectSmokeTestJob } from './agent/smoke-test'
 import { getBrowserWorker } from './browser-worker/worker'
 import { readAutomationHeartbeats } from './automation/heartbeat'
+import {
+  getApplicationProfileAvailability,
+  getCandidateApplicationProfileAsync,
+} from './application/candidate-profile'
 import { startV2AutoApply } from './autoapply-v2/agent'
 import { isV2Error } from './autoapply-v2/errors'
 import { v2Health } from './autoapply-v2/worker'
@@ -217,6 +221,22 @@ export function createApp(options: AppOptions): Express {
         return
       }
       sendApplyError(res, error, 'Could not start Auto Apply V2.')
+    }
+  })
+
+  app.get('/api/autoapply-v2/profile-check', async (req: Request, res: Response) => {
+    try {
+      const headerUserId = req.header('x-jobpilot-user-id')?.trim() ?? ''
+      const userId =
+        headerUserId || (typeof req.query.userId === 'string' ? req.query.userId.trim() : '')
+      if (!userId) {
+        res.status(401).json({ success: false, error: 'Authentication required.' })
+        return
+      }
+      const profile = await getCandidateApplicationProfileAsync(userId, options.config)
+      res.json(getApplicationProfileAvailability(profile))
+    } catch (error) {
+      sendApplyError(res, error, 'Could not check the application profile.')
     }
   })
 

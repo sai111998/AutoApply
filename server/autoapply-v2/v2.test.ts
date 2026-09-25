@@ -511,4 +511,66 @@ describe('V2 HTTP endpoints', () => {
     expect(response.status).toBe(200)
     expect(response.body).toMatchObject({ success: true, status: 'queued', runId: expect.any(String) })
   })
+
+  it('reports profile field availability without values', async () => {
+    const app = createApp({ config: getServerConfig() })
+    await request(app).get('/api/autoapply-v2/profile-check').expect(401)
+
+    const missing = await request(app)
+      .get('/api/autoapply-v2/profile-check')
+      .set('x-jobpilot-user-id', USER_ID)
+    expect(missing.status).toBe(200)
+    expect(missing.body).toEqual({
+      firstName: false,
+      lastName: false,
+      email: false,
+      phone: false,
+      address: false,
+      city: false,
+      state: false,
+      zip: false,
+      country: false,
+      linkedin: false,
+      github: false,
+    })
+
+    seedProfile()
+    const present = await request(app)
+      .get('/api/autoapply-v2/profile-check')
+      .set('x-jobpilot-user-id', USER_ID)
+    expect(present.status).toBe(200)
+    expect(present.body).toMatchObject({ firstName: true, lastName: true, email: true, phone: true })
+    expect(JSON.stringify(present.body)).not.toContain('Ada')
+    expect(JSON.stringify(present.body)).not.toContain('555-0100')
+  })
+
+  it('rejects incomplete profiles with PROFILE_INCOMPLETE instead of running', async () => {
+    const app = createApp({ config: getServerConfig() })
+    seedProfile({ fullName: 'Madonna', phone: '' })
+    rememberLiveJobs([liveJob({ id: 'job-1' })])
+    const response = await request(app)
+      .post('/api/autoapply-v2/start')
+      .set('x-jobpilot-user-id', USER_ID)
+      .send({ jobId: 'job-1' })
+    expect(response.status).toBe(422)
+    expect(response.body.code).toBe('PROFILE_INCOMPLETE')
+    expect(response.body.error).toContain('lastName')
+    expect(response.body.error).toContain('phone')
+  })
+})
+
+describe('V2 score independence', () => {
+  it('loads jobs and queues runs without reading match scores', async () => {
+    seedProfile()
+    rememberLiveJobs([
+      liveJob({ id: 'job-1', matchScore: null, matchedSkills: [], missingSkills: [] }),
+    ])
+    const job = loadV2Job(USER_ID, 'job-1')
+    expect(job).not.toHaveProperty('matchScore')
+    const started = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const run = getV2Run(started.runId)
+    expect(run).not.toHaveProperty('matchScore')
+    expect(run).not.toHaveProperty('tailoredScore')
+    expect(JSON.stringify(run)).not.toMatch(/matchScore|tailoredScore/)
+  })
 })

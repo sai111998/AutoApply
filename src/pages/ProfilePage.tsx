@@ -68,6 +68,9 @@ export function ProfilePage() {
           <Field label="Email">
             <TextInput type="email" value={form.email} onChange={(e) => update('email', e.target.value)} />
           </Field>
+          <Field label="Phone">
+            <TextInput type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value)} />
+          </Field>
           <Field label="Location">
             <TextInput value={form.location} onChange={(e) => update('location', e.target.value)} />
           </Field>

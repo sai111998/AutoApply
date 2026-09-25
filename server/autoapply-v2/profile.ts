@@ -1,9 +1,9 @@
 import {
-  getCandidateApplicationProfile,
+  getCandidateApplicationProfileAsync,
+  isApplicationProfileComplete,
   type CanonicalCandidateProfile,
 } from '../application/candidate-profile'
-
-const V2_REQUIRED_PROFILE_FIELDS = ['firstName', 'lastName', 'email', 'phone'] as const
+import { getServerConfig } from '../config'
 
 const EMPTY_V2_PROFILE: CanonicalCandidateProfile = {
   userId: '',
@@ -30,11 +30,19 @@ export interface V2ProfileLoad {
 }
 
 export async function loadV2Profile(userId: string): Promise<V2ProfileLoad> {
-  const profile = getCandidateApplicationProfile(userId) ?? { ...EMPTY_V2_PROFILE }
-  const missing = V2_REQUIRED_PROFILE_FIELDS.filter((field) => !profile[field]?.trim())
-  const profileReady = missing.length === 0
+  const profile =
+    (await getCandidateApplicationProfileAsync(userId, getServerConfig())) ?? {
+      ...EMPTY_V2_PROFILE,
+      userId,
+    }
+  const { complete, missingFields } = isApplicationProfileComplete(profile)
+  console.log('[AutoApplyV2] Profile loaded')
+  console.log(`[AutoApplyV2] firstName available=${Boolean(profile.firstName.trim())}`)
+  console.log(`[AutoApplyV2] lastName available=${Boolean(profile.lastName.trim())}`)
+  console.log(`[AutoApplyV2] email available=${Boolean(profile.email.trim())}`)
+  console.log(`[AutoApplyV2] phone available=${Boolean(profile.phone.trim())}`)
   console.log(
-    `[V2] PROFILE_LOADED ready=${profileReady} missing=${missing.join(',') || 'none'} userId=${userId}`,
+    `[V2] PROFILE_LOADED ready=${complete} missing=${missingFields.join(',') || 'none'} userId=${userId}`,
   )
-  return { profile, profileReady, missing: [...missing] }
+  return { profile, profileReady: complete, missing: missingFields }
 }

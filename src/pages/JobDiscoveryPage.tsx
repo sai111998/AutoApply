@@ -260,6 +260,7 @@ export function JobDiscoveryPage() {
     return {
       fullName: profile.fullName || user?.fullName || '',
       email: profile.email || user?.email || '',
+      phone: profile.phone || '',
       location: profile.location,
       yearsOfExperience: profile.yearsOfExperience ?? null,
       workAuthorization: profile.workAuthorization,

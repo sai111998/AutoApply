@@ -1,4 +1,6 @@
-import { getCandidateProfile } from './candidate-store'
+import { createClient } from '@supabase/supabase-js'
+import type { ServerConfig } from '../config'
+import { getCandidateProfile, saveCandidateProfile } from './candidate-store'
 
 export interface CanonicalCandidateProfile {
   userId: string
@@ -69,4 +71,173 @@ export function getCandidateApplicationProfile(userId: string): CanonicalCandida
     userId: stored.userId,
     ...normalizeStoredCandidate(stored.profile as unknown as Record<string, unknown>),
   }
+}
+
+export interface SupabaseProfileRow {
+  id?: string
+  full_name?: string | null
+  email?: string | null
+  phone?: string | null
+  location?: string | null
+  work_authorization?: string | null
+  sponsorship_required?: boolean | null
+}
+
+function isUuidValue(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+export async function fetchSupabaseProfileRow(
+  userId: string,
+  config?: ServerConfig,
+): Promise<SupabaseProfileRow | null> {
+  const id = userId.trim()
+  if (!id || !isUuidValue(id)) return null
+  if (!config?.supabaseUrl || !config.supabaseServiceRoleKey) return null
+  try {
+    const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id,full_name,email,phone,location,work_authorization,sponsorship_required')
+      .eq('id', id)
+      .maybeSingle()
+    if (error || !data) return null
+    return data as SupabaseProfileRow
+  } catch {
+    return null
+  }
+}
+
+function overlaySupabaseRow(
+  base: Omit<CanonicalCandidateProfile, 'userId'>,
+  row: SupabaseProfileRow | null,
+): Omit<CanonicalCandidateProfile, 'userId'> {
+  if (!row) return base
+  const overlay = normalizeStoredCandidate(row as unknown as Record<string, unknown>)
+  const merged: Omit<CanonicalCandidateProfile, 'userId'> = { ...base }
+  const textKeys = [
+    'firstName',
+    'lastName',
+    'fullName',
+    'email',
+    'phone',
+    'address',
+    'city',
+    'state',
+    'zip',
+    'country',
+    'linkedin',
+    'github',
+  ] as const
+  for (const key of textKeys) {
+    if (overlay[key]) merged[key] = overlay[key]
+  }
+  if (overlay.workAuthorization) merged.workAuthorization = overlay.workAuthorization
+  if (row.sponsorship_required === true || row.sponsorship_required === false) {
+    merged.sponsorshipRequired = row.sponsorship_required
+  }
+  return merged
+}
+
+export async function getCandidateApplicationProfileAsync(
+  userId: string,
+  config?: ServerConfig,
+): Promise<CanonicalCandidateProfile | null> {
+  const id = userId.trim()
+  if (!id) return null
+  const stored = getCandidateApplicationProfile(id)
+  const row = await fetchSupabaseProfileRow(id, config)
+  if (!stored && !row) return null
+  const base: Omit<CanonicalCandidateProfile, 'userId'> = stored ?? {
+    firstName: '',
+    lastName: '',
+    fullName: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: '',
+    state: '',
+    zip: '',
+    country: '',
+    linkedin: '',
+    github: '',
+    workAuthorization: null,
+    sponsorshipRequired: false,
+  }
+  return { userId: id, ...overlaySupabaseRow(base, row) }
+}
+
+export async function hydrateCandidateStoreFromSupabase(
+  userId: string,
+  config?: ServerConfig,
+): Promise<boolean> {
+  const id = userId.trim()
+  if (!id) return false
+  const row = await fetchSupabaseProfileRow(id, config)
+  if (!row) return false
+  const existing = getCandidateProfile(id)
+  const profile = existing?.profile
+  const fullName = (row.full_name?.trim() || profile?.fullName || '').trim()
+  if (!fullName && !existing) return false
+  saveCandidateProfile({
+    userId: id,
+    profile: {
+      fullName,
+      email: row.email?.trim() || profile?.email || '',
+      phone: row.phone?.trim() || profile?.phone || null,
+      location: row.location?.trim() || profile?.location || '',
+      yearsOfExperience: profile?.yearsOfExperience ?? null,
+      workAuthorization: row.work_authorization?.trim() || profile?.workAuthorization || null,
+      sponsorshipRequired:
+        row.sponsorship_required === true || row.sponsorship_required === false
+          ? row.sponsorship_required
+          : (profile?.sponsorshipRequired ?? false),
+      preferredWorkArrangement: profile?.preferredWorkArrangement ?? null,
+      targetSalaryMin: profile?.targetSalaryMin ?? null,
+      targetSalaryMax: profile?.targetSalaryMax ?? null,
+      linkedin: profile?.linkedin ?? null,
+      github: profile?.github ?? null,
+    },
+    resumeText: existing?.resumeText ?? null,
+    resumeVersionId: existing?.resumeVersionId ?? null,
+  })
+  return true
+}
+
+const REQUIRED_APPLICATION_PROFILE_FIELDS = ['firstName', 'lastName', 'email', 'phone'] as const
+
+export function isApplicationProfileComplete(profile: CanonicalCandidateProfile | null): {
+  complete: boolean
+  missingFields: string[]
+} {
+  const missingFields = REQUIRED_APPLICATION_PROFILE_FIELDS.filter(
+    (field) => !profile?.[field]?.trim(),
+  )
+  return { complete: missingFields.length === 0, missingFields: [...missingFields] }
+}
+
+const AVAILABILITY_FIELDS = [
+  'firstName',
+  'lastName',
+  'email',
+  'phone',
+  'address',
+  'city',
+  'state',
+  'zip',
+  'country',
+  'linkedin',
+  'github',
+] as const
+
+export function getApplicationProfileAvailability(
+  profile: CanonicalCandidateProfile | null,
+): Record<(typeof AVAILABILITY_FIELDS)[number], boolean> {
+  const availability = {} as Record<(typeof AVAILABILITY_FIELDS)[number], boolean>
+  for (const field of AVAILABILITY_FIELDS) {
+    availability[field] = Boolean(profile?.[field]?.trim())
+  }
+  return availability
 }
