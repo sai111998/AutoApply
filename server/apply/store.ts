@@ -1,7 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
+import { readRuntimeJson, shouldPersistAutomationFiles, writeRuntimeJson } from '../automation/runtime-io'
 import type { ServerConfig } from '../config'
 import { logApplyEvent } from './log'
 import { DATABASE_TIMEOUT_MS, withTimeout } from './timeouts'
@@ -19,69 +17,67 @@ export interface AutoApplyStore {
   listAll?(): Promise<StoredRun[]>
 }
 
+const STORE_FILE = 'auto-apply-store.json'
 const runs = new Map<string, StoredRun>()
-let hydrated = false
 
-function storeFile(): string {
-  const directory = process.env.JOBPILOT_RUNTIME_DIR?.trim()
-    ? path.resolve(process.env.JOBPILOT_RUNTIME_DIR)
-    : path.join(os.tmpdir(), 'jobpilot-automation')
-  return path.join(directory, 'auto-apply-store.json')
+function newerIso(left: string | null | undefined, right: string | null | undefined): boolean {
+  return Date.parse(left ?? '') >= Date.parse(right ?? '')
 }
 
-function shouldPersistFile(): boolean {
-  return process.env.VITEST !== 'true'
-}
-
-function hydrateFromDisk() {
-  if (hydrated || !shouldPersistFile()) {
-    hydrated = true
-    return
+function mergeStoredRun(current: StoredRun | undefined, incoming: StoredRun): StoredRun {
+  if (!current) {
+    return { run: { ...incoming.run }, items: incoming.items.map((item) => ({ ...item })) }
   }
-  hydrated = true
-  try {
-    const file = storeFile()
-    if (!existsSync(file)) return
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as StoredRun[]
-    for (const entry of parsed) {
-      if (entry?.run?.id) runs.set(entry.run.id, entry)
-    }
-  } catch {
-    // Keep an empty in-memory store if the runtime file is unreadable.
+  const byId = new Map(current.items.map((item) => [item.id, { ...item }]))
+  for (const item of incoming.items) {
+    const existing = byId.get(item.id)
+    if (!existing || newerIso(item.updatedAt, existing.updatedAt)) byId.set(item.id, { ...item })
+  }
+  return {
+    run: newerIso(incoming.run.updatedAt, current.run.updatedAt) ? { ...incoming.run } : { ...current.run },
+    items: [...byId.values()],
+  }
+}
+
+function reloadFromDisk() {
+  if (!shouldPersistAutomationFiles()) return
+  const parsed = readRuntimeJson<StoredRun[]>(STORE_FILE)
+  if (!parsed) return
+  for (const entry of parsed) {
+    if (!entry?.run?.id) continue
+    runs.set(entry.run.id, mergeStoredRun(runs.get(entry.run.id), entry))
   }
 }
 
 function flushToDisk() {
-  if (!shouldPersistFile()) return
-  const directory = path.dirname(storeFile())
-  mkdirSync(directory, { recursive: true })
-  const file = storeFile()
-  const tmp = `${file}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify([...runs.values()]))
-  renameSync(tmp, file)
+  writeRuntimeJson(STORE_FILE, [...runs.values()])
 }
 
 export const memoryStore: AutoApplyStore = {
   async save(run, items) {
-    hydrateFromDisk()
-    runs.set(run.id, { run: { ...run }, items: items.map((item) => ({ ...item })) })
+    reloadFromDisk()
+    const incoming = { run: { ...run }, items: items.map((item) => ({ ...item })) }
+    runs.set(
+      run.id,
+      shouldPersistAutomationFiles() ? mergeStoredRun(runs.get(run.id), incoming) : incoming,
+    )
     flushToDisk()
   },
   async get(runId) {
-    hydrateFromDisk()
+    reloadFromDisk()
     const current = runs.get(runId)
     if (!current) return null
     return { run: { ...current.run }, items: current.items.map((item) => ({ ...item })) }
   },
   async list(userId) {
-    hydrateFromDisk()
+    reloadFromDisk()
     return [...runs.values()]
       .filter((item) => item.run.userId === userId)
       .sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt))
       .map((item) => ({ run: { ...item.run }, items: item.items.map((entry) => ({ ...entry })) }))
   },
   async listAll() {
-    hydrateFromDisk()
+    reloadFromDisk()
     return [...runs.values()].map((item) => ({
       run: { ...item.run },
       items: item.items.map((entry) => ({ ...entry })),
@@ -89,10 +85,13 @@ export const memoryStore: AutoApplyStore = {
   },
 }
 
+export function dropAutoApplyMemoryCache() {
+  runs.clear()
+}
+
 export function clearAutoApplyMemory() {
   runs.clear()
-  hydrated = true
-  if (shouldPersistFile()) {
+  if (shouldPersistAutomationFiles()) {
     try {
       flushToDisk()
     } catch {

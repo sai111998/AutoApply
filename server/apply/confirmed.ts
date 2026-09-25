@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import type { ServerConfig } from '../config'
 import type { AutoApplyQueueItem } from './types'
 import type { SubmissionConfirmation } from './confirm'
@@ -34,7 +35,22 @@ export interface ConfirmedApplicationRecord {
   tailoredMatchScore?: number | null
 }
 
+const APPLICATIONS_FILE = 'applications.json'
 const confirmed = new Map<string, ConfirmedApplicationRecord>()
+
+function reloadConfirmed() {
+  const parsed = readRuntimeJson<ConfirmedApplicationRecord[]>(APPLICATIONS_FILE)
+  if (!parsed) return
+  for (const record of parsed) {
+    if (!record?.userId || !record.identityKey) continue
+    const key = confirmedApplicationKey(record.userId, record)
+    if (!confirmed.has(key)) confirmed.set(key, record)
+  }
+}
+
+function flushConfirmed() {
+  writeRuntimeJson(APPLICATIONS_FILE, [...confirmed.values()])
+}
 
 export function isUuidValue(value: string | null | undefined): value is string {
   return Boolean(value && UUID.test(value))
@@ -130,6 +146,7 @@ export function buildConfirmedApplicationRecord(input: {
 }
 
 export function rememberConfirmedApplication(record: ConfirmedApplicationRecord): ConfirmedApplicationRecord {
+  reloadConfirmed()
   const key = confirmedApplicationKey(record.userId, {
     identityKey: record.identityKey,
     jobId: record.jobId,
@@ -138,6 +155,7 @@ export function rememberConfirmedApplication(record: ConfirmedApplicationRecord)
   const existing = confirmed.get(key)
   if (existing) return existing
   confirmed.set(key, record)
+  flushConfirmed()
   return record
 }
 
@@ -145,10 +163,12 @@ export function findConfirmedApplication(
   userId: string,
   item: Pick<AutoApplyQueueItem, 'identityKey' | 'jobId' | 'applicationUrl'>,
 ): ConfirmedApplicationRecord | null {
+  reloadConfirmed()
   return confirmed.get(confirmedApplicationKey(userId, item)) ?? null
 }
 
 export function listConfirmedApplications(userId?: string): ConfirmedApplicationRecord[] {
+  reloadConfirmed()
   const records = [...confirmed.values()]
   return userId ? records.filter((record) => record.userId === userId) : records
 }

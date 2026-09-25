@@ -32,6 +32,7 @@ import { applyErrorBody, isApplyError } from './apply/errors'
 import { publicAutomationHealth, type AutomationHealth } from './apply/health'
 import { logApplyEvent } from './apply/log'
 import { buildAutomationHealthPayload } from './automation/status'
+import { listConfirmedApplications } from './apply/confirmed'
 import { extractResumeText } from './services/resume-text'
 import { parseTailorRequest } from './services/tailor-request'
 import { tailorResume, validateSubmittedResume } from './tailor/engine'
@@ -116,6 +117,24 @@ export function createApp(options: AppOptions): Express {
         reason: 'Automation health is unavailable.',
       })
     }
+  })
+
+  app.get('/api/automation/applications', (req: Request, res: Response) => {
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : ''
+    const records = listConfirmedApplications(userId || undefined).map((record) => ({
+      job: record.jobTitle,
+      company: record.company,
+      applicationUrl: record.applicationUrl,
+      finalUrl: record.finalUrl ?? record.applicationUrl,
+      submittedAt: record.submittedAt,
+      submittedResumeVersionId: record.submittedResumeVersionId,
+      matchScore: record.originalMatchScore,
+      tailoredScore: record.tailoredMatchScore ?? record.currentMatchScore,
+      jobDescriptionSnapshot: record.submittedJobDescriptionSnapshot,
+      confirmationNumber: record.confirmationNumber,
+      status: record.status,
+    }))
+    res.json({ applications: records })
   })
 
   app.get('/api/jobs', async (req: Request, res: Response) => {

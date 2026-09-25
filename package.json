@@ -23,6 +23,7 @@
     "db:auth-flow": "tsx scripts/test-auth-flow.ts",
     "playwright:install": "playwright install chromium",
     "automation:health": "tsx scripts/automation-health.ts",
+    "verify:automation": "tsx scripts/verify-automation-pipeline.ts",
     "postinstall": "playwright install chromium || echo Playwright Chromium install skipped"
   },
   "dependencies": {

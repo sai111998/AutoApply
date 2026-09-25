@@ -73,7 +73,14 @@ export function parseLiveJobsQuery(query: unknown): LiveJobsRequest {
     resumeVersionId: queryString(record.resumeVersionId) || undefined,
     sort: asSort(record.sort),
     jobType: asJobType(record.jobType ?? record.job_type),
+    includeSynthetic: asOptionalBoolean(record.includeSynthetic),
   }
+}
+
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === 'true' || value === '1' || value === 'on') return true
+  if (value === false || value === 'false' || value === '0' || value === 'off') return false
+  return undefined
 }
 
 export function parseLiveJobsRequest(query: unknown, body?: unknown): LiveJobsRequest {
@@ -98,6 +105,7 @@ export function parseLiveJobsRequest(query: unknown, body?: unknown): LiveJobsRe
     resumeVersionId: fromBody.resumeVersionId || fromQuery.resumeVersionId,
     sort: hasOwn(record, 'sort') ? fromBody.sort : fromQuery.sort,
     jobType: hasOwn(record, 'jobType') || hasOwn(record, 'job_type') ? fromBody.jobType : fromQuery.jobType,
+    includeSynthetic: hasOwn(record, 'includeSynthetic') ? fromBody.includeSynthetic : fromQuery.includeSynthetic,
   }
 }
 

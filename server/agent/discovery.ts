@@ -69,6 +69,7 @@ export async function discoverCampaignJobs(
       resumeVersionId: input.resumeVersionId ?? undefined,
       sort: 'match',
       jobType: input.config.jobType,
+      includeSynthetic: input.config.includeSynthetic,
     })
   } catch (error) {
     throw new ApplyError(503, 'DISCOVERY_FAILED', APPLY_DISCOVERY_MESSAGE, {

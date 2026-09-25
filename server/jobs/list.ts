@@ -6,6 +6,7 @@ import { annotateCanonicalJob } from './aggregator'
 import { expandSearchQueries } from './query-expand'
 import { logDiscoveryCounts, type ProviderDiscoveryCounts } from './discovery-log'
 import { createJobProviders } from './provider'
+import { createSyntheticTestJob, shouldIncludeSyntheticListing } from './synthetic-listing'
 import { emptyLiveMatch, scoreJobAgainstResume, type LiveJobMatch } from './score'
 import type {
   EmploymentFilter,
@@ -67,6 +68,7 @@ export interface LiveJobsRequest {
   resumeVersionId?: string
   sort?: 'match' | 'recent' | 'relevance'
   jobType?: JobTypeFilter
+  includeSynthetic?: boolean
 }
 
 export interface LiveJobsResponse {
@@ -224,7 +226,9 @@ export async function listLiveJobs(
   const providers = createJobProviders(config, fetchImpl).filter(
     (item) => LIVE_DISCOVERY_PROVIDERS.has(item.providerName()) && item.isEnabled(),
   )
-  if (!providers.length) {
+  const includeSynthetic =
+    request.includeSynthetic === true || (request.includeSynthetic !== false && shouldIncludeSyntheticListing())
+  if (!providers.length && !includeSynthetic) {
     return {
       jobs: [],
       page: request.page,
@@ -241,7 +245,8 @@ export async function listLiveJobs(
   }
 
   const results = await Promise.all(providers.map((provider) => searchLiveJobs(provider, request)))
-  const merged = deduplicateJobs(results.flatMap((item) => item.jobs)).map(annotateCanonicalJob)
+  const syntheticJobs = includeSynthetic ? [createSyntheticTestJob(config.port)] : []
+  const merged = deduplicateJobs([...syntheticJobs, ...results.flatMap((item) => item.jobs)]).map(annotateCanonicalJob)
   const resumeText = request.resumeText?.trim() ?? ''
   const jobType = request.jobType || 'all'
   const scored = merged.map((job) => {
@@ -260,7 +265,28 @@ export async function listLiveJobs(
     ),
     request,
   )
-  const diagnostics: ProviderDiscoveryCounts[] = results.map((result) => {
+  const diagnostics: ProviderDiscoveryCounts[] = []
+  if (syntheticJobs.length) {
+    const syntheticEntry: ProviderDiscoveryCounts = {
+      provider: 'synthetic',
+      query: request.q,
+      country: request.country || 'US',
+      state: request.state || '',
+      filters: {
+        remote: request.remote,
+        employmentType: request.employmentType,
+        jobType,
+        keywords: [],
+      },
+      raw: syntheticJobs.length,
+      normalized: syntheticJobs.length,
+      deduplicated: merged.filter((job) => (job.discoveryProvider || job.provider) === 'synthetic').length,
+      filtered: jobs.filter((job) => (job.discoveryProvider || job.provider) === 'synthetic').length,
+    }
+    logDiscoveryCounts(syntheticEntry)
+    diagnostics.push(syntheticEntry)
+  }
+  for (const result of results) {
     const fromProvider = merged.filter((job) => (job.discoveryProvider || job.provider) === result.provider)
     const afterFilter = jobs.filter((job) => (job.discoveryProvider || job.provider) === result.provider)
     const entry: ProviderDiscoveryCounts = {
@@ -280,8 +306,8 @@ export async function listLiveJobs(
       filtered: afterFilter.length,
     }
     logDiscoveryCounts(entry)
-    return entry
-  })
+    diagnostics.push(entry)
+  }
   const joa = results.find((item) => item.provider === 'job-opportunities')
   const nonEmptyWarning = (warning?: { code: string } | null) => warning && warning.code !== 'empty'
   return {

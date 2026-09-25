@@ -1,3 +1,5 @@
+import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
+
 export type AnswerSource = 'profile' | 'user' | 'library'
 export type AnswerType = 'text' | 'boolean' | 'choice'
 
@@ -15,10 +17,25 @@ export interface StoredApplicationAnswer {
   updatedAt: string
 }
 
+const ANSWERS_FILE = 'answers.json'
 const library = new Map<string, StoredApplicationAnswer>()
 
 function libraryKey(userId: string, fingerprint: string) {
   return `${userId}::${fingerprint}`
+}
+
+function reloadAnswers() {
+  const parsed = readRuntimeJson<StoredApplicationAnswer[]>(ANSWERS_FILE)
+  if (!parsed) return
+  for (const entry of parsed) {
+    if (entry?.userId && entry.questionFingerprint) {
+      library.set(libraryKey(entry.userId, entry.questionFingerprint), entry)
+    }
+  }
+}
+
+function flushAnswers() {
+  writeRuntimeJson(ANSWERS_FILE, [...library.values()])
 }
 
 export function normalizeQuestion(value: string): string {
@@ -45,6 +62,7 @@ export function rememberApprovedAnswer(input: {
   const answer = input.answer.trim()
   const fingerprint = questionFingerprint(prompt)
   if (!userId || !prompt || !answer || !fingerprint) return null
+  reloadAnswers()
   const now = new Date().toISOString()
   const existing = library.get(libraryKey(userId, fingerprint))
   const stored: StoredApplicationAnswer = {
@@ -61,10 +79,12 @@ export function rememberApprovedAnswer(input: {
     updatedAt: now,
   }
   library.set(libraryKey(userId, fingerprint), stored)
+  flushAnswers()
   return stored
 }
 
 export function lookupApprovedAnswer(userId: string, prompt: string): StoredApplicationAnswer | null {
+  reloadAnswers()
   const fingerprint = questionFingerprint(prompt)
   if (!userId.trim() || !fingerprint) return null
   const stored = library.get(libraryKey(userId, fingerprint))
@@ -72,6 +92,7 @@ export function lookupApprovedAnswer(userId: string, prompt: string): StoredAppl
 }
 
 export function listApprovedAnswers(userId: string): StoredApplicationAnswer[] {
+  reloadAnswers()
   return [...library.values()].filter((item) => item.userId === userId && item.userApproved)
 }
 

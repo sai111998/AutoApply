@@ -76,6 +76,35 @@ afterEach(() => {
 })
 
 describe('agent to queue', () => {
+  it('keeps jobs eligible when Job Type is ALL, Remote is ANY, C2C is OFF, and keywords are empty', () => {
+    const listed = job({
+      id: 'open',
+      title: 'Senior Java Engineer',
+      location: 'New York, NY',
+      employmentType: 'Contract',
+    })
+    const evaluated = evaluateJobEligibility(listed, {
+      startInput: {
+        userId: 'user-1',
+        resumeId: 'resume-1',
+        resumeVersionId: 'resume-1',
+        resumeText: JAVA_RESUME_TEXT,
+        masterResumeText: JAVA_RESUME_TEXT,
+        profile,
+        config: defaultAutoApplyConfig({
+          maxJobs: 1,
+          minimumMatchRate: 70,
+          autoTailorResume: false,
+          jobType: 'all',
+          remotePreference: 'any',
+          keywords: [],
+          employmentType: 'any',
+        }),
+      },
+    })
+    expect(evaluated.ok).toBe(true)
+  })
+
   it('queues an eligible synthetic job when capability is auto_apply_supported', async () => {
     const listed = job({ id: 'synth', title: 'Java Engineer', url: 'https://jobs.example.com/test-employer' })
     const started = await startCampaign(
@@ -137,6 +166,37 @@ describe('agent to queue', () => {
     })
     expect(evaluated.ok).toBe(true)
     expect(canEnterAutonomousApply(evaluated.capability)).toBe(false)
+  })
+
+  it('discovers the local test employer through listLiveJobs and queues it', async () => {
+    const started = await startCampaign(
+      { ...config, port: 8787 },
+      {
+        userId: 'user-1',
+        resumeId: 'resume-1',
+        resumeVersionId: 'resume-1',
+        resumeText: JAVA_RESUME_TEXT,
+        masterResumeText: JAVA_RESUME_TEXT,
+        profile,
+        config: defaultAutoApplyConfig({
+          maxJobs: 1,
+          minimumMatchRate: 70,
+          autoTailorResume: false,
+          q: '',
+          jobType: 'all',
+          remotePreference: 'any',
+          keywords: [],
+          employmentType: 'any',
+          includeSynthetic: true,
+        }),
+      },
+      { schedule: false },
+    )
+    expect(started.run.counts.eligible).toBeGreaterThan(0)
+    expect(started.run.counts.autoApplyCapable).toBeGreaterThan(0)
+    expect(started.items[0]?.company).toBe('Test Employer')
+    expect(started.items[0]?.applicationCapability).toBe('auto_apply_supported')
+    expect(started.items[0]?.applicationUrl).toMatch(/\/test-employer/)
   })
 })
 

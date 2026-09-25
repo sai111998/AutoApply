@@ -1,3 +1,4 @@
+import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import type { AutoApplyProfile } from '../apply/types'
 
 export interface StoredCandidateRecord {
@@ -7,7 +8,20 @@ export interface StoredCandidateRecord {
   resumeVersionId: string | null
 }
 
+const CANDIDATE_FILE = 'candidates.json'
 const records = new Map<string, StoredCandidateRecord>()
+
+function reloadCandidates() {
+  const parsed = readRuntimeJson<StoredCandidateRecord[]>(CANDIDATE_FILE)
+  if (!parsed) return
+  for (const entry of parsed) {
+    if (entry?.userId) records.set(entry.userId, entry)
+  }
+}
+
+function flushCandidates() {
+  writeRuntimeJson(CANDIDATE_FILE, [...records.values()])
+}
 
 export function resetCandidateStoreForTests() {
   records.clear()
@@ -21,6 +35,7 @@ export function saveCandidateProfile(input: {
 }): StoredCandidateRecord | null {
   const userId = input.userId.trim()
   if (!userId) return null
+  reloadCandidates()
   const stored: StoredCandidateRecord = {
     userId,
     profile: input.profile,
@@ -28,10 +43,12 @@ export function saveCandidateProfile(input: {
     resumeVersionId: input.resumeVersionId?.trim() || null,
   }
   records.set(userId, stored)
+  flushCandidates()
   return stored
 }
 
 export function getCandidateProfile(userId: string): StoredCandidateRecord | null {
+  reloadCandidates()
   return records.get(userId.trim()) ?? null
 }
 

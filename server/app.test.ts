@@ -3,6 +3,7 @@ import request from 'supertest'
 import { createApp } from './app'
 import { resetAgentForTests } from './agent'
 import { resetAutomationHeartbeatsForTests } from './automation/heartbeat'
+import { rememberConfirmedApplication, resetConfirmedApplicationsForTests } from './apply/confirmed'
 import type { ServerConfig } from './config'
 import type { LlmClient } from './services/llm'
 
@@ -393,6 +394,50 @@ describe('GET /api/automation/health', () => {
     expect(response.body.agent.running).toBe(false)
     expect(response.body.queue).toEqual({ queued: 0, processing: 0 })
     expect(response.body.runtime).toBe('node-server')
+  })
+})
+
+describe('GET /api/automation/applications', () => {
+  afterEach(() => {
+    resetConfirmedApplicationsForTests()
+  })
+
+  it('lists confirmed submissions only', async () => {
+    rememberConfirmedApplication({
+      applicationId: 'app-1',
+      jobId: 'job-1',
+      userId: 'user-1',
+      jobTitle: 'Full Stack Java Developer',
+      company: 'Test Employer',
+      location: 'Austin, TX',
+      applicationUrl: 'http://127.0.0.1:8787/test-employer/submit',
+      provider: 'generic',
+      submittedResumeVersionId: 'resume-1',
+      currentMatchScore: 88,
+      currentMatchId: null,
+      originalMatchScore: 88,
+      submittedAt: '2026-09-25T00:00:00.000Z',
+      status: 'applied',
+      submittedJobDescriptionSnapshot: 'Java Spring Boot',
+      confirmationNumber: 'ABC12345',
+      confirmationText: 'Your application was submitted',
+      isConfirmedSubmission: true,
+      identityKey: 'synthetic:test-employer',
+      createdAt: '2026-09-25T00:00:00.000Z',
+      updatedAt: '2026-09-25T00:00:00.000Z',
+      finalUrl: 'http://127.0.0.1:8787/test-employer/submit',
+    })
+    const app = createApp({ config })
+    const empty = await request(app).get('/api/automation/applications').query({ userId: 'other' })
+    expect(empty.body.applications).toEqual([])
+    const response = await request(app).get('/api/automation/applications').query({ userId: 'user-1' })
+    expect(response.body.applications).toHaveLength(1)
+    expect(response.body.applications[0]).toMatchObject({
+      job: 'Full Stack Java Developer',
+      company: 'Test Employer',
+      confirmationNumber: 'ABC12345',
+      status: 'applied',
+    })
   })
 })
 

@@ -98,6 +98,10 @@ export function parseAutoApplyStart(body: unknown): AutoApplyStartInput {
       state: asString(configRecord.state),
       location: asString(configRecord.location),
       concurrency: 1,
+      includeSynthetic:
+        configRecord.includeSynthetic === undefined
+          ? undefined
+          : asBoolean(configRecord.includeSynthetic, false),
     },
     existingApplications: Array.isArray(record.existingApplications)
       ? record.existingApplications.map((item) => {

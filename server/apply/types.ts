@@ -75,6 +75,7 @@ export interface AutoApplyConfig {
   state: string
   location: string
   concurrency: number
+  includeSynthetic?: boolean
 }
 
 export interface AutoApplyProfile {

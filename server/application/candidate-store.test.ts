@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveApplicationQuestions } from '../apply/questions'
+import { useAutomationRuntimeForTests } from '../automation/runtime-io'
 import { rememberApprovedAnswer, resetAnswerLibraryForTests } from './answers'
 import {
   candidateRequiredFieldsExist,
@@ -21,9 +25,14 @@ const profile: AutoApplyProfile = {
   targetSalaryMax: null,
 }
 
+let tempDir = ''
+
 afterEach(() => {
   resetCandidateStoreForTests()
   resetAnswerLibraryForTests()
+  useAutomationRuntimeForTests(null)
+  if (tempDir) rmSync(tempDir, { recursive: true, force: true })
+  tempDir = ''
 })
 
 describe('JobPilot candidate profile store', () => {
@@ -36,6 +45,15 @@ describe('JobPilot candidate profile store', () => {
       email: 'yes',
       phone: 'no',
     })
+  })
+
+  it('reloads the JobPilot profile from the shared runtime file', () => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), 'jobpilot-candidates-'))
+    useAutomationRuntimeForTests(tempDir)
+    saveCandidateProfile({ userId: 'user-1', profile, resumeText: 'Java engineer', resumeVersionId: 'resume-1' })
+    resetCandidateStoreForTests()
+    expect(getCandidateProfile('user-1')?.profile.email).toBeTruthy()
+    expect(getCandidateProfile('user-1')?.resumeVersionId).toBe('resume-1')
   })
 })
 

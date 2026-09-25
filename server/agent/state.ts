@@ -1,6 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import type { AutoApplyStartInput } from '../apply/types'
 import type { AutoApplyEngineDeps } from '../apply/engine'
 import type { ServerConfig } from '../config'
@@ -28,61 +26,37 @@ export interface CampaignRecord {
   counters: AutoApplyCounts
 }
 
+const CAMPAIGN_FILE = 'campaigns.json'
 const campaigns = new Map<string, CampaignRecord>()
-let hydrated = false
 
-function campaignFile(): string {
-  const directory = process.env.JOBPILOT_RUNTIME_DIR?.trim()
-    ? path.resolve(process.env.JOBPILOT_RUNTIME_DIR)
-    : path.join(os.tmpdir(), 'jobpilot-automation')
-  return path.join(directory, 'campaigns.json')
-}
-
-function persistCampaignsEnabled(): boolean {
-  return process.env.VITEST !== 'true'
-}
-
-function hydrateCampaigns() {
-  if (hydrated || !persistCampaignsEnabled()) {
-    hydrated = true
-    return
-  }
-  hydrated = true
-  try {
-    const file = campaignFile()
-    if (!existsSync(file)) return
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Array<Omit<CampaignRecord, 'fetchImpl' | 'deps'>>
-    for (const entry of parsed) {
-      campaigns.set(entry.runId, { ...entry, deps: {}, fetchImpl: undefined })
+function reloadCampaigns() {
+  const parsed = readRuntimeJson<Array<Omit<CampaignRecord, 'fetchImpl' | 'deps'>>>(CAMPAIGN_FILE)
+  if (!parsed) return
+  for (const entry of parsed) {
+    if (!entry?.runId) continue
+    const current = campaigns.get(entry.runId)
+    if (!current || Date.parse(entry.updatedAt) >= Date.parse(current.updatedAt)) {
+      campaigns.set(entry.runId, { ...entry, deps: current?.deps ?? {}, fetchImpl: current?.fetchImpl })
     }
-  } catch {
-    // Keep empty campaign state if the runtime file cannot be read.
   }
 }
 
 function flushCampaigns() {
-  if (!persistCampaignsEnabled()) return
-  const directory = path.dirname(campaignFile())
-  mkdirSync(directory, { recursive: true })
-  const file = campaignFile()
-  const tmp = `${file}.${process.pid}.tmp`
   const serializable = [...campaigns.values()].map(({ fetchImpl: _fetch, deps: _deps, ...rest }) => rest)
-  writeFileSync(tmp, JSON.stringify(serializable))
-  renameSync(tmp, file)
+  writeRuntimeJson(CAMPAIGN_FILE, serializable)
 }
 
 export function resetAgentStateForTests() {
   campaigns.clear()
-  hydrated = true
 }
 
 export function getCampaign(runId: string): CampaignRecord | null {
-  hydrateCampaigns()
+  reloadCampaigns()
   return campaigns.get(runId) ?? null
 }
 
 export function listCampaigns(): CampaignRecord[] {
-  hydrateCampaigns()
+  reloadCampaigns()
   return [...campaigns.values()]
 }
 
@@ -91,7 +65,7 @@ export function listActiveCampaigns(): CampaignRecord[] {
 }
 
 export function saveCampaign(campaign: CampaignRecord): CampaignRecord {
-  hydrateCampaigns()
+  reloadCampaigns()
   campaigns.set(campaign.runId, campaign)
   flushCampaigns()
   return campaign
@@ -129,7 +103,7 @@ export function patchCampaign(
   runId: string,
   patch: Partial<Pick<CampaignRecord, 'status' | 'counters' | 'lastTickAt' | 'ticks'>>,
 ): CampaignRecord | null {
-  hydrateCampaigns()
+  reloadCampaigns()
   const current = campaigns.get(runId)
   if (!current) return null
   const next: CampaignRecord = {
