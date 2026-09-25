@@ -82,7 +82,7 @@ async function main() {
         run: { counts: Record<string, number> }
         items: Array<{ applicationStatus: string; confirmationNumber?: string | null; title?: string; company?: string }>
       }>(`/api/jobs/auto-apply/${started.run.id}`),
-    (current) => current.items.some((item) => item.applicationStatus === 'submitted'),
+    (current) => current.items.some((item) => ['submitted', 'failed', 'needs_user_input', 'needs_confirmation'].includes(item.applicationStatus)),
   )
   const applications = await json<{ applications: Array<Record<string, unknown>> }>(
     '/api/automation/applications?userId=verify-synthetic',

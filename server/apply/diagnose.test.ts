@@ -47,6 +47,10 @@ describe('stored application URL validation', () => {
 
   it('allows the local synthetic employer', () => {
     expect(inspectStoredApplicationUrl('http://127.0.0.1:8790/test-employer/apply').ok).toBe(true)
+    expect(inspectStoredApplicationUrl('http://127.0.0.1:8787/test-employer').ok).toBe(true)
+    expect(inspectStoredApplicationUrl('http://127.0.0.1:8787/test-employer/apply').ok).toBe(true)
+    expect(isJobPilotInternalUrl('http://127.0.0.1:8787/test-employer')).toBe(false)
+    expect(inspectStoredApplicationUrl('http://127.0.0.1:8787/jobs').ok).toBe(false)
   })
 })
 

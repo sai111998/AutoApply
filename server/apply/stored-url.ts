@@ -18,6 +18,7 @@ export function isJobPilotInternalUrl(value: string | null | undefined): boolean
   if (!raw) return false
   try {
     const url = new URL(raw)
+    if (isSyntheticExtensionTestUrl(url)) return false
     if (isJobPilotAppUrl(url.toString())) return true
     if (isLoopbackHostname(url.hostname) && JOBPILOT_PATHS.test(url.pathname)) return true
     return false
@@ -31,14 +32,19 @@ export function inspectStoredApplicationUrl(value: string | null | undefined): S
   if (!raw || raw === 'undefined' || raw === 'null') {
     return { ok: false, kind: 'missing', url: null, reason: 'storedApplicationUrl is missing.' }
   }
-  if (isJobPilotInternalUrl(raw)) {
-    return { ok: false, kind: 'jobpilot', url: null, reason: 'storedApplicationUrl points at JobPilot, not an employer site.' }
-  }
   try {
     const parsed = new URL(raw)
     if (isSyntheticExtensionTestUrl(parsed)) {
       return { ok: true, kind: 'valid', url: parsed.toString(), reason: null }
     }
+  } catch {
+    return { ok: false, kind: 'invalid', url: null, reason: 'storedApplicationUrl is not a valid http(s) URL.' }
+  }
+  if (isJobPilotInternalUrl(raw)) {
+    return { ok: false, kind: 'jobpilot', url: null, reason: 'storedApplicationUrl points at JobPilot, not an employer site.' }
+  }
+  try {
+    const parsed = new URL(raw)
     if (isLoopbackHostname(parsed.hostname)) {
       return { ok: false, kind: 'localhost', url: null, reason: 'storedApplicationUrl is a localhost URL.' }
     }
