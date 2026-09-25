@@ -2,7 +2,7 @@ import type { AnalyzeJobApiRequest, AnalyzeJobApiResult, AnalyzeJobClientRespons
 import type { Job } from '@/types/domain'
 import { supabase } from '@/lib/supabase'
 
-function apiUrl(path: string): string {
+export function apiUrl(path: string): string {
   const base = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') ?? ''
   return `${base}${path}`
 }
