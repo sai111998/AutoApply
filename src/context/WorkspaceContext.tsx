@@ -49,11 +49,11 @@ import {
   mapResume,
   mapSkill,
   preferencesToRow,
-  profileToRow,
   resumeToRow,
   skillToRow,
 } from '@/lib/mappers'
 import { persistErrorCode, persistErrorText, userFacingPersistError } from '@/lib/persist-errors'
+import { PHONE_COLUMN_MISSING_MESSAGE, persistProfileRow } from '@/lib/profile-save'
 import { buildAutoApplyWorkspaceRecords } from '@/lib/auto-apply-application'
 import { supabase } from '@/lib/supabase'
 import { RESUME_BUCKET } from '@/lib/resume-storage'
@@ -283,7 +283,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         let base = emptyWorkspace(userId, user.email, user.fullName ?? '')
         if (profileRes.data) base = { ...base, profile: mapProfile(profileRes.data, user.email) }
         else {
-          await supabase.from('profiles').upsert(profileToRow(base.profile))
+          await persistProfileRow(supabase, base.profile)
         }
 
         if (preferencesRes.data) base = { ...base, preferences: mapPreferences(preferencesRes.data) }
@@ -322,7 +322,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const updatedProfile = { ...profile, updatedAt: new Date().toISOString() }
       replace((current) => ({ ...current, profile: updatedProfile, skills }))
       if (isDemo || !supabase || !user) return
-      const { error: profileError } = await supabase.from('profiles').upsert(profileToRow(updatedProfile))
+      const { error: profileError, phoneStored } = await persistProfileRow(supabase, updatedProfile)
       if (profileError) throw profileError
       const { error: deleteError } = await supabase.from('skills').delete().eq('user_id', user.id)
       if (deleteError) throw deleteError
@@ -330,6 +330,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const { error: insertError } = await supabase.from('skills').insert(skills.map(skillToRow))
         if (insertError) throw insertError
       }
+      if (!phoneStored && updatedProfile.phone?.trim()) throw new Error(PHONE_COLUMN_MISSING_MESSAGE)
     },
     [isDemo, replace, user],
   )
