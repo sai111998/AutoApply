@@ -48,6 +48,7 @@ function flushCampaigns() {
 
 export function resetAgentStateForTests() {
   campaigns.clear()
+  executions.clear()
 }
 
 export function getCampaign(runId: string): CampaignRecord | null {
@@ -97,6 +98,72 @@ export function createCampaignRecord(input: {
     counters: input.counters ?? emptyCounts(),
   }
   return saveCampaign(campaign)
+}
+
+export const EXECUTION_STATES = [
+  'queued',
+  'opening',
+  'job_page',
+  'application_page',
+  'filling',
+  'uploading_resume',
+  'next_step',
+  'review',
+  'submitting',
+  'submitted',
+  'failed',
+  'needs_user_input',
+  'submission_uncertain',
+] as const
+
+export type ExecutionState = (typeof EXECUTION_STATES)[number]
+
+export interface ExecutionRecord {
+  applicationId: string
+  state: ExecutionState
+  reason: string | null
+  updatedAt: string
+}
+
+const EXECUTION_FILE = 'execution-state.json'
+const executions = new Map<string, ExecutionRecord>()
+
+function reloadExecutions() {
+  const parsed = readRuntimeJson<ExecutionRecord[]>(EXECUTION_FILE)
+  if (!parsed) return
+  for (const entry of parsed) {
+    if (entry?.applicationId) executions.set(entry.applicationId, entry)
+  }
+}
+
+function flushExecutions() {
+  writeRuntimeJson(EXECUTION_FILE, [...executions.values()])
+}
+
+export function persistExecutionState(
+  applicationId: string,
+  state: ExecutionState,
+  reason: string | null = null,
+): ExecutionRecord {
+  reloadExecutions()
+  const record: ExecutionRecord = {
+    applicationId,
+    state,
+    reason,
+    updatedAt: new Date().toISOString(),
+  }
+  executions.set(applicationId, record)
+  flushExecutions()
+  return record
+}
+
+export function getExecutionState(applicationId: string): ExecutionRecord | null {
+  reloadExecutions()
+  return executions.get(applicationId) ?? null
+}
+
+export function resetExecutionStateForTests() {
+  executions.clear()
 }
 
 export function patchCampaign(

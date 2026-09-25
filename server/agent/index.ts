@@ -1,4 +1,5 @@
 export { startCampaign, tickCampaign, pauseCampaign, resumeCampaign, cancelCampaign, resumeIntervention } from './agent'
+export { startExecutionCampaign, processExecutionCampaign, logExecution } from './campaign'
 export { startAgentScheduler, stopAgentScheduler, tickActiveCampaigns, resetAgentSchedulerForTests } from './scheduler'
 export { resetAgentStateForTests, getCampaign, listCampaigns, listActiveCampaigns } from './state'
 export { resetAgentEventsForTests, listAgentEvents } from './events'

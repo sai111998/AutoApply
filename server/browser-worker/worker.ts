@@ -6,6 +6,10 @@ import { persistConfirmedSubmission, applyConfirmationToQueueItem } from '../app
 import { getServerConfig } from '../config'
 import type { AutoApplyQueueItem, BrowserSubmitResult } from '../apply/types'
 import { runApplicationAgent } from '../application/agent'
+import { runExecutionBrowser } from './browser'
+import { isIsolatedRealEmployerUrl, isSyntheticExecutionUrl, isolateRealEmployerItem } from '../agent/worker'
+import { logExecution } from '../agent/campaign'
+import { persistExecutionState } from '../agent/state'
 import { recoverStuckBrowserJobs } from './recovery'
 import { resolveUserIntervention } from './intervention'
 import { getBrowserApplicationSession, listBrowserApplicationSessions, markBrowserSessionState } from './session'
@@ -66,6 +70,33 @@ async function runClaimedJob(
 ): Promise<AutoApplyQueueItem> {
   const { stored, item } = claimed
   const userId = stored.run.userId
+  if (isIsolatedRealEmployerUrl(item.applicationUrl)) {
+    isolateRealEmployerItem(item)
+    await persistBrowserJob(stored, item)
+    releaseBrowserJob(item.id)
+    return item
+  }
+  if (isSyntheticExecutionUrl(item.applicationUrl)) {
+    logExecution('WORKER_PICKED_UP')
+    persistExecutionState(item.id, 'opening')
+    const result = await runExecutionBrowser({ item, userId })
+    item.applicationStatus = result.status === 'needs_confirmation' ? 'needs_confirmation' : result.status
+    item.failureReason = result.failureReason
+    item.confirmationNumber = result.confirmationNumber
+    item.confirmationText = result.confirmationText
+    item.finalApplicationUrl = result.finalUrl
+    if (result.status === 'submitted') {
+      item.submittedAt = new Date().toISOString()
+      item.applicationUrl = result.finalUrl
+      await persistBrowserJob(stored, item)
+      await persistConfirmedSubmission({ userId, item, provider: 'synthetic', config: getServerConfig() })
+      logExecution('APPLICATION_PERSISTED')
+    } else {
+      await persistBrowserJob(stored, item)
+    }
+    releaseBrowserJob(item.id)
+    return item
+  }
   const profile = profileForJob(userId, item).profile ?? getStoredProfile(userId)
   if (!profile) {
     item.applicationStatus = 'failed'

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from 'express'
 import { resumeIntervention } from '../agent'
 import { importPlaywright } from '../apply/health'
 import { claimNextBrowserJob } from './queue'
-import { syntheticEmployerHtml } from './synthetic'
+import { syntheticEmployerHtml, syntheticSliceHtml } from './synthetic'
 
 export function registerBrowserWorkerRoutes(app: Express) {
   function sendSynthetic(res: Response, kind: 'job' | 'apply' | 'confirm', base: string) {
@@ -18,6 +18,16 @@ export function registerBrowserWorkerRoutes(app: Express) {
   app.get('/test-employer/apply', (_req, res) => sendSynthetic(res, 'apply', '/test-employer'))
   app.post('/test-employer/submit', (_req, res) => sendSynthetic(res, 'confirm', '/test-employer'))
   app.get('/test-employer/submit', (_req, res) => sendSynthetic(res, 'confirm', '/test-employer'))
+
+  const sliceBase = '/test-employer/job/1'
+  app.get('/test-employer/job/1', (_req, res) => res.type('html').send(syntheticSliceHtml('job', sliceBase)))
+  app.get('/test-employer/job/1/apply', (_req, res) => res.type('html').send(syntheticSliceHtml('step1', sliceBase)))
+  app.get('/test-employer/job/1/resume', (_req, res) => res.type('html').send(syntheticSliceHtml('step2', sliceBase)))
+  app.post('/test-employer/job/1/resume', (_req, res) => res.type('html').send(syntheticSliceHtml('step2', sliceBase)))
+  app.get('/test-employer/job/1/review', (_req, res) => res.type('html').send(syntheticSliceHtml('review', sliceBase)))
+  app.post('/test-employer/job/1/review', (_req, res) => res.type('html').send(syntheticSliceHtml('review', sliceBase)))
+  app.post('/test-employer/job/1/submit', (_req, res) => res.type('html').send(syntheticSliceHtml('confirm', sliceBase)))
+  app.get('/test-employer/job/1/submit', (_req, res) => res.type('html').send(syntheticSliceHtml('confirm', sliceBase)))
 
   app.get('/api/browser-worker/health', async (_req: Request, res: Response) => {
     const playwright = await importPlaywright()

@@ -7,6 +7,12 @@ import { getBrowserWorker } from '../browser-worker/worker'
 import { readAutomationHeartbeats } from './heartbeat'
 
 export interface AutomationHealthPayload {
+  agentRunning?: boolean
+  workerRunning?: boolean
+  browserAvailable?: boolean
+  queueDepth?: number
+  lastAgentHeartbeat?: string | null
+  lastWorkerHeartbeat?: string | null
   agent: {
     running: boolean
     lastHeartbeat: string | null
@@ -50,7 +56,15 @@ export async function buildAutomationHealthPayload(options: {
   const processing = new Set(['opening', 'filling', 'preparing', 'tailoring', 'submitting'])
   const workerRunning = Boolean(getBrowserWorker()?.running()) || beats.worker.running
   const agentRunning = schedulerRunning() || beats.agent.running
+  const queueQueued = items.filter((item) => item.applicationStatus === 'queued' || item.applicationStatus === 'ready').length
+  const queueProcessing = items.filter((item) => processing.has(item.applicationStatus)).length
   return {
+    agentRunning,
+    workerRunning,
+    browserAvailable: Boolean(browserHealth.available && browserHealth.browser === 'chromium'),
+    queueDepth: queueQueued + queueProcessing,
+    lastAgentHeartbeat: beats.agent.lastHeartbeat,
+    lastWorkerHeartbeat: beats.worker.lastHeartbeat,
     agent: {
       running: agentRunning,
       lastHeartbeat: beats.agent.lastHeartbeat,
@@ -66,8 +80,8 @@ export async function buildAutomationHealthPayload(options: {
       available: Boolean(browserHealth.available && browserHealth.browser === 'chromium'),
     },
     queue: {
-      queued: items.filter((item) => item.applicationStatus === 'queued' || item.applicationStatus === 'ready').length,
-      processing: items.filter((item) => processing.has(item.applicationStatus)).length,
+      queued: queueQueued,
+      processing: queueProcessing,
     },
     available: browserHealth.available,
     playwright: browserHealth.playwright,

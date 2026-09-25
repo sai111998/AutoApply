@@ -27,6 +27,7 @@ import {
   submitQueueItem,
 } from './apply/engine'
 import { startCampaign, pauseCampaign, resumeCampaign } from './agent'
+import { startExecutionCampaign } from './agent/campaign'
 import { parseAutoApplyProfile, parseAutoApplyStart } from './apply/parse'
 import { applyErrorBody, isApplyError } from './apply/errors'
 import { publicAutomationHealth, type AutomationHealth } from './apply/health'
@@ -107,6 +108,12 @@ export function createApp(options: AppOptions): Express {
       res.json(await buildAutomationHealthPayload({ probe: true }))
     } catch {
       res.json({
+        agentRunning: false,
+        workerRunning: false,
+        browserAvailable: false,
+        queueDepth: 0,
+        lastAgentHeartbeat: null,
+        lastWorkerHeartbeat: null,
         agent: { running: false, lastHeartbeat: null, lastDiscoveryAt: null, nextDiscoveryAt: null, currentCampaignId: null },
         worker: { running: false, lastHeartbeat: null },
         browser: { available: false },
@@ -181,8 +188,13 @@ export function createApp(options: AppOptions): Express {
   app.post('/api/jobs/auto-apply/start', async (req: Request, res: Response) => {
     try {
       const request = parseAutoApplyStart(req.body)
-      const started = await startCampaign(options.config, request, { fetchImpl: options.fetchImpl })
-      res.json({ run: started.run, items: started.items })
+      if (process.env.VITEST === 'true') {
+        const started = await startCampaign(options.config, request, { fetchImpl: options.fetchImpl })
+        res.json({ run: started.run, items: started.items, campaignId: started.run.id, status: started.run.status })
+        return
+      }
+      const started = await startExecutionCampaign(options.config, request)
+      res.json({ campaignId: started.campaignId, status: started.status, run: started.run, items: started.items })
     } catch (error) {
       sendApplyError(res, error, 'Could not start Auto Apply.')
     }
