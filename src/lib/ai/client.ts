@@ -857,3 +857,65 @@ export async function cancelAutoApplyRunRequest(runId: string): Promise<AutoAppl
   })
   return readAutoApplyResult(response, 'Could not cancel Auto Apply.')
 }
+
+export interface ApplyOneStarted {
+  success: true
+  runId: string
+  jobId: string
+  status: string
+}
+
+export interface ApplyOneStatus {
+  runId: string
+  applicationId: string | null
+  jobId: string
+  state: string
+  provider: string | null
+  currentUrl: string | null
+  queueState: 'queued' | 'processing' | 'finished' | 'not_consumed'
+  workerState: string
+  browserState: string
+  submissionAttempted: boolean
+  submissionConfirmed: boolean
+  blocker: { code: string; message: string } | null
+  trace: Array<{ stage: string; at: string }>
+  firstMissingStage: string | null
+}
+
+export class ApplyOneError extends Error {
+  code: string | null
+
+  constructor(code: string | null, message: string) {
+    super(message)
+    this.name = 'ApplyOneError'
+    this.code = code
+  }
+}
+
+function applyOneError(body: unknown, fallback: string): ApplyOneError {
+  const record = body && typeof body === 'object' ? (body as { code?: unknown; error?: unknown; message?: unknown }) : {}
+  const code = typeof record.code === 'string' ? record.code : null
+  const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
+  const detail = raw && !/key|secret|service.role|token/i.test(raw) ? raw : fallback
+  return new ApplyOneError(code, code ? `${detail} (${code})` : detail)
+}
+
+export async function applyOneRequest(jobId: string): Promise<ApplyOneStarted> {
+  const response = await fetch(apiUrl('/api/jobs/apply-one'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
+    body: JSON.stringify({ jobId }),
+  })
+  const body = (await response.json().catch(() => null)) as ApplyOneStarted | null
+  if (!response.ok || !body?.runId) throw applyOneError(body, 'Could not start Apply Now.')
+  return body
+}
+
+export async function getApplyOneStatusRequest(runId: string): Promise<ApplyOneStatus> {
+  const response = await fetch(apiUrl(`/api/jobs/apply-one/${encodeURIComponent(runId)}`), {
+    headers: await sessionHeaders(),
+  })
+  const body = (await response.json().catch(() => null)) as ApplyOneStatus | null
+  if (!response.ok || !body?.runId) throw applyOneError(body, 'Could not load the application status.')
+  return body
+}

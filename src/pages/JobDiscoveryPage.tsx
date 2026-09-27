@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Compass, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -11,8 +11,10 @@ import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import {
   answerAutoApplyItemRequest,
+  applyOneRequest,
   cancelAutoApplyItemRequest,
   cancelAutoApplyRunRequest,
+  getApplyOneStatusRequest,
   getAutoApplyRunRequest,
   getLiveJobRequest,
   listAutoApplyRunsRequest,
@@ -47,6 +49,7 @@ import {
 } from '@/lib/live-job'
 import { matchBandLabel, matchBandTone } from '@/lib/match-band'
 import { DEFAULT_AUTO_APPLY } from '@/lib/auto-apply-defaults'
+import { applyOneOutcome, waitForApplyOneOutcome } from '@/lib/one-click-apply'
 
 const US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
@@ -108,8 +111,20 @@ function SkillLine({ label, skills }: { label: string; skills: string[] }) {
   )
 }
 
-function ApplyNowLink({ href, className = '' }: { href: string | null; className?: string }) {
-  if (!href) {
+function ApplyNowButton({
+  canApply,
+  applying,
+  busy,
+  onApply,
+  className = '',
+}: {
+  canApply: boolean
+  applying: boolean
+  busy: boolean
+  onApply: () => void
+  className?: string
+}) {
+  if (!canApply) {
     return (
       <Button type="button" disabled>
         Apply Now
@@ -117,14 +132,14 @@ function ApplyNowLink({ href, className = '' }: { href: string | null; className
     )
   }
   return (
-    <a
-      className={`inline-flex items-center justify-center rounded-xl bg-olive px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgb(85,99,56,0.16)] transition hover:bg-olive-dark ${className}`}
-      href={href}
-      target="_blank"
-      rel="noreferrer"
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center rounded-xl bg-olive px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgb(85,99,56,0.16)] transition hover:bg-olive-dark disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+      onClick={onApply}
+      disabled={busy}
     >
-      Apply Now
-    </a>
+      {applying ? 'Applying…' : 'Apply Now'}
+    </button>
   )
 }
 
@@ -138,6 +153,7 @@ export function JobDiscoveryPage() {
     savedJobIds,
     saveDiscoveredJob,
     syncAutoApplyApplication,
+    refreshAnalyses,
     masterResume,
     resumes,
     loading: workspaceLoading,
@@ -177,6 +193,10 @@ export function JobDiscoveryPage() {
   const [autoRun, setAutoRun] = useState<AutoApplyRun | null>(null)
   const [autoItems, setAutoItems] = useState<AutoApplyQueueItem[]>([])
   const [autoAnswers, setAutoAnswers] = useState<Record<string, string>>({})
+  const [applyingJobId, setApplyingJobId] = useState<string | null>(null)
+  const applyPolling = useRef<AbortController | null>(null)
+
+  useEffect(() => () => applyPolling.current?.abort(), [])
 
   const visibleJobs = useMemo(() => (listed ? sortDiscoveredJobs(listed, sort, query) : null), [listed, query, sort])
 
@@ -289,6 +309,27 @@ export function JobDiscoveryPage() {
     }
   }
 
+  async function onApplyNow(job: DiscoveredJobResult) {
+    if (!user || applyingJobId) return
+    setApplyingJobId(job.id)
+    const polling = new AbortController()
+    applyPolling.current = polling
+    try {
+      const started = await applyOneRequest(job.id)
+      notify(`Applying to ${job.title} at ${job.company || 'the employer'}…`, 'info')
+      const status = await waitForApplyOneOutcome(started.runId, getApplyOneStatusRequest, { signal: polling.signal })
+      const outcome = applyOneOutcome(status, job)
+      notify(outcome.message, outcome.tone)
+      if (status.submissionConfirmed) await refreshAnalyses()
+    } catch (applyError) {
+      if (applyError instanceof DOMException && applyError.name === 'AbortError') return
+      notify(applyError instanceof Error ? applyError.message : 'Could not start Apply Now.', 'error')
+    } finally {
+      if (applyPolling.current === polling) applyPolling.current = null
+      setApplyingJobId(null)
+    }
+  }
+
   async function hydrateJob(job: DiscoveredJobResult): Promise<DiscoveredJobResult> {
     if (!job.providerJobId) return job
     if (job.provider !== 'job-opportunities' && job.description?.trim()) return job
@@ -353,7 +394,7 @@ export function JobDiscoveryPage() {
   async function onUseCurrentResume() {
     if (!reviewing) return
     await onSave(reviewing)
-    notify('Current resume kept. Open Apply Now to continue on the employer site.', 'success')
+    notify('Current resume kept. Click Apply Now to apply with it.', 'success')
   }
 
   async function onTailorResume() {
@@ -871,7 +912,7 @@ export function JobDiscoveryPage() {
         {!loading &&
           visibleJobs?.map((job) => {
             const match = liveMatch(job)
-            const href = employerApplyHref(job)
+            const canApply = Boolean(employerApplyHref(job))
             const expanded = expandedId === job.id
             return (
               <Card key={job.id} className="p-5">
@@ -892,7 +933,12 @@ export function JobDiscoveryPage() {
                   <SkillLine label="Missing" skills={topSkills(match.missingSkills)} />
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <ApplyNowLink href={href} />
+                  <ApplyNowButton
+                    canApply={canApply}
+                    applying={applyingJobId === job.id}
+                    busy={applyingJobId !== null}
+                    onApply={() => void onApplyNow(job)}
+                  />
                   <Button type="button" variant="secondary" onClick={() => void onReview(job)}>
                     Review & Apply
                   </Button>
@@ -1005,7 +1051,12 @@ export function JobDiscoveryPage() {
               <Button type="button" variant="secondary" onClick={() => void onTailorResume()} disabled={!resume?.parsedText?.trim()}>
                 Tailor Resume
               </Button>
-              <ApplyNowLink href={employerApplyHref(reviewing)} />
+              <ApplyNowButton
+                canApply={Boolean(employerApplyHref(reviewing))}
+                applying={applyingJobId === reviewing.id}
+                busy={applyingJobId !== null}
+                onApply={() => void onApplyNow(reviewing)}
+              />
             </div>
           </aside>
         </div>

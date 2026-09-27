@@ -37,11 +37,16 @@ describe('live jobs contracts', () => {
     expect(page).not.toMatch(/Analyze Job/)
   })
 
-  it('opens Apply Now on the employer URL and Review & Apply in-page', () => {
+  it('runs Apply Now as one click for the exact job and keeps Review & Apply in-page', () => {
     expect(page).toMatch(/Apply Now/)
     expect(page).toMatch(/Review & Apply/)
     expect(page).toMatch(/Save Job/)
-    expect(page).toMatch(/target="_blank"/)
+    expect(page).toMatch(/function ApplyNowButton/)
+    expect(page).not.toMatch(/ApplyNowLink/)
+    expect(page).toMatch(/applyOneRequest\(job\.id\)/)
+    expect(page).toMatch(/waitForApplyOneOutcome\(started\.runId/)
+    expect(page).toMatch(/if \(status\.submissionConfirmed\) await refreshAnalyses\(\)/)
+    expect(client).toMatch(/\/api\/jobs\/apply-one/)
     expect(page).toMatch(/employerApplyHref/)
     expect(page).toMatch(/setReviewing/)
     expect(page).toMatch(/previewLiveJobRequest/)
