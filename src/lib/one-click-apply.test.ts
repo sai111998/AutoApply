@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ApplyOneStatus } from '@/lib/ai/client'
-import { applyOneOutcome, waitForApplyOneOutcome } from './one-click-apply'
+import { ApplyOneError, type ApplyOneStatus } from '@/lib/ai/client'
+import { applyOneDebugFromError, applyOneDebugFromStatus, applyOneOutcome, waitForApplyOneOutcome } from './one-click-apply'
 
 function status(overrides: Partial<ApplyOneStatus> = {}): ApplyOneStatus {
   return {
     runId: 'run-1',
     applicationId: null,
     jobId: 'job-1',
+    employer: 'Acme',
+    title: 'Senior Engineer',
+    applicationSystem: 'Greenhouse',
+    currentStage: 'JOB_LOADED',
     state: 'queued',
     provider: null,
     currentUrl: null,
@@ -100,5 +104,68 @@ describe('applyOneOutcome', () => {
     )
     expect(outcome.tone).toBe('error')
     expect(outcome.message).toMatch(/Applications record was not saved.*APPLICATION_NOT_PERSISTED/)
+  })
+
+  it('does not report Applied when the form is not a simple Lever or Greenhouse application', () => {
+    const outcome = applyOneOutcome(
+      status({
+        state: 'unsupported',
+        queueState: 'finished',
+        applicationSystem: 'Other',
+        blocker: { code: 'UNSUPPORTED_COMPLEX', message: 'WORKDAY: host is a Workday careers site' },
+      }),
+      job,
+    )
+    expect(outcome.tone).toBe('info')
+    expect(outcome.message).toMatch(/not a simple form yet/)
+    expect(outcome.message).toMatch(/WORKDAY/)
+    expect(outcome.message).not.toMatch(/^Applied/)
+  })
+})
+
+describe('Apply Now debug', () => {
+  it('shows the employer, system, stage, and failure from a status poll', () => {
+    expect(
+      applyOneDebugFromStatus(
+        status({
+          state: 'filling',
+          queueState: 'processing',
+          currentStage: 'RESUME_UPLOADED',
+          applicationSystem: 'Lever',
+        }),
+      ),
+    ).toMatchObject({
+      employer: 'Acme',
+      title: 'Senior Engineer',
+      applicationSystem: 'Lever',
+      stage: 'RESUME_UPLOADED',
+      status: 'filling (in progress)',
+      failure: null,
+    })
+  })
+
+  it('keeps a rejected Workday job at JOB_LOADED with the structured reason', () => {
+    const error = new ApplyOneError(
+      'UNSUPPORTED_COMPLEX',
+      'This application is not a simple form. (UNSUPPORTED_COMPLEX: WORKDAY)',
+      'WORKDAY',
+      'Other',
+    )
+    expect(
+      applyOneDebugFromError(error, {
+        id: 'job-1',
+        title: 'Engineer',
+        company: 'Cisco',
+        jobUrl: 'https://cisco.wd5.myworkdayjobs.com/jobs/1',
+      }),
+    ).toEqual({
+      jobId: 'job-1',
+      employer: 'Cisco',
+      title: 'Engineer',
+      applicationSystem: 'Other',
+      stage: 'JOB_LOADED',
+      status: 'unsupported',
+      failure: 'This application is not a simple form. (UNSUPPORTED_COMPLEX: WORKDAY)',
+    })
   })
 })

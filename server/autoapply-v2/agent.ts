@@ -14,7 +14,9 @@ import {
   findV2NextControl,
   findV2SubmitControl,
 } from './navigation'
+import { classifyV2ApplicationForm } from './simple'
 import { clickV2Submit } from './submission'
+import { detectV2Provider, unsupportedV2System, v2ApplicationSystem } from './system'
 import { traceV2 } from './trace'
 import type { V2Confirmation, V2PageState, V2Provider, V2QueueItem, V2Resume, V2RunStatus } from './types'
 
@@ -39,29 +41,7 @@ interface V2PageSnapshot {
   bodyText: string
 }
 
-export function detectV2Provider(url: string, html: string): V2Provider {
-  const host = (() => {
-    try {
-      return new URL(url).hostname.toLowerCase()
-    } catch {
-      return ''
-    }
-  })()
-  const haystack = `${host} ${html.slice(0, 20000)}`.toLowerCase()
-  if (host.includes('myworkdayjobs') || host.includes('workday')) return 'workday'
-  if (host.includes('greenhouse') || haystack.includes('boards.greenhouse.io')) return 'greenhouse'
-  if (host.includes('lever.co')) return 'lever'
-  if (host.includes('ashby')) return 'ashby'
-  if (host.includes('icims')) return 'icims'
-  if (host.includes('smartrecruiters')) return 'smartrecruiters'
-  if (host.includes('workable')) return 'workable'
-  if (/workday/.test(haystack)) return 'workday'
-  if (/greenhouse/.test(haystack)) return 'greenhouse'
-  if (/lever\.co/.test(haystack)) return 'lever'
-  if (/ashby/.test(haystack)) return 'ashby'
-  if (/icims/.test(haystack)) return 'icims'
-  return 'generic'
-}
+export { detectV2Provider }
 
 export function classifyV2Page(input: {
   snapshot: V2PageSnapshot
@@ -207,6 +187,8 @@ export async function uploadV2Resume(page: Page, resume: V2Resume): Promise<bool
   return target.frame.evaluate((fileName) => (document.body?.innerText ?? '').includes(fileName), resume.fileName).catch(() => false)
 }
 
+const BASIC_FIELD_KEYS = new Set(['firstName', 'lastName', 'fullName', 'email', 'phone'])
+
 export async function runV2Application(input: {
   run: V2QueueItem
   profile: CanonicalCandidateProfile
@@ -236,6 +218,12 @@ export async function runV2Application(input: {
     updateV2Session(run.runId, { currentUrl: snapshot.url })
   }
 
+  const detectProvider = () => {
+    provider = detectV2Provider(snapshot.url, snapshot.html)
+    updateV2Run(run.runId, { provider })
+    updateV2Session(run.runId, { provider, currentUrl: snapshot.url })
+  }
+
   track('opening')
   try {
     await page.goto(run.applicationUrl, { waitUntil: 'domcontentloaded', timeout: 16000 })
@@ -248,22 +236,23 @@ export async function runV2Application(input: {
   snapshot = await snapshotV2Page(page)
   if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
   updateV2Run(run.runId, { initialUrl: snapshot.url, finalUrl: snapshot.url, redirectChain: [...redirectChain] })
-  traceV2(run.runId, 'URL_OPENED', {
+  detectProvider()
+  traceV2(run.runId, 'APPLICATION_URL_OPENED', {
     jobId: run.jobId,
     company: run.company,
     title: run.title,
     applicationUrl: run.applicationUrl,
     initialUrl: snapshot.url,
+    system: v2ApplicationSystem(provider),
   })
-  provider = detectV2Provider(snapshot.url, snapshot.html)
-  updateV2Run(run.runId, { provider })
-  updateV2Session(run.runId, { provider, currentUrl: snapshot.url })
 
   let unknownRetries = 0
   let applyClicks = 0
   let classifiedInitialPage = false
   let lastPageState: V2PageState = 'UNKNOWN'
   for (;;) {
+    const portal = unsupportedV2System(snapshot.url)
+    if (portal) return unsupportedForm(portal.reason, portal.detail)
     const fields = await detectV2Fields(page).catch(() => [])
     const hasPassword = fields.some((field) => field.type === 'password')
     const hasFileInput = fields.some((field) => field.type === 'file')
@@ -332,10 +321,8 @@ export async function runV2Application(input: {
   }
 
   track('application_page')
-  provider = detectV2Provider(snapshot.url, snapshot.html)
-  updateV2Run(run.runId, { provider })
-  updateV2Session(run.runId, { provider, currentUrl: snapshot.url })
-  traceV2(run.runId, 'APPLICATION_DETECTED', { url: snapshot.url, provider })
+  detectProvider()
+  traceV2(run.runId, 'APPLY_FORM_FOUND', { url: snapshot.url, system: v2ApplicationSystem(provider) })
 
   let reachedFinalStep = false
   for (let step = 0; step < 8; step += 1) {
@@ -358,35 +345,6 @@ export async function runV2Application(input: {
     track('filling')
     const mapping = mapV2Fields(fields, profile)
     for (const detected of mapping.detected) fieldsDetected.add(detected.key)
-    const detectedCounts = {
-      step: step + 1,
-      count: mapping.detected.length,
-      mapped: mapping.mapped.length,
-      unknownRequired: mapping.unknownRequired.length,
-    }
-    if (mapping.detected.length > 0) traceV2(run.runId, 'FIELDS_DETECTED', detectedCounts)
-    else logV2('FIELDS_DETECTED', detectedCounts, channel)
-    if (mapping.unknownRequired.length > 0) {
-      const labels = mapping.unknownRequired.map((field) => field.label).slice(0, 5).join(' | ')
-      updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
-      return terminal('needs_user_input', `UNKNOWN_REQUIRED_FIELD: ${labels}`)
-    }
-    const filled = await fillV2Fields(page, mapping.mapped)
-    for (const key of filled) fieldsFilled.add(key)
-    const filledCounts = { step: step + 1, count: filled.length, keys: filled.join(',') || 'none' }
-    if (filled.length > 0) traceV2(run.runId, 'FIELDS_FILLED', filledCounts)
-    else logV2('FIELDS_FILLED', filledCounts, channel)
-    updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
-
-    if (hasFileInput && !resumeUploaded) {
-      track('uploading_resume')
-      const accepted = await uploadV2Resume(page, resume)
-      if (!accepted) return fail('RESUME_UPLOAD_FAILED', 'The resume file was not accepted by the page.')
-      resumeUploaded = true
-      traceV2(run.runId, 'RESUME_UPLOADED', { bytes: resume.buffer.length, mimeType: resume.mimeType })
-      updateV2Run(run.runId, { resumeUploaded: true })
-    }
-
     let hasNext = await findV2NextControl(page)
     let hasSubmit = await findV2SubmitControl(page)
     if (!hasNext && !hasSubmit && fields.length === 0) {
@@ -394,6 +352,61 @@ export async function runV2Application(input: {
       hasNext = await findV2NextControl(page)
       hasSubmit = await findV2SubmitControl(page)
     }
+    const form = classifyV2ApplicationForm({
+      url: snapshot.url,
+      fields,
+      mapping,
+      hasSubmit,
+      hasNext,
+      firstFormPage: step === 0,
+      resumeUploaded,
+    })
+    logV2(
+      'FORM_CLASSIFIED',
+      {
+        step: step + 1,
+        classification: form.classification,
+        reason: form.classification === 'UNSUPPORTED_COMPLEX' ? form.reason : null,
+        system: v2ApplicationSystem(provider),
+      },
+      channel,
+    )
+    if (form.classification === 'UNSUPPORTED_COMPLEX') return unsupportedForm(form.reason, form.detail)
+
+    const basicKeys = [...new Set(mapping.detected.map((field) => field.key).filter((key) => BASIC_FIELD_KEYS.has(key)))]
+    if (basicKeys.length > 0) {
+      traceV2(run.runId, 'BASIC_FIELDS_DETECTED', { step: step + 1, keys: basicKeys.join(','), unknownRequired: mapping.unknownRequired.length })
+    }
+    if (mapping.unknownRequired.length > 0) {
+      const labels = mapping.unknownRequired.map((field) => field.label).slice(0, 5).join(' | ')
+      updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
+      return terminal('needs_user_input', `UNKNOWN_REQUIRED_FIELD: ${labels}`)
+    }
+    const filled = await fillV2Fields(page, mapping.mapped)
+    for (const key of filled) fieldsFilled.add(key)
+    const basicFilled = filled.filter((key) => BASIC_FIELD_KEYS.has(key))
+    if (basicFilled.length > 0) traceV2(run.runId, 'BASIC_FIELDS_FILLED', { step: step + 1, keys: basicFilled.join(',') })
+    updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
+
+    if (hasFileInput && !resumeUploaded && mapping.detected.some((field) => field.key === 'resume')) {
+      traceV2(run.runId, 'RESUME_INPUT_FOUND', { step: step + 1 })
+      track('uploading_resume')
+      const accepted = await uploadV2Resume(page, resume)
+      if (!accepted) return fail('RESUME_UPLOAD_FAILED', 'The resume file was not accepted by the page.')
+      resumeUploaded = true
+      traceV2(run.runId, 'RESUME_UPLOADED', {
+        resumeVersionId: run.resumeVersionId,
+        bytes: resume.buffer.length,
+        mimeType: resume.mimeType,
+      })
+      updateV2Run(run.runId, { resumeUploaded: true })
+      if (mapping.mapped.length > 0) {
+        // Some providers parse the uploaded resume into the form; the canonical profile values must win.
+        await page.waitForTimeout(1500).catch(() => null)
+        await fillV2Fields(page, mapping.mapped)
+      }
+    }
+
     if (!hasNext && hasSubmit) {
       reachedFinalStep = true
       break
@@ -407,31 +420,20 @@ export async function runV2Application(input: {
       updateV2Session(run.runId, { step: step + 1 })
       continue
     }
-    if (fields.length === 0) {
-      return fail('FORM_NOT_FOUND', 'The application step has no fields and no Next or Submit control, in the page or its frames.')
-    }
-    return fail('NAVIGATION_FAILED', 'No Next or Submit control was detected on the application.')
+    return fail('FORM_NOT_FOUND', 'The application step has no Next or Submit control, in the page or its frames.')
   }
   if (!reachedFinalStep) {
     return fail('NAVIGATION_FAILED', 'The application did not reach its final step within 8 steps.')
   }
 
-  traceV2(run.runId, 'REVIEW_REACHED', { url: snapshot.url })
   track('ready_to_submit')
-  snapshot = await snapshotV2Page(page)
-  const reviewFields = await detectV2Fields(page).catch(() => [])
-  const reviewMapping = mapV2Fields(reviewFields, profile)
-  if (reviewMapping.unknownRequired.length > 0) {
-    return terminal('needs_user_input', 'UNKNOWN_REQUIRED_FIELD: unresolved required question on review step.')
-  }
-  const hasSubmit = await findV2SubmitControl(page)
-  if (!hasSubmit) return fail('SUBMISSION_FAILED', 'The final Submit control was not found.')
-  traceV2(run.runId, 'FINAL_SUBMIT_FOUND')
+  if (!(await findV2SubmitControl(page))) return fail('SUBMISSION_FAILED', 'The Submit application control was not found.')
+  traceV2(run.runId, 'SUBMIT_BUTTON_FOUND', { url: page.url() })
 
   track('submitting')
   submitClicked = await clickV2Submit(page)
-  if (!submitClicked) return fail('SUBMISSION_FAILED', 'The final Submit control could not be clicked.')
-  traceV2(run.runId, 'FINAL_SUBMIT_CLICKED')
+  if (!submitClicked) return fail('SUBMISSION_FAILED', 'The Submit application control could not be clicked.')
+  traceV2(run.runId, 'SUBMIT_CLICKED')
   updateV2Run(run.runId, { submitClicked: true })
   await settleV2Page(page, 2800)
   snapshot = await snapshotV2Page(page)
@@ -477,6 +479,10 @@ export async function runV2Application(input: {
     'CONFIRMATION_NOT_FOUND: Submit was clicked, but no reliable confirmation was detected. The run will not be retried.',
     confirmation,
   )
+
+  function unsupportedForm(reason: string, detail: string): V2AgentResult {
+    return terminal('unsupported', `UNSUPPORTED_COMPLEX: ${reason}: ${detail}`)
+  }
 
   function terminal(
     status: V2RunStatus,

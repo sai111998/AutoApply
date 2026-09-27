@@ -17,6 +17,7 @@ import { logV2, v2LogChannel } from './log'
 import { requireV2Profile, v2Access } from './profile'
 import { activeV2Run, createV2Run } from './queue'
 import { loadV2Resume } from './resume'
+import { detectV2Provider, unsupportedV2System, v2ApplicationSystem } from './system'
 import { v2TraceEntry } from './trace'
 import {
   V2_TERMINAL_STATUSES,
@@ -139,7 +140,7 @@ export interface OneClickApplyStarted {
 }
 
 export async function startOneClickApply(
-  input: { userId: string; jobId: string; accessToken?: string | null } & V2JobOptions,
+  input: { userId: string; jobId: string; resumeId?: string | null; accessToken?: string | null } & V2JobOptions,
 ): Promise<OneClickApplyStarted> {
   const jobId = input.jobId?.trim() ?? ''
   const started = v2TraceEntry('START')
@@ -152,7 +153,17 @@ export async function startOneClickApply(
   }
   const job = loadV2Job(input.userId, jobId, input)
   const jobLoaded = v2TraceEntry('JOB_LOADED')
-  logV2('JOB_LOADED', { jobId: job.id, company: job.company, title: job.title, applicationUrl: job.applicationUrl })
+  const system = v2ApplicationSystem(detectV2Provider(job.applicationUrl, ''))
+  logV2('JOB_LOADED', { jobId: job.id, company: job.company, title: job.title, applicationUrl: job.applicationUrl, system })
+  const unsupportedSystem = unsupportedV2System(job.applicationUrl)
+  if (unsupportedSystem) {
+    logV2('RUN_STOPPED', { status: 'unsupported', reason: unsupportedSystem.reason, jobId: job.id })
+    throw new V2Error('UNSUPPORTED_COMPLEX', unsupportedSystem.detail, 422, null, {
+      classification: 'UNSUPPORTED_COMPLEX',
+      reason: unsupportedSystem.reason,
+      applicationSystem: system,
+    })
+  }
   if (active) {
     throw new V2Error('WORKER_BUSY', `Another application is already in progress (${active.title} at ${active.company}).`, 409)
   }
@@ -164,6 +175,7 @@ export async function startOneClickApply(
     jobsFound: 1,
     started,
     jobLoaded,
+    resumeId: input.resumeId,
     accessToken: input.accessToken,
   })
   return { runId: run.runId, jobId: run.jobId, status: 'queued' }
@@ -241,6 +253,7 @@ const QUEUE_STATUS: Record<V2RunStatus, AutoApplyQueueStatus> = {
   captcha_required: 'captcha_required',
   login_required: 'login_required',
   mfa_required: 'mfa_required',
+  unsupported: 'automation_blocked',
   failed: 'failed',
   submission_uncertain: 'submission_uncertain',
   cancelled: 'cancelled',
@@ -248,7 +261,7 @@ const QUEUE_STATUS: Record<V2RunStatus, AutoApplyQueueStatus> = {
 
 function runStatus(status: V2RunStatus): AutoApplyRunStatus {
   if (status === 'submitted') return 'completed'
-  if (status === 'failed') return 'failed'
+  if (status === 'failed' || status === 'unsupported') return 'failed'
   if (status === 'cancelled') return 'cancelled'
   if (INTERVENTION_STATUSES.has(status)) return 'needs_attention'
   return 'running'
@@ -264,7 +277,7 @@ export function toAutoApplyRunResult(run: V2QueueItem): { run: AutoApplyRun; ite
     ready: run.status === 'ready_to_submit' ? 1 : 0,
     needsInput: run.status === 'needs_user_input' ? 1 : 0,
     submitted: submitted ? 1 : 0,
-    skipped: 0,
+    skipped: run.status === 'unsupported' ? 1 : 0,
     failed: run.status === 'failed' ? 1 : 0,
     queued: run.status === 'queued' ? 1 : 0,
     processing: IN_PROGRESS_STATUSES.has(run.status) ? 1 : 0,

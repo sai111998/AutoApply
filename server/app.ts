@@ -231,9 +231,11 @@ export function createApp(options: AppOptions): Express {
       const user = await authenticate(req)
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
       const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
+      const resumeId = typeof body.resumeId === 'string' && body.resumeId.trim() ? body.resumeId.trim() : null
       const started = await startOneClickApply({
         userId: user.id,
         jobId,
+        resumeId,
         accessToken: user.accessToken,
         allowSyntheticEmployer: options.allowSyntheticEmployer,
       })

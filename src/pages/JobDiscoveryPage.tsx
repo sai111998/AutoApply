@@ -49,7 +49,14 @@ import {
 } from '@/lib/live-job'
 import { matchBandLabel, matchBandTone } from '@/lib/match-band'
 import { DEFAULT_AUTO_APPLY } from '@/lib/auto-apply-defaults'
-import { applyOneOutcome, waitForApplyOneOutcome } from '@/lib/one-click-apply'
+import {
+  applyOneDebugFromError,
+  applyOneDebugFromStatus,
+  applyOneOutcome,
+  applicationSystemForUrl,
+  waitForApplyOneOutcome,
+  type ApplyOneDebug,
+} from '@/lib/one-click-apply'
 
 const US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
@@ -108,6 +115,27 @@ function SkillLine({ label, skills }: { label: string; skills: string[] }) {
       <span className="font-semibold">{label}: </span>
       {skills.join(' • ')}
     </p>
+  )
+}
+
+function ApplyNowDebug({ debug }: { debug: ApplyOneDebug }) {
+  const rows: Array<[string, string]> = [
+    ['Employer', debug.employer],
+    ['Job title', debug.title],
+    ['Application system', debug.applicationSystem],
+    ['Current stage', debug.stage],
+    ['Final status', debug.status],
+    ['Failure reason', debug.failure || '—'],
+  ]
+  return (
+    <dl className="mt-3 grid gap-1 text-xs text-muted sm:grid-cols-2">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt className="inline font-semibold text-charcoal">{label}: </dt>
+          <dd className="inline break-words">{value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
@@ -194,6 +222,7 @@ export function JobDiscoveryPage() {
   const [autoItems, setAutoItems] = useState<AutoApplyQueueItem[]>([])
   const [autoAnswers, setAutoAnswers] = useState<Record<string, string>>({})
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null)
+  const [applyDebug, setApplyDebug] = useState<ApplyOneDebug | null>(null)
   const applyPolling = useRef<AbortController | null>(null)
 
   useEffect(() => () => applyPolling.current?.abort(), [])
@@ -312,17 +341,31 @@ export function JobDiscoveryPage() {
   async function onApplyNow(job: DiscoveredJobResult) {
     if (!user || applyingJobId) return
     setApplyingJobId(job.id)
+    setApplyDebug({
+      jobId: job.id,
+      employer: job.company || 'Unknown company',
+      title: job.title,
+      applicationSystem: applicationSystemForUrl(job.jobUrl || job.url),
+      stage: 'START',
+      status: 'starting',
+      failure: null,
+    })
     const polling = new AbortController()
     applyPolling.current = polling
     try {
-      const started = await applyOneRequest(job.id)
+      const started = await applyOneRequest(job.id, resume?.id ?? null)
       notify(`Applying to ${job.title} at ${job.company || 'the employer'}…`, 'info')
-      const status = await waitForApplyOneOutcome(started.runId, getApplyOneStatusRequest, { signal: polling.signal })
+      const status = await waitForApplyOneOutcome(started.runId, getApplyOneStatusRequest, {
+        signal: polling.signal,
+        onStatus: (next) => setApplyDebug(applyOneDebugFromStatus(next)),
+      })
+      setApplyDebug(applyOneDebugFromStatus(status))
       const outcome = applyOneOutcome(status, job)
       notify(outcome.message, outcome.tone)
       if (status.submissionConfirmed) await refreshAnalyses()
     } catch (applyError) {
       if (applyError instanceof DOMException && applyError.name === 'AbortError') return
+      setApplyDebug(applyOneDebugFromError(applyError, job))
       notify(applyError instanceof Error ? applyError.message : 'Could not start Apply Now.', 'error')
     } finally {
       if (applyPolling.current === polling) applyPolling.current = null
@@ -949,6 +992,7 @@ export function JobDiscoveryPage() {
                     {expanded ? 'Hide Details' : 'View Details'}
                   </Button>
                 </div>
+                {applyDebug?.jobId === job.id ? <ApplyNowDebug debug={applyDebug} /> : null}
                 {expanded && (
                   <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3">
                     {hydratingId === job.id && !job.description ? (
@@ -1058,6 +1102,11 @@ export function JobDiscoveryPage() {
                 onApply={() => void onApplyNow(reviewing)}
               />
             </div>
+            {applyDebug?.jobId === reviewing.id ? (
+              <div className="border-t border-line px-6 pb-4">
+                <ApplyNowDebug debug={applyDebug} />
+              </div>
+            ) : null}
           </aside>
         </div>
       )}

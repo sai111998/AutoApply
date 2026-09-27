@@ -140,7 +140,27 @@ const BLOCKER_PAGES: Record<string, string> = {
 <h1>Job Application</h1><form><label for="fn">First Name *</label><input id="fn" required />
 <label for="ln">Last Name *</label><input id="ln" required />
 <label for="em">Email *</label><input id="em" type="email" required />
+<label for="cv">Resume/CV *</label><input id="cv" type="file" required />
 <label for="rust">Years of Rust experience *</label><input id="rust" required />
+<button type="submit">Submit Application</button></form></body></html>`,
+  '/test-employer/job/7': `<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Job Application</h1><form><label for="fn">First Name *</label><input id="fn" required />
+<label for="ln">Last Name *</label><input id="ln" required />
+<label for="em">Email *</label><input id="em" type="email" required />
+<button type="submit">Submit Application</button></form></body></html>`,
+  '/test-employer/job/8': `<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Job Application</h1><form><label for="fn">First Name *</label><input id="fn" required />
+<label for="ln">Last Name *</label><input id="ln" required />
+<label for="em">Email *</label><input id="em" type="email" required />
+<label for="cv">Resume/CV *</label><input id="cv" type="file" required />
+<label for="cl">Cover Letter *</label><input id="cl" name="cover_letter" type="file" required />
+<button type="submit">Submit Application</button></form></body></html>`,
+  '/test-employer/job/9': `<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Job Application</h1><form><label for="fn">First Name *</label><input id="fn" required />
+<label for="ln">Last Name *</label><input id="ln" required />
+<label for="em">Email *</label><input id="em" type="email" required />
+<label for="cv">Resume/CV *</label><input id="cv" type="file" required />
+<label for="why">Why do you want to work here? *</label><textarea id="why" required></textarea>
 <button type="submit">Submit Application</button></form></body></html>`,
 }
 

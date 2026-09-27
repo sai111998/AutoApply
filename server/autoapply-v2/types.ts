@@ -14,6 +14,7 @@ export const V2_RUN_STATUSES = [
   'captcha_required',
   'login_required',
   'mfa_required',
+  'unsupported',
   'failed',
   'submission_uncertain',
   'cancelled',
@@ -27,6 +28,7 @@ export const V2_TERMINAL_STATUSES: ReadonlySet<V2RunStatus> = new Set([
   'captcha_required',
   'login_required',
   'mfa_required',
+  'unsupported',
   'failed',
   'submission_uncertain',
   'cancelled',
@@ -37,30 +39,34 @@ export type V2RunSource = 'auto-apply' | 'one-click' | 'synthetic-test'
 export const V2_STAGES = [
   'START',
   'JOB_LOADED',
-  'PROFILE_LOADED',
-  'RESUME_LOADED',
-  'QUEUED',
-  'WORKER_STARTED',
-  'BROWSER_STARTED',
-  'URL_OPENED',
+  'APPLICATION_URL_OPENED',
   'PAGE_CLASSIFIED',
-  'APPLY_FOUND',
-  'APPLY_CLICKED',
-  'APPLICATION_DETECTED',
-  'FIELDS_DETECTED',
-  'FIELDS_FILLED',
+  'APPLY_FORM_FOUND',
+  'BASIC_FIELDS_DETECTED',
+  'BASIC_FIELDS_FILLED',
+  'RESUME_INPUT_FOUND',
   'RESUME_UPLOADED',
-  'REVIEW_REACHED',
-  'FINAL_SUBMIT_FOUND',
-  'FINAL_SUBMIT_CLICKED',
+  'SUBMIT_BUTTON_FOUND',
+  'SUBMIT_CLICKED',
   'CONFIRMATION_DETECTED',
   'APPLICATION_PERSISTED',
 ] as const
 
 export type V2Stage = (typeof V2_STAGES)[number]
 
+// Milestones recorded alongside the flow stages; they are logged but not part of the Apply Now flow.
+export type V2TraceEvent =
+  | V2Stage
+  | 'PROFILE_LOADED'
+  | 'RESUME_LOADED'
+  | 'QUEUED'
+  | 'WORKER_STARTED'
+  | 'BROWSER_STARTED'
+  | 'APPLY_FOUND'
+  | 'APPLY_CLICKED'
+
 export interface V2TraceEntry {
-  stage: V2Stage
+  stage: V2TraceEvent
   at: string
 }
 

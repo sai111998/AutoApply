@@ -869,6 +869,10 @@ export interface ApplyOneStatus {
   runId: string
   applicationId: string | null
   jobId: string
+  employer: string
+  title: string
+  applicationSystem: 'Lever' | 'Greenhouse' | 'Other'
+  currentStage: string | null
   state: string
   provider: string | null
   currentUrl: string | null
@@ -884,27 +888,41 @@ export interface ApplyOneStatus {
 
 export class ApplyOneError extends Error {
   code: string | null
+  reason: string | null
+  applicationSystem: string | null
 
-  constructor(code: string | null, message: string) {
+  constructor(code: string | null, message: string, reason: string | null = null, applicationSystem: string | null = null) {
     super(message)
     this.name = 'ApplyOneError'
     this.code = code
+    this.reason = reason
+    this.applicationSystem = applicationSystem
   }
 }
 
 function applyOneError(body: unknown, fallback: string): ApplyOneError {
-  const record = body && typeof body === 'object' ? (body as { code?: unknown; error?: unknown; message?: unknown }) : {}
+  const record =
+    body && typeof body === 'object'
+      ? (body as { code?: unknown; error?: unknown; message?: unknown; reason?: unknown; applicationSystem?: unknown })
+      : {}
   const code = typeof record.code === 'string' ? record.code : null
+  const reason = typeof record.reason === 'string' ? record.reason : null
   const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
   const detail = raw && !/key|secret|service.role|token/i.test(raw) ? raw : fallback
-  return new ApplyOneError(code, code ? `${detail} (${code})` : detail)
+  const label = [code, reason].filter(Boolean).join(': ')
+  return new ApplyOneError(
+    code,
+    label ? `${detail} (${label})` : detail,
+    reason,
+    typeof record.applicationSystem === 'string' ? record.applicationSystem : null,
+  )
 }
 
-export async function applyOneRequest(jobId: string): Promise<ApplyOneStarted> {
+export async function applyOneRequest(jobId: string, resumeId?: string | null): Promise<ApplyOneStarted> {
   const response = await fetch(apiUrl('/api/jobs/apply-one'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
-    body: JSON.stringify({ jobId }),
+    body: JSON.stringify(resumeId ? { jobId, resumeId } : { jobId }),
   })
   const body = (await response.json().catch(() => null)) as ApplyOneStarted | null
   if (!response.ok || !body?.runId) throw applyOneError(body, 'Could not start Apply Now.')

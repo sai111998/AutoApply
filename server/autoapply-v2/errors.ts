@@ -27,6 +27,7 @@ export const V2_ERROR_CODES = [
   'RUN_IN_PROGRESS',
   'ACTION_UNSUPPORTED',
   'QUEUE_NOT_CONSUMED',
+  'UNSUPPORTED_COMPLEX',
   'APPLICATION_URL_MISSING',
   'APPLY_BUTTON_NOT_FOUND',
   'BROWSER_START_FAILED',
@@ -41,13 +42,21 @@ export class V2Error extends Error {
   code: V2ErrorCode
   status: number
   missingFields: string[] | null
+  details: Record<string, string> | null
 
-  constructor(code: V2ErrorCode, message: string, status = 422, missingFields: string[] | null = null) {
+  constructor(
+    code: V2ErrorCode,
+    message: string,
+    status = 422,
+    missingFields: string[] | null = null,
+    details: Record<string, string> | null = null,
+  ) {
     super(message)
     this.name = 'V2Error'
     this.code = code
     this.status = status
     this.missingFields = missingFields
+    this.details = details
   }
 }
 
@@ -62,5 +71,6 @@ export function v2ErrorBody(error: V2Error) {
     error: error.message,
     message: error.message,
     ...(error.missingFields ? { missingFields: error.missingFields } : {}),
+    ...(error.details ?? {}),
   }
 }

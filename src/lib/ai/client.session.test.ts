@@ -67,6 +67,27 @@ describe('Start Auto Apply authentication', () => {
     expect(sentAuthorization(fetchMock)).toBe('Bearer session-token')
   })
 
+  it('sends the selected resume with Apply Now and names a complex-form rejection', async () => {
+    getSession.mockResolvedValue({ data: { session: { access_token: 'session-token' } }, error: null })
+    const fetchMock = respond(
+      {
+        success: false,
+        code: 'UNSUPPORTED_COMPLEX',
+        reason: 'WORKDAY',
+        applicationSystem: 'Other',
+        error: 'This application is not a simple form.',
+      },
+      422,
+    )
+    await expect(applyOneRequest('job-42', 'resume-7')).rejects.toMatchObject({
+      code: 'UNSUPPORTED_COMPLEX',
+      reason: 'WORKDAY',
+      applicationSystem: 'Other',
+      message: 'This application is not a simple form. (UNSUPPORTED_COMPLEX: WORKDAY)',
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ jobId: 'job-42', resumeId: 'resume-7' })
+  })
+
   it('names the exact Apply Now failure code', async () => {
     getSession.mockResolvedValue({ data: { session: { access_token: 'session-token' } }, error: null })
     respond({ success: false, code: 'APPLICATION_URL_MISSING', error: 'This job has no employer application URL.' }, 422)

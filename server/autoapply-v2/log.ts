@@ -1,6 +1,6 @@
-import type { V2RunSource, V2Stage } from './types'
+import type { V2RunSource, V2TraceEvent } from './types'
 
-export type V2LogEvent = V2Stage | 'NEXT_STEP' | 'RUN_STOPPED' | 'APPLICATION_NOT_PERSISTED'
+export type V2LogEvent = V2TraceEvent | 'FORM_CLASSIFIED' | 'NEXT_STEP' | 'RUN_STOPPED' | 'APPLICATION_NOT_PERSISTED'
 
 export type V2LogChannel = 'OneClickApply' | 'AutoApplyV2'
 

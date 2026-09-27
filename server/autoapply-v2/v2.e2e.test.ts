@@ -132,6 +132,11 @@ async function clickApplyNow(app: ReturnType<typeof applyNowApp>, jobId: string,
   return request(app).post('/api/jobs/apply-one').set('Authorization', `Bearer ${token}`).send({ jobId })
 }
 
+function flowStages(runId: string): string[] {
+  const flow: readonly string[] = V2_STAGES
+  return (getV2Run(runId)?.trace ?? []).map((entry) => entry.stage).filter((stage) => flow.includes(stage))
+}
+
 async function processAndReadStatus(app: ReturnType<typeof applyNowApp>, runId: string) {
   await processV2QueueOnce()
   return (await request(app).get(`/api/jobs/apply-one/${runId}`)).body
@@ -182,6 +187,10 @@ describe('One-click Apply synthetic regression (development test)', () => {
       expect(status).toMatchObject({
         runId,
         jobId: 'v2-synthetic-job-1',
+        employer: 'V2 Test Employer',
+        title: 'Senior Engineer',
+        applicationSystem: 'Other',
+        currentStage: 'APPLICATION_PERSISTED',
         state: 'submitted',
         provider: 'generic',
         currentUrl: expect.stringContaining('/test-employer/job/1/apply?step=done'),
@@ -193,7 +202,7 @@ describe('One-click Apply synthetic regression (development test)', () => {
         firstMissingStage: null,
       })
       const run = getV2Run(runId)
-      expect(run?.trace?.map((entry) => entry.stage)).toEqual([...V2_STAGES])
+      expect(flowStages(runId)).toEqual([...V2_STAGES])
       expect(run?.fieldsFilled).toEqual(expect.arrayContaining(['firstName', 'lastName', 'email', 'phone']))
       expect(run).toMatchObject({ resumeUploaded: true, submitClicked: true, confirmationNumber: 'TEST-12345' })
 
@@ -244,9 +253,7 @@ describe('One-click Apply synthetic regression (development test)', () => {
       const status = await processAndReadStatus(app, started.body.runId)
       expect(status).toMatchObject({ state: 'submitted', submissionConfirmed: true, blocker: null, firstMissingStage: null })
       expect(getV2Run(started.body.runId)?.confirmationNumber).toBe(employer.embeddedConfirmationId)
-      expect(getV2Run(started.body.runId)?.trace?.map((entry) => entry.stage)).toEqual(
-        V2_STAGES.filter((stage) => stage !== 'APPLY_FOUND' && stage !== 'APPLY_CLICKED'),
-      )
+      expect(flowStages(started.body.runId)).toEqual([...V2_STAGES])
       expect(employer.submissions).toEqual([
         { job: 'embedded', fullName: 'Ada Lovelace', resumeFileName: 'Master_Resume.pdf', coverLetterFileName: '' },
       ])
@@ -258,15 +265,18 @@ describe('One-click Apply synthetic regression (development test)', () => {
   )
 
   it(
-    'stops safely at login, MFA, CAPTCHA, and required questions it cannot answer',
+    'stops safely at login, MFA, CAPTCHA, unanswerable questions, and forms that are not simple',
     async () => {
       employer = await startV2SyntheticEmployer()
       seedSyntheticAccount()
       const blockers = [
-        { id: 'blocker-login', path: '/test-employer/job/3', state: 'login_required', code: 'LOGIN_REQUIRED' },
-        { id: 'blocker-mfa', path: '/test-employer/job/4', state: 'mfa_required', code: 'MFA_REQUIRED' },
-        { id: 'blocker-captcha', path: '/test-employer/job/5', state: 'captcha_required', code: 'CAPTCHA_REQUIRED' },
-        { id: 'blocker-question', path: '/test-employer/job/6', state: 'needs_user_input', code: 'UNKNOWN_REQUIRED_FIELD' },
+        { id: 'blocker-login', path: '/test-employer/job/3', state: 'login_required', code: 'LOGIN_REQUIRED', reason: null },
+        { id: 'blocker-mfa', path: '/test-employer/job/4', state: 'mfa_required', code: 'MFA_REQUIRED', reason: null },
+        { id: 'blocker-captcha', path: '/test-employer/job/5', state: 'captcha_required', code: 'CAPTCHA_REQUIRED', reason: null },
+        { id: 'blocker-question', path: '/test-employer/job/6', state: 'needs_user_input', code: 'UNKNOWN_REQUIRED_FIELD', reason: null },
+        { id: 'no-resume', path: '/test-employer/job/7', state: 'unsupported', code: 'UNSUPPORTED_COMPLEX', reason: 'RESUME_UPLOAD_UNAVAILABLE' },
+        { id: 'cover-letter', path: '/test-employer/job/8', state: 'unsupported', code: 'UNSUPPORTED_COMPLEX', reason: 'COVER_LETTER_REQUIRED' },
+        { id: 'essay', path: '/test-employer/job/9', state: 'unsupported', code: 'UNSUPPORTED_COMPLEX', reason: 'LONG_FORM_QUESTIONS' },
       ]
       rememberLiveJobs(blockers.map((blocker) => syntheticLiveJob(blocker.id, employer!.urlFor(blocker.path))))
       const app = applyNowApp()
@@ -282,11 +292,13 @@ describe('One-click Apply synthetic regression (development test)', () => {
           submissionConfirmed: false,
           blocker: { code: blocker.code },
         })
+        if (blocker.reason) expect(status.blocker.message).toMatch(new RegExp(`^${blocker.reason}:`))
+        expect(flowStages(started.body.runId)).not.toContain('SUBMIT_CLICKED')
       }
       expect(getV2Run(runIds['blocker-question'])?.failureReason).toMatch(/Years of Rust experience/)
       expect(listConfirmedApplications(USER_ID)).toHaveLength(0)
     },
-    120000,
+    180000,
   )
 
   it(

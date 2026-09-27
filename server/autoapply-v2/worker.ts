@@ -14,7 +14,8 @@ import { requireV2Profile } from './profile'
 import { getV2Run, listV2Runs, updateV2Run, v2QueueDepth } from './queue'
 import { loadV2Resume } from './resume'
 import { createV2Session, getV2Session, updateV2Session } from './session'
-import { firstMissingV2Stage, traceV2 } from './trace'
+import { detectV2Provider, v2ApplicationSystem } from './system'
+import { currentV2Stage, firstMissingV2Stage, traceV2 } from './trace'
 import type { V2QueueItem, V2Resume, V2RunStatus } from './types'
 import { V2_TERMINAL_STATUSES } from './types'
 
@@ -115,6 +116,10 @@ export async function v2RunStatus(runId: string) {
     runId: run.runId,
     applicationId: run.applicationRecordId,
     jobId: run.jobId,
+    employer: run.company,
+    title: run.title,
+    applicationSystem: v2ApplicationSystem(run.provider ?? detectV2Provider(run.applicationUrl, '')),
+    currentStage: currentV2Stage(run),
     state: run.status,
     provider: run.provider,
     currentUrl: getV2Session(runId)?.currentUrl ?? run.finalUrl ?? run.initialUrl,

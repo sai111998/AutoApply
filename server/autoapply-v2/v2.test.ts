@@ -25,8 +25,10 @@ import { loadV2Profile, requireV2Profile } from './profile'
 import { cancelV2Run, getV2Run, listV2Runs, resetV2QueueForTests, updateV2Run } from './queue'
 import { loadV2Resume } from './resume'
 import { resetV2SessionsForTests } from './session'
-import { firstMissingV2Stage } from './trace'
-import { V2_STAGES, type V2Stage } from './types'
+import { classifyV2ApplicationForm } from './simple'
+import { currentV2Stage, firstMissingV2Stage } from './trace'
+import { V2_STAGES, type V2Stage, type V2TraceEvent } from './types'
+import type { CanonicalCandidateProfile } from '../application/candidate-profile'
 import { persistV2Application, processV2QueueOnce, resetV2WorkerForTests } from './worker'
 
 const USER_ID = '33333333-3333-4333-8333-333333333333'
@@ -337,6 +339,10 @@ describe('V2 execution trace and run status', () => {
       runId,
       applicationId: null,
       jobId: 'job-1',
+      employer: 'Acme',
+      title: 'Senior Engineer',
+      applicationSystem: 'Other',
+      currentStage: 'JOB_LOADED',
       state: 'queued',
       provider: null,
       currentUrl: null,
@@ -345,7 +351,7 @@ describe('V2 execution trace and run status', () => {
       submissionAttempted: false,
       submissionConfirmed: false,
       blocker: { code: 'QUEUE_NOT_CONSUMED' },
-      firstMissingStage: 'WORKER_STARTED',
+      firstMissingStage: 'APPLICATION_URL_OPENED',
     })
     expect(JSON.stringify(response.body)).not.toMatch(new RegExp([USER_ID, 'Ada', 'Lovelace', 'ada@example.com', '555-0100'].join('|')))
     expect((await request(app).get('/api/autoapply-v2/status/missing-run')).status).toBe(404)
@@ -378,18 +384,101 @@ describe('V2 execution trace and run status', () => {
       persistenceError: 'APPLICATION_NOT_PERSISTED: The server cannot write to public.applications (SUPABASE_NOT_CONFIGURED).',
     })
     expect(await status()).toMatchObject({ submissionConfirmed: true, blocker: { code: 'APPLICATION_NOT_PERSISTED' } })
+
+    updateV2Run(runId, {
+      status: 'unsupported',
+      persistenceError: null,
+      failureReason: 'UNSUPPORTED_COMPLEX: RESUME_UPLOAD_UNAVAILABLE: The form has no resume or CV upload.',
+    })
+    expect(await status()).toMatchObject({
+      state: 'unsupported',
+      submissionConfirmed: false,
+      blocker: { code: 'UNSUPPORTED_COMPLEX', message: 'RESUME_UPLOAD_UNAVAILABLE: The form has no resume or CV upload.' },
+    })
   })
 
-  it('finds the first missing stage and skips Apply stages when the link opens the form directly', () => {
-    const traced = (stages: readonly V2Stage[]) => ({ trace: stages.map((stage) => ({ stage, at: '2026-09-25T00:00:00.000Z' })) })
+  it('finds the first missing flow stage and the current one, ignoring internal milestones', () => {
+    const traced = (stages: readonly V2TraceEvent[]) => ({ trace: stages.map((stage) => ({ stage, at: '2026-09-25T00:00:00.000Z' })) })
     const upTo = (last: V2Stage) => V2_STAGES.slice(0, V2_STAGES.indexOf(last) + 1)
     expect(firstMissingV2Stage({})).toBe('START')
-    expect(firstMissingV2Stage(traced(upTo('PAGE_CLASSIFIED')))).toBe('APPLY_FOUND')
-    expect(firstMissingV2Stage(traced(upTo('APPLY_FOUND')))).toBe('APPLY_CLICKED')
-    const direct = V2_STAGES.filter((stage) => stage !== 'APPLY_FOUND' && stage !== 'APPLY_CLICKED')
-    expect(firstMissingV2Stage(traced(direct))).toBeNull()
-    expect(firstMissingV2Stage(traced(direct.filter((stage) => stage !== 'RESUME_UPLOADED')))).toBe('RESUME_UPLOADED')
+    expect(currentV2Stage({})).toBeNull()
+    const openedForm = [...upTo('PAGE_CLASSIFIED'), 'APPLY_FOUND', 'APPLY_CLICKED', 'WORKER_STARTED'] as const
+    expect(firstMissingV2Stage(traced(openedForm))).toBe('APPLY_FORM_FOUND')
+    expect(currentV2Stage(traced(openedForm))).toBe('PAGE_CLASSIFIED')
+    expect(firstMissingV2Stage(traced(V2_STAGES.filter((stage) => stage !== 'RESUME_UPLOADED')))).toBe('RESUME_UPLOADED')
     expect(firstMissingV2Stage(traced(V2_STAGES))).toBeNull()
+    expect(currentV2Stage(traced(V2_STAGES))).toBe('APPLICATION_PERSISTED')
+  })
+})
+
+describe('Simple application classification', () => {
+  const profileWithBasics: CanonicalCandidateProfile = {
+    userId: USER_ID,
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+    fullName: 'Ada Lovelace',
+    email: 'ada@example.com',
+    phone: '555-0100',
+    address: '',
+    city: '',
+    state: '',
+    zip: '',
+    country: '',
+    linkedin: '',
+    github: '',
+    workAuthorization: null,
+    sponsorship: false,
+  }
+  const field = (overrides: Partial<V2FieldDescriptor>) => descriptor({ required: true, ...overrides })
+  const classify = (fields: V2FieldDescriptor[], options: { hasSubmit?: boolean; hasNext?: boolean; firstFormPage?: boolean } = {}) =>
+    classifyV2ApplicationForm({
+      url: 'https://jobs.lever.co/acme/123/apply',
+      fields,
+      mapping: mapV2Fields(fields, profileWithBasics),
+      hasSubmit: options.hasSubmit ?? true,
+      hasNext: options.hasNext ?? false,
+      firstFormPage: options.firstFormPage ?? true,
+      resumeUploaded: false,
+    })
+  const basics = [
+    field({ label: 'Full name ✱', name: 'name' }),
+    field({ label: 'Email ✱', type: 'email' }),
+    field({ label: 'Phone', type: 'tel', required: false }),
+    field({ label: 'Resume/CV ✱', type: 'file', name: 'resume' }),
+  ]
+
+  it('accepts a simple form with name, email, phone, resume upload, and Submit', () => {
+    expect(classify(basics)).toEqual({ classification: 'SUPPORTED_SIMPLE' })
+    expect(classify([...basics, field({ label: 'Cover Letter', type: 'file', name: 'cover_letter', required: false })])).toEqual({
+      classification: 'SUPPORTED_SIMPLE',
+    })
+  })
+
+  it('rejects complex applications with a structured reason', () => {
+    const reason = (fields: V2FieldDescriptor[], options?: Parameters<typeof classify>[1]) => {
+      const result = classify(fields, options)
+      return result.classification === 'UNSUPPORTED_COMPLEX' ? result.reason : null
+    }
+    expect(
+      classifyV2ApplicationForm({
+        url: 'https://acme.wd5.myworkdayjobs.com/careers/job/1/apply',
+        fields: basics,
+        mapping: mapV2Fields(basics, profileWithBasics),
+        hasSubmit: true,
+        hasNext: false,
+        firstFormPage: true,
+        resumeUploaded: false,
+      }),
+    ).toMatchObject({ classification: 'UNSUPPORTED_COMPLEX', reason: 'WORKDAY' })
+    expect(reason(basics.filter((entry) => entry.type !== 'file'))).toBe('RESUME_UPLOAD_UNAVAILABLE')
+    expect(reason([...basics, field({ label: 'Cover Letter ✱', type: 'file', name: 'cover_letter' })])).toBe('COVER_LETTER_REQUIRED')
+    expect(reason([...basics, field({ tag: 'textarea', label: 'Why do you want to work here? ✱' })])).toBe('LONG_FORM_QUESTIONS')
+    expect(reason([...basics, field({ label: 'Link to your completed HackerRank assessment ✱' })])).toBe('ASSESSMENT_REQUIRED')
+    const questions = Array.from({ length: 6 }, (_, index) => field({ label: `Screening question ${index + 1} ✱`, index }))
+    expect(reason([...basics, ...questions])).toBe('LARGE_QUESTIONNAIRE')
+    expect(reason([field({ label: 'Resume/CV ✱', type: 'file' })])).toBe('BASIC_FIELDS_NOT_FOUND')
+    expect(reason(basics, { hasSubmit: false, hasNext: false })).toBe('SUBMIT_BUTTON_NOT_FOUND')
+    expect(reason(basics.filter((entry) => entry.type !== 'file'), { hasSubmit: false, hasNext: true })).toBeNull()
   })
 })
 
@@ -606,6 +695,36 @@ describe('One-click Apply: POST /api/jobs/apply-one', () => {
     expect(incomplete.status).toBe(422)
     expect(incomplete.body).toMatchObject({ code: 'PROFILE_INCOMPLETE', missingFields: ['phone'] })
     expect(listV2Runs()).toHaveLength(0)
+  })
+
+  it('rejects Workday and external recruiting portals before loading anything or opening a browser', async () => {
+    seedAccount()
+    rememberLiveJobs([
+      liveJob({ id: 'workday', jobUrl: 'https://cisco.wd5.myworkdayjobs.com/Cisco_Careers/job/San-Jose/Engineer_123' }),
+      liveJob({ id: 'icims', jobUrl: 'https://careers-acme.icims.com/jobs/1234/engineer/job' }),
+    ])
+    const app = appWithoutDiscovery()
+    const workday = await applyOne(app, 'workday')
+    expect(workday.status).toBe(422)
+    expect(workday.body).toMatchObject({
+      success: false,
+      code: 'UNSUPPORTED_COMPLEX',
+      classification: 'UNSUPPORTED_COMPLEX',
+      reason: 'WORKDAY',
+      applicationSystem: 'Other',
+    })
+    expect((await applyOne(app, 'icims')).body).toMatchObject({ code: 'UNSUPPORTED_COMPLEX', reason: 'EXTERNAL_PORTAL' })
+    expect(listV2Runs()).toHaveLength(0)
+  })
+
+  it('uses the resume the user selected when the click sends one', async () => {
+    seedAccount()
+    rememberLiveJobs([liveJob({ id: 'job-1' })])
+    const response = await request(appWithoutDiscovery())
+      .post('/api/jobs/apply-one')
+      .set('Authorization', bearer())
+      .send({ jobId: 'job-1', resumeId: RESUME_ID })
+    expect(getV2Run(response.body.runId)?.resumeVersionId).toBe(RESUME_ID)
   })
 
   it('never starts a second application for the same job', async () => {
