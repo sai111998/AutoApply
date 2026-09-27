@@ -53,7 +53,9 @@ function collectDescriptorScript(): V2FieldDescriptor[] {
     const type = (input.type ?? '').toLowerCase()
     if (tag === 'input' && (type === 'hidden' || type === 'submit' || type === 'button')) return
     const rect = element.getBoundingClientRect()
-    if (rect.width === 0 && rect.height === 0) return
+    const rendered = rect.width > 0 || rect.height > 0
+    // Providers often hide the native file input behind an "Attach" button; it still accepts files.
+    if (!rendered && !(tag === 'input' && type === 'file')) return
     const labeled = element as unknown as { labels?: ArrayLike<{ textContent: string | null }> | null }
     const labels = labeled.labels ? Array.from(labeled.labels) : []
     const labelText = labels.map((label) => label.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
@@ -62,13 +64,13 @@ function collectDescriptorScript(): V2FieldDescriptor[] {
     const required =
       (element as HTMLInputElement).required === true ||
       element.getAttribute('aria-required') === 'true' ||
-      /\*/.test(label)
+      /[*✱]/.test(label)
     const options =
       tag === 'select' ? [...(element as HTMLSelectElement).options].map((o) => o.text.trim()) : []
     output.push({
       frameIndex: 0,
       index,
-      tagIndex: tagCounts[tag],
+      tagIndex: rendered ? tagCounts[tag] : -1,
       tag,
       type,
       name: element.getAttribute('name') ?? '',
@@ -79,7 +81,7 @@ function collectDescriptorScript(): V2FieldDescriptor[] {
       required,
       options: options.slice(0, 60),
     })
-    tagCounts[tag] += 1
+    if (rendered) tagCounts[tag] += 1
   })
   return output
 }
@@ -103,7 +105,7 @@ export async function detectV2Fields(page: Page): Promise<V2FieldDescriptor[]> {
 export function classifyV2Field(descriptor: V2FieldDescriptor): string | null {
   const haystack = `${descriptor.label} ${descriptor.placeholder} ${descriptor.name}`.toLowerCase()
   if (descriptor.tag === 'input' && descriptor.type === 'file') {
-    if (/cover\s*letter/.test(haystack)) return 'coverLetter'
+    if (/cover[\s_-]*letter/.test(haystack)) return 'coverLetter'
     return 'resume'
   }
   if (descriptor.type === 'email' || /\bemail\b|\be-mail\b/.test(haystack)) return 'email'
@@ -114,6 +116,13 @@ export function classifyV2Field(descriptor: V2FieldDescriptor): string | null {
     return 'firstName'
   }
   if (/last\s*name|family\s*name|surname|last_name|^lname$/.test(haystack)) return 'lastName'
+  const bareLabel = descriptor.label.toLowerCase().replace(/[*✱:]/g, '').replace(/\s+/g, ' ').trim()
+  if (
+    /^(your )?(full |legal |full legal )?name$/.test(bareLabel) ||
+    /^(name|full_?name|_systemfield_name)$/.test(descriptor.name.toLowerCase())
+  ) {
+    return 'fullName'
+  }
   if (/zip|postal/.test(haystack)) return 'zip'
   if (/street|address\s*line\s*1|^address$/.test(haystack)) return 'address'
   if (/\bcity\b|\btown\b/.test(haystack)) return 'city'
@@ -128,6 +137,8 @@ function profileValueForKey(profile: CanonicalCandidateProfile, key: string): st
       return profile.firstName
     case 'lastName':
       return profile.lastName
+    case 'fullName':
+      return profile.fullName || `${profile.firstName} ${profile.lastName}`.trim()
     case 'email':
       return profile.email
     case 'phone':
@@ -199,7 +210,7 @@ function needsV2Interaction(descriptor: V2FieldDescriptor): boolean {
   if (descriptor.tag === 'input' && (descriptor.type === 'checkbox' || descriptor.type === 'radio')) {
     return !descriptor.checked
   }
-  return true
+  return !descriptor.value.trim()
 }
 
 export function isV2TextField(descriptor: V2FieldDescriptor): boolean {
@@ -228,7 +239,10 @@ async function fillV2Field(
   if (descriptor.tag === 'select') {
     return frame.evaluate(
       ({ tagIndex, target }) => {
-        const selects = [...document.querySelectorAll('select')]
+        const selects = [...document.querySelectorAll('select')].filter((element) => {
+          const rect = element.getBoundingClientRect()
+          return rect.width > 0 || rect.height > 0
+        })
         const select = selects[tagIndex]
         if (!select) return false
         const normalized = target.toLowerCase()
@@ -246,7 +260,7 @@ async function fillV2Field(
     ) as Promise<boolean>
   }
   if (!isV2TextField(descriptor)) return false
-  const label = descriptor.label.replace(/\*/g, '').trim()
+  const label = descriptor.label.replace(/[*✱]/g, '').trim()
   if (label) {
     try {
       const locator = frame.getByLabel(label, { exact: false }).first()

@@ -1,7 +1,6 @@
 import type { Browser, BrowserContext, Page } from 'playwright'
 import { existsSync } from 'node:fs'
 import { V2Error } from './errors'
-import { logV2 } from './log'
 
 export interface V2BrowserHandle {
   browser: Browser
@@ -35,7 +34,7 @@ export async function launchV2Browser(headless = true): Promise<V2BrowserHandle>
     })
   } catch (error) {
     throw new V2Error(
-      'BROWSER_UNAVAILABLE',
+      'BROWSER_START_FAILED',
       error instanceof Error ? `Chromium launch failed: ${error.message}` : 'Chromium launch failed.',
       503,
     )
@@ -49,7 +48,6 @@ export async function launchV2Browser(headless = true): Promise<V2BrowserHandle>
   const page = await context.newPage()
   page.setDefaultTimeout(8000)
   page.setDefaultNavigationTimeout(16000)
-  logV2('BROWSER_STARTED', { headless })
   return {
     browser,
     context,

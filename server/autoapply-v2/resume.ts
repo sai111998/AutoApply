@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isProfileAccessError, supabaseDataClient, type SupabaseAccess } from '../application/supabase-access'
 import { V2Error } from './errors'
-import { logV2 } from './log'
 import { v2Access } from './profile'
 import type { V2Resume } from './types'
 
@@ -75,6 +74,5 @@ export async function loadV2Resume(
     buffer,
     text: row.parsed_text ?? '',
   }
-  logV2('RESUME_LOADED', { resumeId: resume.versionId, bytes: buffer.length, mimeType: resume.mimeType, hasText: Boolean(resume.text.trim()) })
   return resume
 }

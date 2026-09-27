@@ -9,7 +9,7 @@ export interface FakeSupabaseData {
   resumes?: Array<Record<string, unknown>>
   files?: Record<string, { body: Buffer | string; contentType?: string }>
   users?: Array<{ id: string; email?: string }>
-  failures?: { profiles?: number; auth?: number; network?: string; apiKey?: boolean }
+  failures?: { profiles?: number; auth?: number; network?: string; apiKey?: boolean; applicationWrites?: boolean }
 }
 
 export interface FakeSupabaseOptions {
@@ -21,6 +21,8 @@ export interface FakeSupabaseWrite {
   table: string
   method: string
   body: unknown
+  authorization: string | null
+  apikey: string | null
 }
 
 export interface FakeSupabaseRead {
@@ -124,7 +126,20 @@ export function installFakeSupabase(data: FakeSupabaseData, options: FakeSupabas
         const table = url.pathname.slice('/rest/v1/'.length)
         if (method !== 'GET' && method !== 'HEAD') {
           const raw = init?.body ?? (input instanceof Request ? await input.text() : null)
-          writes.push({ table, method, body: typeof raw === 'string' && raw ? JSON.parse(raw) : raw })
+          const body: unknown = typeof raw === 'string' && raw ? JSON.parse(raw) : raw
+          writes.push({ table, method, body, authorization: headers.get('authorization'), apikey: headers.get('apikey') })
+          if (table === 'applications' && data.failures?.applicationWrites) {
+            return json({ code: '42501', message: 'new row violates row-level security policy for table "applications"' }, 403)
+          }
+          const tables = data as Record<string, unknown>
+          const stored = (tables[table] ??= []) as Array<Record<string, unknown>>
+          for (const row of Array.isArray(body) ? body : [body]) {
+            if (!row || typeof row !== 'object') continue
+            const record = row as Record<string, unknown>
+            const index = stored.findIndex((existing) => record.id !== undefined && existing.id === record.id)
+            if (index >= 0) stored[index] = { ...stored[index], ...record }
+            else stored.push(record)
+          }
           return new Response(null, { status: 201 })
         }
         reads.push({ path: url.pathname, authorization: headers.get('authorization'), apikey: headers.get('apikey') })

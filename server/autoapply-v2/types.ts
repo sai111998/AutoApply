@@ -3,7 +3,7 @@ import type { AutoApplyConfig } from '../apply/types'
 export const V2_RUN_STATUSES = [
   'queued',
   'opening',
-  'application_detected',
+  'application_page',
   'filling',
   'uploading_resume',
   'navigating',
@@ -32,7 +32,37 @@ export const V2_TERMINAL_STATUSES: ReadonlySet<V2RunStatus> = new Set([
   'cancelled',
 ])
 
-export type V2RunSource = 'auto-apply' | 'start-one' | 'synthetic-test'
+export type V2RunSource = 'auto-apply' | 'one-click' | 'synthetic-test'
+
+export const V2_STAGES = [
+  'START',
+  'JOB_LOADED',
+  'PROFILE_LOADED',
+  'RESUME_LOADED',
+  'QUEUED',
+  'WORKER_STARTED',
+  'BROWSER_STARTED',
+  'URL_OPENED',
+  'PAGE_CLASSIFIED',
+  'APPLY_FOUND',
+  'APPLY_CLICKED',
+  'APPLICATION_DETECTED',
+  'FIELDS_DETECTED',
+  'FIELDS_FILLED',
+  'RESUME_UPLOADED',
+  'REVIEW_REACHED',
+  'FINAL_SUBMIT_FOUND',
+  'FINAL_SUBMIT_CLICKED',
+  'CONFIRMATION_DETECTED',
+  'APPLICATION_PERSISTED',
+] as const
+
+export type V2Stage = (typeof V2_STAGES)[number]
+
+export interface V2TraceEntry {
+  stage: V2Stage
+  at: string
+}
 
 export type V2PageState =
   | 'JOB_PAGE'
@@ -96,6 +126,8 @@ export interface V2QueueItem {
   persistedJobId: string | null
   submittedResumeVersionId: string | null
   submittedResumeText: string | null
+  trace?: V2TraceEntry[]
+  persistenceError?: string | null
   createdAt: string
   updatedAt: string
 }

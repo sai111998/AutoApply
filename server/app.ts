@@ -55,10 +55,10 @@ import {
   describeSupabaseServer,
   isProfileAccessError,
 } from './application/supabase-access'
-import { startV2AutoApply, startV2AutoApplyCampaign, toAutoApplyRunResult } from './autoapply-v2/campaign'
+import { startOneClickApply, startV2AutoApplyCampaign, toAutoApplyRunResult } from './autoapply-v2/campaign'
 import { isV2Error, V2Error, v2ErrorBody } from './autoapply-v2/errors'
 import { cancelV2Run, getV2Run, listV2RunsForUser } from './autoapply-v2/queue'
-import { v2Health } from './autoapply-v2/worker'
+import { v2Health, v2RunStatus } from './autoapply-v2/worker'
 
 function sendApplyError(res: Response, error: unknown, fallback: string) {
   if (isV2Error(error)) {
@@ -94,6 +94,8 @@ export interface AppOptions {
   persist?: PersistFn
   fetchImpl?: FetchLike
   automationHealth?: () => Promise<AutomationHealth>
+  /** Regression tests only: lets Apply Now open the local synthetic Test Employer. */
+  allowSyntheticEmployer?: boolean
 }
 
 export function createApp(options: AppOptions): Express {
@@ -224,19 +226,35 @@ export function createApp(options: AppOptions): Express {
 
   const authenticate = (req: Request) => authenticateSupabaseUser(req.header('authorization'), options.config)
 
-  const startOneJob = async (req: Request, res: Response) => {
+  const applyOne = async (req: Request, res: Response) => {
     try {
       const user = await authenticate(req)
       const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
       const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
-      const started = await startV2AutoApply({ userId: user.id, jobId, accessToken: user.accessToken })
-      res.json({ success: true, runId: started.runId, status: started.status })
+      const started = await startOneClickApply({
+        userId: user.id,
+        jobId,
+        accessToken: user.accessToken,
+        allowSyntheticEmployer: options.allowSyntheticEmployer,
+      })
+      res.json({ success: true, runId: started.runId, jobId: started.jobId, status: started.status })
     } catch (error) {
-      sendApplyError(res, error, 'Could not start Auto Apply V2.')
+      sendApplyError(res, error, 'Could not start Apply Now.')
     }
   }
-  app.post('/api/autoapply-v2/start', startOneJob)
-  app.post('/api/autoapply-v2/start-one', startOneJob)
+  app.post('/api/jobs/apply-one', applyOne)
+  app.post('/api/autoapply-v2/start', applyOne)
+  app.post('/api/autoapply-v2/start-one', applyOne)
+
+  const runStatus = async (req: Request, res: Response) => {
+    try {
+      res.json(await v2RunStatus(routeParam(req.params.runId)))
+    } catch (error) {
+      sendApplyError(res, error, 'Could not load the application run status.')
+    }
+  }
+  app.get('/api/jobs/apply-one/:runId', runStatus)
+  app.get('/api/autoapply-v2/status/:runId', runStatus)
 
   app.get('/api/autoapply-v2/profile-check', async (req: Request, res: Response) => {
     try {

@@ -1,10 +1,10 @@
-import type { Page } from 'playwright'
+import type { Frame, Locator, Page } from 'playwright'
 import type { CanonicalCandidateProfile } from '../application/candidate-profile'
 import { updateV2Run } from './queue'
 import { updateV2Session } from './session'
 import { detectV2Confirmation, type V2ConfirmationInput } from './confirmation'
 import { detectV2Fields, fillV2Fields, mapV2Fields } from './fields'
-import { logV2 } from './log'
+import { logV2, v2LogChannel } from './log'
 import {
   clickV2Apply,
   findV2ApplyControl,
@@ -15,6 +15,7 @@ import {
   findV2SubmitControl,
 } from './navigation'
 import { clickV2Submit } from './submission'
+import { traceV2 } from './trace'
 import type { V2Confirmation, V2PageState, V2Provider, V2QueueItem, V2Resume, V2RunStatus } from './types'
 
 export interface V2AgentResult {
@@ -68,12 +69,15 @@ export function classifyV2Page(input: {
   hasApplyControl: boolean
   fieldCount: number
   hasFileInput: boolean
+  hasVisibleCaptcha?: boolean
 }): V2PageState {
   const haystack = `${input.snapshot.title}\n${input.snapshot.bodyText}`.slice(0, 20000)
-  const html = input.snapshot.html.slice(0, 60000)
   if (
-    /g-recaptcha|recaptcha|cf-turnstile|hcaptcha|perimeterx|datadome/i.test(html) ||
-    (/verify you are (a )?human|complete.*captcha|security check/i.test(haystack) && input.fieldCount === 0)
+    input.hasVisibleCaptcha ||
+    (/verify you are (a )?human|complete.*captcha|security check|press (&|and) hold|checking your browser|just a moment/i.test(
+      haystack,
+    ) &&
+      input.fieldCount === 0)
   ) {
     return 'CAPTCHA_PAGE'
   }
@@ -95,6 +99,30 @@ export function classifyV2Page(input: {
   return 'UNKNOWN'
 }
 
+const V2_CAPTCHA_CHALLENGES = [
+  'iframe[src*="recaptcha"][src*="/anchor"]:not([src*="size=invisible"])',
+  'iframe[src*="recaptcha"][src*="/bframe"]',
+  'iframe[src*="hcaptcha.com"]',
+  'iframe[src*="challenges.cloudflare.com"]',
+  'iframe[src*="captcha-delivery.com"]',
+  '#px-captcha',
+]
+
+// Many real application forms load invisible reCAPTCHA/hCaptcha scripts that never show a challenge,
+// so only a rendered, visible challenge widget counts.
+export async function detectV2VisibleCaptcha(page: Page): Promise<boolean> {
+  for (const selector of V2_CAPTCHA_CHALLENGES) {
+    const widgets = page.locator(selector)
+    const count = await widgets.count().catch(() => 0)
+    for (let index = 0; index < count; index += 1) {
+      const widget = widgets.nth(index)
+      const box = await widget.boundingBox().catch(() => null)
+      if (box && box.width >= 30 && box.height >= 30 && (await widget.isVisible().catch(() => false))) return true
+    }
+  }
+  return false
+}
+
 async function snapshotV2Page(page: Page): Promise<V2PageSnapshot> {
   let title = ''
   let html = ''
@@ -114,6 +142,11 @@ async function snapshotV2Page(page: Page): Promise<V2PageSnapshot> {
   } catch {
     bodyText = ''
   }
+  for (const frame of page.frames().slice(1)) {
+    if (bodyText.length >= 30000) break
+    const frameText = await frame.evaluate(() => document.body?.innerText ?? '').catch(() => '')
+    if (frameText.trim()) bodyText += `\n${frameText}`
+  }
   return { url: page.url(), title, html, bodyText: bodyText.slice(0, 30000) }
 }
 
@@ -125,43 +158,53 @@ async function settleV2Page(page: Page, ms = 1800): Promise<void> {
   await page.waitForTimeout(400).catch(() => null)
 }
 
+function fileInputPurpose(input: Locator): Promise<string> {
+  return input
+    .evaluate((element) => {
+      const field = element as HTMLInputElement
+      const labels = field.labels ? [...field.labels].map((label) => label.textContent ?? '') : []
+      const labelledBy = (field.getAttribute('aria-labelledby') ?? '')
+        .split(/\s+/)
+        .map((id) => (id ? document.getElementById(id)?.textContent ?? '' : ''))
+      return [...labels, ...labelledBy, field.getAttribute('aria-label') ?? '', field.name, field.id]
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+    })
+    .catch(() => '')
+}
+
 export async function uploadV2Resume(page: Page, resume: V2Resume): Promise<boolean> {
-  const frames = page.frames()
-  let uploaded = false
-  for (const frame of frames) {
-    let count = 0
-    try {
-      count = await frame.locator('input[type=file]').count()
-    } catch {
-      continue
-    }
+  const candidates: Array<{ frame: Frame; input: Locator; purpose: string }> = []
+  for (const frame of page.frames()) {
+    const inputs = frame.locator('input[type=file]')
+    const count = await inputs.count().catch(() => 0)
     for (let index = 0; index < count; index += 1) {
-      const input = frame.locator('input[type=file]').nth(index)
-      try {
-        if (!(await input.isVisible({ timeout: 500 }))) continue
-        await input.setInputFiles(
-          { name: resume.fileName, mimeType: resume.mimeType, buffer: resume.buffer },
-          { timeout: 8000 },
-        )
-        uploaded = true
-      } catch {
-        continue
-      }
+      const input = inputs.nth(index)
+      candidates.push({ frame, input, purpose: await fileInputPurpose(input) })
     }
   }
-  if (!uploaded) return false
-  await page.waitForTimeout(800).catch(() => null)
+  const eligible = candidates.filter((candidate) => !/cover[\s_-]*letter|motivation/.test(candidate.purpose))
+  const resumeInputs = eligible.filter((candidate) => /resume|\bcv\b|curriculum/.test(candidate.purpose))
+  // Several unlabeled file inputs give no way to tell which one wants the resume.
+  const target = resumeInputs[0] ?? (eligible.length === 1 ? eligible[0] : null)
+  if (!target) return false
   try {
-    const accepted = await page.evaluate((fileName) => {
-      const inputs = [...document.querySelectorAll('input[type=file]')]
-      const hasFile = inputs.some((input) => (input as HTMLInputElement).files?.length)
-      const body = document.body?.innerText ?? ''
-      return hasFile || body.includes(fileName)
-    }, resume.fileName)
-    return accepted === true
+    await target.input.setInputFiles(
+      { name: resume.fileName, mimeType: resume.mimeType, buffer: resume.buffer },
+      { timeout: 8000 },
+    )
   } catch {
-    return true
+    return false
   }
+  await page.waitForTimeout(800).catch(() => null)
+  const selected = await target.input
+    .evaluate((element) => Boolean((element as HTMLInputElement).files?.length), undefined, { timeout: 2000 })
+    .catch(() => false)
+  if (selected) return true
+  // Some providers upload the file right away and re-render the field, leaving only the file name on the page.
+  return target.frame.evaluate((fileName) => (document.body?.innerText ?? '').includes(fileName), resume.fileName).catch(() => false)
 }
 
 export async function runV2Application(input: {
@@ -171,6 +214,7 @@ export async function runV2Application(input: {
   page: Page
 }): Promise<V2AgentResult> {
   const { run, profile, resume, page } = input
+  const channel = v2LogChannel(run.source)
   const redirectChain: string[] = [run.applicationUrl]
   const fieldsDetected = new Set<string>()
   const fieldsFilled = new Set<string>()
@@ -197,21 +241,28 @@ export async function runV2Application(input: {
     await page.goto(run.applicationUrl, { waitUntil: 'domcontentloaded', timeout: 16000 })
   } catch (error) {
     const detail = error instanceof Error ? error.message.split('\n')[0] : 'navigation failed'
-    return fail('APPLICATION_NOT_REACHABLE', `The application URL could not be opened (${detail}).`)
+    const timedOut = error instanceof Error && error.name === 'TimeoutError'
+    return fail(timedOut ? 'NAVIGATION_TIMEOUT' : 'NAVIGATION_FAILED', `The application URL could not be opened (${detail}).`)
   }
   await settleV2Page(page)
   snapshot = await snapshotV2Page(page)
   if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
   updateV2Run(run.runId, { initialUrl: snapshot.url, finalUrl: snapshot.url, redirectChain: [...redirectChain] })
-  logV2('APPLICATION_URL_OPENED', { url: snapshot.url })
+  traceV2(run.runId, 'URL_OPENED', {
+    jobId: run.jobId,
+    company: run.company,
+    title: run.title,
+    applicationUrl: run.applicationUrl,
+    initialUrl: snapshot.url,
+  })
   provider = detectV2Provider(snapshot.url, snapshot.html)
   updateV2Run(run.runId, { provider })
   updateV2Session(run.runId, { provider, currentUrl: snapshot.url })
-  logV2('PROVIDER_DETECTED', { provider })
 
   let unknownRetries = 0
   let applyClicks = 0
   let classifiedInitialPage = false
+  let lastPageState: V2PageState = 'UNKNOWN'
   for (;;) {
     const fields = await detectV2Fields(page).catch(() => [])
     const hasPassword = fields.some((field) => field.type === 'password')
@@ -223,40 +274,42 @@ export async function runV2Application(input: {
       hasApplyControl: hasApply,
       fieldCount: fields.length,
       hasFileInput,
+      hasVisibleCaptcha: await detectV2VisibleCaptcha(page),
     })
     updateV2Run(run.runId, { pageState })
+    lastPageState = pageState
     if (!classifiedInitialPage && (pageState !== 'UNKNOWN' || unknownRetries >= 4)) {
-      logV2('INITIAL_PAGE_CLASSIFIED', { pageState, fields: fields.length })
+      traceV2(run.runId, 'PAGE_CLASSIFIED', { pageState, fields: fields.length })
       classifiedInitialPage = true
     }
     if (pageState === 'CAPTCHA_PAGE') return terminal('captcha_required', 'CAPTCHA_REQUIRED', null, pageState)
     if (pageState === 'LOGIN_PAGE') return terminal('login_required', 'LOGIN_REQUIRED', null, pageState)
     if (pageState === 'MFA_PAGE') return terminal('mfa_required', 'MFA_REQUIRED', null, pageState)
     if (pageState === 'ERROR_PAGE') {
-      return fail('APPLICATION_NOT_REACHABLE', 'The employer page reported an error or access denial.')
+      return fail('APPLICATION_PAGE_NOT_FOUND', 'The employer page reported an error or access denial.')
     }
     if (pageState === 'APPLICATION_PAGE') break
     if (pageState === 'JOB_PAGE' && hasApply && applyClicks < 3) {
-      logV2('APPLY_ACTION_FOUND', { control: 'apply' })
+      traceV2(run.runId, 'APPLY_FOUND', { control: 'apply' })
       track('opening')
       const clicked = await clickV2Apply(page)
-      if (!clicked) return fail('APPLICATION_UNSUPPORTED', 'The Apply control was found but could not be clicked.')
+      if (!clicked) return fail('APPLY_BUTTON_NOT_FOUND', 'The Apply control was found but could not be clicked.')
       applyClicks += 1
       unknownRetries = 0
-      logV2('APPLY_ACTION_CLICKED', { control: 'apply' })
+      traceV2(run.runId, 'APPLY_CLICKED', { control: 'apply' })
       await followNavigation(2200)
       continue
     }
     const hasApplyManual =
       fields.length === 0 && !hasFileInput && applyClicks < 3 ? await findV2ApplyManualControl(page) : false
     if ((pageState === 'JOB_PAGE' || pageState === 'UNKNOWN') && !hasApply && hasApplyManual) {
-      logV2('APPLY_ACTION_FOUND', { control: 'apply-manually' })
+      traceV2(run.runId, 'APPLY_FOUND', { control: 'apply-manually' })
       track('opening')
       const clicked = await clickV2ApplyManual(page)
-      if (!clicked) return fail('APPLICATION_UNSUPPORTED', 'The Apply Manually control could not be clicked.')
+      if (!clicked) return fail('APPLY_BUTTON_NOT_FOUND', 'The Apply Manually control could not be clicked.')
       applyClicks += 1
       unknownRetries = 0
-      logV2('APPLY_ACTION_CLICKED', { control: 'apply-manually' })
+      traceV2(run.runId, 'APPLY_CLICKED', { control: 'apply-manually' })
       await followNavigation(2200)
       continue
     }
@@ -267,12 +320,24 @@ export async function runV2Application(input: {
       if (redirectChain.at(-1) !== snapshot.url) redirectChain.push(snapshot.url)
       continue
     }
-    return fail('APPLICATION_UNSUPPORTED', 'The page loaded, but no application form or Apply action was detected.')
+    if (lastPageState === 'JOB_PAGE' && applyClicks === 0) {
+      return fail('APPLY_BUTTON_NOT_FOUND', 'The job page has no legitimate Apply, Apply Now, or Start Application control.')
+    }
+    return fail(
+      'APPLICATION_PAGE_NOT_FOUND',
+      applyClicks > 0
+        ? 'Apply was clicked, but no application form appeared.'
+        : 'The page loaded, but no application form or Apply action was detected.',
+    )
   }
 
-  track('application_detected')
-  logV2('APPLICATION_PAGE_DETECTED', { url: snapshot.url })
+  track('application_page')
+  provider = detectV2Provider(snapshot.url, snapshot.html)
+  updateV2Run(run.runId, { provider })
+  updateV2Session(run.runId, { provider, currentUrl: snapshot.url })
+  traceV2(run.runId, 'APPLICATION_DETECTED', { url: snapshot.url, provider })
 
+  let reachedFinalStep = false
   for (let step = 0; step < 8; step += 1) {
     snapshot = await snapshotV2Page(page)
     const fields = await detectV2Fields(page).catch(() => [])
@@ -284,6 +349,7 @@ export async function runV2Application(input: {
       hasApplyControl: false,
       fieldCount: fields.length,
       hasFileInput,
+      hasVisibleCaptcha: await detectV2VisibleCaptcha(page),
     })
     if (pageState === 'CAPTCHA_PAGE') return terminal('captcha_required', 'CAPTCHA_REQUIRED', null, pageState)
     if (pageState === 'LOGIN_PAGE') return terminal('login_required', 'LOGIN_REQUIRED', null, pageState)
@@ -292,12 +358,14 @@ export async function runV2Application(input: {
     track('filling')
     const mapping = mapV2Fields(fields, profile)
     for (const detected of mapping.detected) fieldsDetected.add(detected.key)
-    logV2('FIELDS_DETECTED', {
+    const detectedCounts = {
       step: step + 1,
       count: mapping.detected.length,
       mapped: mapping.mapped.length,
       unknownRequired: mapping.unknownRequired.length,
-    })
+    }
+    if (mapping.detected.length > 0) traceV2(run.runId, 'FIELDS_DETECTED', detectedCounts)
+    else logV2('FIELDS_DETECTED', detectedCounts, channel)
     if (mapping.unknownRequired.length > 0) {
       const labels = mapping.unknownRequired.map((field) => field.label).slice(0, 5).join(' | ')
       updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
@@ -305,7 +373,9 @@ export async function runV2Application(input: {
     }
     const filled = await fillV2Fields(page, mapping.mapped)
     for (const key of filled) fieldsFilled.add(key)
-    logV2('FIELDS_FILLED', { step: step + 1, count: filled.length, keys: filled.join(',') || 'none' })
+    const filledCounts = { step: step + 1, count: filled.length, keys: filled.join(',') || 'none' }
+    if (filled.length > 0) traceV2(run.runId, 'FIELDS_FILLED', filledCounts)
+    else logV2('FIELDS_FILLED', filledCounts, channel)
     updateV2Run(run.runId, { fieldsDetected: [...fieldsDetected], fieldsFilled: [...fieldsFilled] })
 
     if (hasFileInput && !resumeUploaded) {
@@ -313,7 +383,7 @@ export async function runV2Application(input: {
       const accepted = await uploadV2Resume(page, resume)
       if (!accepted) return fail('RESUME_UPLOAD_FAILED', 'The resume file was not accepted by the page.')
       resumeUploaded = true
-      logV2('RESUME_UPLOADED', { bytes: resume.buffer.length, mimeType: resume.mimeType })
+      traceV2(run.runId, 'RESUME_UPLOADED', { bytes: resume.buffer.length, mimeType: resume.mimeType })
       updateV2Run(run.runId, { resumeUploaded: true })
     }
 
@@ -324,20 +394,29 @@ export async function runV2Application(input: {
       hasNext = await findV2NextControl(page)
       hasSubmit = await findV2SubmitControl(page)
     }
-    if (!hasNext && hasSubmit) break
+    if (!hasNext && hasSubmit) {
+      reachedFinalStep = true
+      break
+    }
     if (hasNext) {
       track('navigating')
       const advanced = await clickV2Next(page)
-      if (!advanced) return fail('NAVIGATION_TIMEOUT', 'The Next control could not be clicked.')
-      logV2('NEXT_STEP', { step: step + 1 })
+      if (!advanced) return fail('NAVIGATION_FAILED', 'The Next control could not be clicked.')
+      logV2('NEXT_STEP', { step: step + 1 }, channel)
       await followNavigation(2200)
       updateV2Session(run.runId, { step: step + 1 })
       continue
     }
-    return fail('NAVIGATION_TIMEOUT', 'No Next or Submit control was detected on the application.')
+    if (fields.length === 0) {
+      return fail('FORM_NOT_FOUND', 'The application step has no fields and no Next or Submit control, in the page or its frames.')
+    }
+    return fail('NAVIGATION_FAILED', 'No Next or Submit control was detected on the application.')
+  }
+  if (!reachedFinalStep) {
+    return fail('NAVIGATION_FAILED', 'The application did not reach its final step within 8 steps.')
   }
 
-  logV2('REVIEW_REACHED', { url: snapshot.url })
+  traceV2(run.runId, 'REVIEW_REACHED', { url: snapshot.url })
   track('ready_to_submit')
   snapshot = await snapshotV2Page(page)
   const reviewFields = await detectV2Fields(page).catch(() => [])
@@ -347,12 +426,12 @@ export async function runV2Application(input: {
   }
   const hasSubmit = await findV2SubmitControl(page)
   if (!hasSubmit) return fail('SUBMISSION_FAILED', 'The final Submit control was not found.')
-  logV2('FINAL_SUBMIT_FOUND')
+  traceV2(run.runId, 'FINAL_SUBMIT_FOUND')
 
   track('submitting')
   submitClicked = await clickV2Submit(page)
   if (!submitClicked) return fail('SUBMISSION_FAILED', 'The final Submit control could not be clicked.')
-  logV2('FINAL_SUBMIT_CLICKED')
+  traceV2(run.runId, 'FINAL_SUBMIT_CLICKED')
   updateV2Run(run.runId, { submitClicked: true })
   await settleV2Page(page, 2800)
   snapshot = await snapshotV2Page(page)
@@ -375,7 +454,10 @@ export async function runV2Application(input: {
     submittedAt: confirmation.confirmed ? new Date().toISOString() : null,
   })
   if (confirmation.confirmed) {
-    logV2('CONFIRMATION_DETECTED', { confirmationNumber: Boolean(confirmation.confirmationNumber) })
+    traceV2(run.runId, 'CONFIRMATION_DETECTED', {
+      confirmationNumber: Boolean(confirmation.confirmationNumber),
+      finalUrl: snapshot.url,
+    })
     return {
       status: 'submitted',
       failureReason: null,
@@ -390,7 +472,11 @@ export async function runV2Application(input: {
       confirmation,
     }
   }
-  return terminal('submission_uncertain', 'SUBMISSION_UNCERTAIN', confirmation)
+  return terminal(
+    'submission_uncertain',
+    'CONFIRMATION_NOT_FOUND: Submit was clicked, but no reliable confirmation was detected. The run will not be retried.',
+    confirmation,
+  )
 
   function terminal(
     status: V2RunStatus,
@@ -400,7 +486,7 @@ export async function runV2Application(input: {
   ): V2AgentResult {
     updateV2Run(run.runId, { status, failureReason, finalUrl: snapshot.url, pageState: resultPageState })
     updateV2Session(run.runId, { state: status, currentUrl: snapshot.url })
-    logV2('RUN_STOPPED', { status, reason: failureReason.split(':')[0] })
+    logV2('RUN_STOPPED', { status, reason: failureReason.split(':')[0], finalUrl: snapshot.url }, channel)
     return {
       status,
       failureReason,
@@ -420,7 +506,7 @@ export async function runV2Application(input: {
     const failureReason = `${code}: ${message}`
     updateV2Run(run.runId, { status: 'failed', failureReason, finalUrl: snapshot.url })
     updateV2Session(run.runId, { state: 'failed', currentUrl: snapshot.url })
-    logV2('RUN_STOPPED', { status: 'failed', reason: code })
+    logV2('RUN_STOPPED', { status: 'failed', reason: code, finalUrl: snapshot.url }, channel)
     return {
       status: 'failed',
       failureReason,

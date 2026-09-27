@@ -1,21 +1,26 @@
 import { randomUUID } from 'node:crypto'
 import type { AutoApplyQueueItem } from '../apply/types'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { persistConfirmedSubmission, sanitizeJobDescriptionSnapshot } from '../apply/confirmed'
+import { isProfileAccessError, supabaseDataClient } from '../application/supabase-access'
 import { getServerConfig } from '../config'
 import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import { runV2Application, type V2AgentResult } from './agent'
 import { isV2BrowserAvailable, launchV2Browser, type V2BrowserHandle } from './browser'
-import { isV2Error } from './errors'
+import { isV2Error, V2Error } from './errors'
 import { takeV2RunInputs } from './inputs'
-import { logV2 } from './log'
+import { logV2, v2LogChannel } from './log'
 import { requireV2Profile } from './profile'
 import { getV2Run, listV2Runs, updateV2Run, v2QueueDepth } from './queue'
 import { loadV2Resume } from './resume'
-import { createV2Session, updateV2Session } from './session'
+import { createV2Session, getV2Session, updateV2Session } from './session'
+import { firstMissingV2Stage, traceV2 } from './trace'
 import type { V2QueueItem, V2Resume, V2RunStatus } from './types'
 import { V2_TERMINAL_STATUSES } from './types'
 
 const V2_HEARTBEAT_FILE = 'autoapply-v2-heartbeat.json'
+export const V2_WORKER_INTERVAL_MS = 1500
+const V2_PICKUP_LIMIT_MS = V2_WORKER_INTERVAL_MS * 3
 
 let workerTimer: NodeJS.Timeout | null = null
 let workerProcessing = false
@@ -49,7 +54,7 @@ export function v2WorkerState(): { workerRunning: boolean; agentRunning: boolean
   }
 }
 
-export function startV2Worker(intervalMs = 1500): void {
+export function startV2Worker(intervalMs = V2_WORKER_INTERVAL_MS): void {
   if (workerTimer) return
   touchV2Heartbeat()
   workerTimer = setInterval(() => {
@@ -79,6 +84,57 @@ export async function v2Health() {
   }
 }
 
+function v2RunBlocker(run: V2QueueItem, notConsumed: boolean): { code: string; message: string } | null {
+  if (notConsumed) {
+    return {
+      code: 'QUEUE_NOT_CONSUMED',
+      message: `The run has stayed queued for more than ${V2_PICKUP_LIMIT_MS / 1000} seconds without the worker picking it up.`,
+    }
+  }
+  const reason = run.status === 'submitted' ? run.persistenceError : V2_TERMINAL_STATUSES.has(run.status) ? run.failureReason : null
+  if (!reason) return null
+  const separator = reason.indexOf(':')
+  return separator > 0
+    ? { code: reason.slice(0, separator), message: reason.slice(separator + 1).trim() }
+    : { code: reason, message: reason }
+}
+
+export async function v2RunStatus(runId: string) {
+  const run = getV2Run(runId)
+  if (!run) throw new V2Error('JOB_NOT_FOUND', 'Auto Apply run was not found.', 404)
+  const worker = v2WorkerState()
+  const reached = new Set(run.trace?.map((entry) => entry.stage))
+  const finished = V2_TERMINAL_STATUSES.has(run.status)
+  const pickedUp = reached.has('WORKER_STARTED')
+  const notConsumed =
+    run.status === 'queued' &&
+    !pickedUp &&
+    (!worker.workerRunning || Date.now() - Date.parse(run.createdAt) > V2_PICKUP_LIMIT_MS)
+  const browserAvailable = await isV2BrowserAvailable()
+  return {
+    runId: run.runId,
+    applicationId: run.applicationRecordId,
+    jobId: run.jobId,
+    state: run.status,
+    provider: run.provider,
+    currentUrl: getV2Session(runId)?.currentUrl ?? run.finalUrl ?? run.initialUrl,
+    queueState: finished ? 'finished' : notConsumed ? 'not_consumed' : pickedUp ? 'processing' : 'queued',
+    workerState: !worker.workerRunning ? 'stopped' : worker.agentRunning ? 'processing' : 'idle',
+    browserState: reached.has('BROWSER_STARTED')
+      ? finished
+        ? 'closed'
+        : 'open'
+      : browserAvailable
+        ? 'not_started'
+        : 'unavailable',
+    submissionAttempted: run.submitClicked,
+    submissionConfirmed: run.status === 'submitted',
+    blocker: v2RunBlocker(run, notConsumed),
+    trace: run.trace ?? [],
+    firstMissingStage: firstMissingV2Stage(run),
+  }
+}
+
 export async function processV2QueueOnce(): Promise<V2QueueItem | null> {
   if (workerProcessing) return null
   const next = listV2Runs()
@@ -87,6 +143,7 @@ export async function processV2QueueOnce(): Promise<V2QueueItem | null> {
   if (!next) return null
   workerProcessing = true
   processedRunIds.add(next.runId)
+  traceV2(next.runId, 'WORKER_STARTED', { runId: next.runId, jobId: next.jobId })
   currentState = next.status
   touchV2Heartbeat()
   try {
@@ -99,9 +156,9 @@ export async function processV2QueueOnce(): Promise<V2QueueItem | null> {
 }
 
 function stopV2Run(runId: string, status: V2RunStatus, failureReason: string): V2QueueItem | null {
-  updateV2Run(runId, { status, failureReason })
+  const run = updateV2Run(runId, { status, failureReason })
   updateV2Session(runId, { state: status })
-  logV2('RUN_STOPPED', { status, reason: failureReason.split(':')[0] })
+  logV2('RUN_STOPPED', { status, reason: failureReason.split(':')[0] }, v2LogChannel(run?.source))
   return getV2Run(runId)
 }
 
@@ -140,8 +197,9 @@ async function processV2Run(runId: string): Promise<V2QueueItem | null> {
   try {
     handle = await launchV2Browser(true)
   } catch (error) {
-    return stopV2Run(runId, 'failed', `BROWSER_UNAVAILABLE: ${error instanceof Error ? error.message : 'Chromium could not start.'}`)
+    return stopV2Run(runId, 'failed', `BROWSER_START_FAILED: ${error instanceof Error ? error.message : 'Chromium could not start.'}`)
   }
+  traceV2(runId, 'BROWSER_STARTED', { engine: 'playwright-chromium', headless: true })
   let result: V2AgentResult
   try {
     result = await runV2Application({ run, profile, resume, page: handle.page })
@@ -173,13 +231,38 @@ async function processV2Run(runId: string): Promise<V2QueueItem | null> {
   })
   updateV2Session(runId, { state: result.status, currentUrl: result.finalUrl })
   if (result.status === 'submitted' && result.confirmation?.confirmed) {
-    const record = await persistV2Application(getV2Run(runId) ?? run, resume)
-    logV2('APPLICATION_PERSISTED', { runId, recorded: Boolean(record) })
+    const problem = await persistAndVerifyV2Application(runId, resume, handedOver?.accessToken ?? null)
+    if (problem) {
+      updateV2Run(runId, { persistenceError: `APPLICATION_NOT_PERSISTED: ${problem}` })
+      logV2('APPLICATION_NOT_PERSISTED', { runId, reason: problem }, v2LogChannel(run.source))
+    } else {
+      traceV2(runId, 'APPLICATION_PERSISTED', { runId, applicationId: getV2Run(runId)?.applicationRecordId ?? null })
+    }
   }
   return getV2Run(runId)
 }
 
-export async function persistV2Application(run: V2QueueItem, resume: V2Resume | null) {
+async function persistAndVerifyV2Application(runId: string, resume: V2Resume, accessToken: string | null): Promise<string | null> {
+  let client: SupabaseClient
+  try {
+    client = supabaseDataClient({ config: getServerConfig(), accessToken })
+  } catch (error) {
+    const code = isProfileAccessError(error) ? error.code : 'SUPABASE_NOT_CONFIGURED'
+    return `The server cannot write to public.applications (${code}); it needs a valid SUPABASE_SERVICE_ROLE_KEY or the signed-in session.`
+  }
+  try {
+    const run = getV2Run(runId)
+    const record = run ? await persistV2Application(run, resume, client) : null
+    if (!record) return 'No confirmed application record was built.'
+    const { data, error } = await client.from('applications').select('id').eq('id', record.applicationId).maybeSingle()
+    if (error) return `public.applications could not be read back (${error.code || error.message}).`
+    return data ? null : 'The public.applications row was not found after saving.'
+  } catch (error) {
+    return error instanceof Error ? error.message.split('\n')[0] : 'Saving the application failed.'
+  }
+}
+
+export async function persistV2Application(run: V2QueueItem, resume: V2Resume | null, client?: SupabaseClient) {
   if (run.status !== 'submitted') return null
   const now = run.submittedAt ?? new Date().toISOString()
   const applicationRecordId = run.applicationRecordId ?? randomUUID()
@@ -225,5 +308,6 @@ export async function persistV2Application(run: V2QueueItem, resume: V2Resume | 
     item,
     provider: run.provider,
     config: getServerConfig(),
+    client,
   })
 }

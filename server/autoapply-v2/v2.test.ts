@@ -8,6 +8,7 @@ import { getServerConfig } from '../config'
 import { resetConfirmedApplicationsForTests } from '../apply/confirmed'
 import { clearAutoApplyMemory, memoryStore } from '../apply/store'
 import type { AutoApplyProfile, AutoApplyQueueItem, AutoApplyRun } from '../apply/types'
+import type { FetchLike } from '../jobs/http'
 import { rememberLiveJobs, resetLiveJobStoreForTests } from '../jobs/live-store'
 import type { LiveJob } from '../jobs/list'
 import { emptyLiveMatch } from '../jobs/score'
@@ -15,15 +16,17 @@ import { useAutomationRuntimeForTests } from '../automation/runtime-io'
 import { fakeSessionToken, installFakeSupabase, uninstallFakeSupabase } from '../testing/fake-supabase'
 import { classifyV2Page, detectV2Provider } from './agent'
 import { firstValidV2Job, isV2JobAlreadyApplied, loadV2Job, validateV2ApplicationUrl } from './application'
-import { startV2AutoApply, startV2AutoApplyCampaign, toAutoApplyRunResult, V2_START_ONE_CONFIG } from './campaign'
+import { startOneClickApply, startV2AutoApplyCampaign, toAutoApplyRunResult, V2_START_ONE_CONFIG } from './campaign'
 import { detectV2Confirmation } from './confirmation'
 import { V2_ERROR_CODES } from './errors'
 import { classifyV2Field, mapV2Fields, type V2FieldDescriptor } from './fields'
 import { V2_APPLY_LABEL, V2_APPLY_MANUAL_LABEL, V2_NEXT_LABEL, V2_SUBMIT_LABEL } from './navigation'
 import { loadV2Profile, requireV2Profile } from './profile'
-import { cancelV2Run, getV2Run, resetV2QueueForTests, updateV2Run } from './queue'
+import { cancelV2Run, getV2Run, listV2Runs, resetV2QueueForTests, updateV2Run } from './queue'
 import { loadV2Resume } from './resume'
 import { resetV2SessionsForTests } from './session'
+import { firstMissingV2Stage } from './trace'
+import { V2_STAGES, type V2Stage } from './types'
 import { persistV2Application, processV2QueueOnce, resetV2WorkerForTests } from './worker'
 
 const USER_ID = '33333333-3333-4333-8333-333333333333'
@@ -190,7 +193,7 @@ describe('V2 job selection', () => {
   it('skips and rejects jobs with a submitted or possibly submitted V2 run', async () => {
     seedAccount()
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    const started = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const started = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     updateV2Run(started.runId, { status: 'submission_uncertain' })
     expect(firstValidV2Job(USER_ID, [{ id: 'job-1', title: 'T', company: 'Acme', description: 'JD', applicationUrl: 'https://example.com/other' }])).toBeNull()
     expect(() => loadV2Job(USER_ID, 'job-1')).toThrow(expect.objectContaining({ code: 'ALREADY_APPLIED' }))
@@ -277,16 +280,16 @@ describe('V2 queue', () => {
   it('creates exactly one queued run and refuses a second active run', async () => {
     seedAccount()
     rememberLiveJobs([liveJob({ id: 'job-1' }), liveJob({ id: 'job-2', jobUrl: 'https://example.com/apply-2' })])
-    const first = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const first = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     expect(first.status).toBe('queued')
-    expect(getV2Run(first.runId)).toMatchObject({ jobId: 'job-1', source: 'start-one', resumeVersionId: RESUME_ID })
-    await expect(startV2AutoApply({ userId: USER_ID, jobId: 'job-2' })).rejects.toMatchObject({ code: 'WORKER_BUSY' })
+    expect(getV2Run(first.runId)).toMatchObject({ jobId: 'job-1', source: 'one-click', resumeVersionId: RESUME_ID })
+    await expect(startOneClickApply({ userId: USER_ID, jobId: 'job-2' })).rejects.toMatchObject({ code: 'WORKER_BUSY' })
   })
 
   it('does not queue when the profile is incomplete', async () => {
     seedAccount({ profile: { phone: null } })
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    await expect(startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })).rejects.toMatchObject({
+    await expect(startOneClickApply({ userId: USER_ID, jobId: 'job-1' })).rejects.toMatchObject({
       code: 'PROFILE_INCOMPLETE',
       missingFields: ['phone'],
     })
@@ -296,7 +299,7 @@ describe('V2 queue', () => {
   it('never picks up non-queued runs for processing (no retry)', async () => {
     seedAccount()
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    const started = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const started = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     updateV2Run(started.runId, { status: 'submission_uncertain' })
     await expect(processV2QueueOnce()).resolves.toBeNull()
     expect(getV2Run(started.runId)?.status).toBe('submission_uncertain')
@@ -305,13 +308,88 @@ describe('V2 queue', () => {
   it('cancels queued and stopped runs but not runs in progress or submitted', async () => {
     seedAccount()
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    const started = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const started = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     updateV2Run(started.runId, { status: 'filling' })
     expect(() => cancelV2Run(started.runId)).toThrow(expect.objectContaining({ code: 'RUN_IN_PROGRESS' }))
     updateV2Run(started.runId, { status: 'submitted' })
     expect(cancelV2Run(started.runId).status).toBe('submitted')
     updateV2Run(started.runId, { status: 'needs_user_input' })
     expect(cancelV2Run(started.runId).status).toBe('cancelled')
+  })
+})
+
+describe('V2 execution trace and run status', () => {
+  it('records the queue-time stages and reports a run the worker never picked up', async () => {
+    seedAccount()
+    rememberLiveJobs([liveJob({ id: 'job-1' })])
+    const { runId } = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
+    expect(getV2Run(runId)?.trace?.map((entry) => entry.stage)).toEqual([
+      'START',
+      'JOB_LOADED',
+      'PROFILE_LOADED',
+      'RESUME_LOADED',
+      'QUEUED',
+    ])
+    const app = createApp({ config: getServerConfig() })
+    const response = await request(app).get(`/api/autoapply-v2/status/${runId}`)
+    expect(response.status).toBe(200)
+    expect(response.body).toMatchObject({
+      runId,
+      applicationId: null,
+      jobId: 'job-1',
+      state: 'queued',
+      provider: null,
+      currentUrl: null,
+      queueState: 'not_consumed',
+      workerState: 'stopped',
+      submissionAttempted: false,
+      submissionConfirmed: false,
+      blocker: { code: 'QUEUE_NOT_CONSUMED' },
+      firstMissingStage: 'WORKER_STARTED',
+    })
+    expect(JSON.stringify(response.body)).not.toMatch(new RegExp([USER_ID, 'Ada', 'Lovelace', 'ada@example.com', '555-0100'].join('|')))
+    expect((await request(app).get('/api/autoapply-v2/status/missing-run')).status).toBe(404)
+  })
+
+  it('names the blocker from the stop reason, including a confirmed run that never reached Applications', async () => {
+    seedAccount()
+    rememberLiveJobs([liveJob({ id: 'job-1' })])
+    const { runId } = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
+    const app = createApp({ config: getServerConfig() })
+    const status = async () => (await request(app).get(`/api/autoapply-v2/status/${runId}`)).body
+
+    updateV2Run(runId, { status: 'login_required', failureReason: 'LOGIN_REQUIRED' })
+    expect(await status()).toMatchObject({ queueState: 'finished', blocker: { code: 'LOGIN_REQUIRED' } })
+
+    updateV2Run(runId, {
+      status: 'submission_uncertain',
+      submitClicked: true,
+      failureReason: 'CONFIRMATION_NOT_FOUND: Submit was clicked, but no reliable confirmation was detected.',
+    })
+    expect(await status()).toMatchObject({
+      submissionAttempted: true,
+      submissionConfirmed: false,
+      blocker: { code: 'CONFIRMATION_NOT_FOUND' },
+    })
+
+    updateV2Run(runId, {
+      status: 'submitted',
+      failureReason: null,
+      persistenceError: 'APPLICATION_NOT_PERSISTED: The server cannot write to public.applications (SUPABASE_NOT_CONFIGURED).',
+    })
+    expect(await status()).toMatchObject({ submissionConfirmed: true, blocker: { code: 'APPLICATION_NOT_PERSISTED' } })
+  })
+
+  it('finds the first missing stage and skips Apply stages when the link opens the form directly', () => {
+    const traced = (stages: readonly V2Stage[]) => ({ trace: stages.map((stage) => ({ stage, at: '2026-09-25T00:00:00.000Z' })) })
+    const upTo = (last: V2Stage) => V2_STAGES.slice(0, V2_STAGES.indexOf(last) + 1)
+    expect(firstMissingV2Stage({})).toBe('START')
+    expect(firstMissingV2Stage(traced(upTo('PAGE_CLASSIFIED')))).toBe('APPLY_FOUND')
+    expect(firstMissingV2Stage(traced(upTo('APPLY_FOUND')))).toBe('APPLY_CLICKED')
+    const direct = V2_STAGES.filter((stage) => stage !== 'APPLY_FOUND' && stage !== 'APPLY_CLICKED')
+    expect(firstMissingV2Stage(traced(direct))).toBeNull()
+    expect(firstMissingV2Stage(traced(direct.filter((stage) => stage !== 'RESUME_UPLOADED')))).toBe('RESUME_UPLOADED')
+    expect(firstMissingV2Stage(traced(V2_STAGES))).toBeNull()
   })
 })
 
@@ -373,7 +451,7 @@ describe('V2 production Start Auto Apply', () => {
   it('maps V2 states onto the existing Auto Apply panel statuses', async () => {
     seedAccount()
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    const { runId } = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const { runId } = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     const cases: Array<[string, string, string]> = [
       ['queued', 'running', 'queued'],
       ['filling', 'running', 'filling'],
@@ -442,6 +520,111 @@ describe('V2 semantic field mapping', () => {
     })
     expect(mapping.unknownRequired.map((field) => field.label)).toEqual(['Favorite color *'])
   })
+
+  it('maps a single full-name field, keeps cover letters apart from the resume, and skips prefilled answers', async () => {
+    expect(classifyV2Field(descriptor({ label: 'Full name ✱', name: 'name' }))).toBe('fullName')
+    expect(classifyV2Field(descriptor({ label: 'Name', name: '_systemfield_name' }))).toBe('fullName')
+    expect(classifyV2Field(descriptor({ label: 'Company name', name: 'org' }))).toBeNull()
+    expect(classifyV2Field(descriptor({ type: 'file', label: 'Cover Letter', name: 'cover_letter' }))).toBe('coverLetter')
+    expect(classifyV2Field(descriptor({ type: 'file', label: 'Resume/CV', name: 'resume' }))).toBe('resume')
+    seedAccount()
+    const profile = await requireV2Profile(USER_ID)
+    const mapping = mapV2Fields(
+      [
+        descriptor({ label: 'Full name ✱', name: 'name', required: true }),
+        descriptor({ label: 'Pronouns ✱', required: true }),
+        descriptor({ label: 'Referral code *', required: true, value: 'already filled' }),
+        descriptor({ type: 'file', label: 'Resume/CV', required: true }),
+      ],
+      profile,
+    )
+    expect(mapping.mapped.map((entry) => [entry.key, entry.value])).toEqual([['fullName', 'Ada Lovelace']])
+    expect(mapping.unknownRequired.map((field) => field.label)).toEqual(['Pronouns ✱'])
+  })
+})
+
+describe('One-click Apply: POST /api/jobs/apply-one', () => {
+  const discovery = vi.fn<FetchLike>(async () => {
+    throw new Error('Apply Now must not search for jobs')
+  })
+  const appWithoutDiscovery = () => createApp({ config: getServerConfig(), fetchImpl: discovery })
+  const applyOne = (app: ReturnType<typeof createApp>, jobId: string) =>
+    request(app).post('/api/jobs/apply-one').set('Authorization', bearer()).send({ jobId })
+
+  it('queues exactly the clicked job and returns immediately without searching for jobs', async () => {
+    seedAccount()
+    rememberLiveJobs([
+      liveJob({ id: 'job-1' }),
+      liveJob({ id: 'job-2', title: 'Staff Engineer', jobUrl: 'https://example.com/apply-2' }),
+    ])
+    const response = await applyOne(appWithoutDiscovery(), 'job-2')
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ success: true, runId: expect.any(String), jobId: 'job-2', status: 'queued' })
+    expect(getV2Run(response.body.runId)).toMatchObject({
+      jobId: 'job-2',
+      title: 'Staff Engineer',
+      applicationUrl: 'https://example.com/apply-2',
+      source: 'one-click',
+      status: 'queued',
+      userId: USER_ID,
+      resumeVersionId: RESUME_ID,
+      campaignConfig: V2_START_ONE_CONFIG,
+    })
+    expect(discovery).not.toHaveBeenCalled()
+  })
+
+  it('opens the canonical application URL and names jobs that cannot be applied to', async () => {
+    seedAccount()
+    rememberLiveJobs([
+      liveJob({
+        id: 'direct',
+        url: 'https://publisher.example.com/listing',
+        jobUrl: 'https://publisher.example.com/listing',
+        applicationUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      }),
+      liveJob({ id: 'no-apply-link', jobUrl: 'https://publisher.example.com/listing-2', applicationUrl: null }),
+    ])
+    const app = appWithoutDiscovery()
+    const missing = await applyOne(app, 'no-apply-link')
+    expect(missing.status).toBe(422)
+    expect(missing.body.code).toBe('APPLICATION_URL_MISSING')
+    const unknown = await applyOne(app, 'not-in-live-jobs')
+    expect(unknown.status).toBe(404)
+    expect(unknown.body.code).toBe('JOB_NOT_FOUND')
+    const direct = await applyOne(app, 'direct')
+    expect(getV2Run(direct.body.runId)?.applicationUrl).toBe('https://boards.greenhouse.io/acme/jobs/1')
+  })
+
+  it('requires a session and a complete profile before anything is queued', async () => {
+    seedAccount({ profile: { phone: null } })
+    rememberLiveJobs([liveJob({ id: 'job-1' })])
+    const app = appWithoutDiscovery()
+    const unauthenticated = await request(app).post('/api/jobs/apply-one').send({ jobId: 'job-1' })
+    expect(unauthenticated.status).toBe(401)
+    expect(unauthenticated.body.code).toBe('AUTH_NOT_AVAILABLE')
+    const incomplete = await applyOne(app, 'job-1')
+    expect(incomplete.status).toBe(422)
+    expect(incomplete.body).toMatchObject({ code: 'PROFILE_INCOMPLETE', missingFields: ['phone'] })
+    expect(listV2Runs()).toHaveLength(0)
+  })
+
+  it('never starts a second application for the same job', async () => {
+    seedAccount()
+    rememberLiveJobs([liveJob({ id: 'job-1' }), liveJob({ id: 'job-2', jobUrl: 'https://example.com/apply-2' })])
+    const app = appWithoutDiscovery()
+    const first = await applyOne(app, 'job-1')
+    expect((await applyOne(app, 'job-1')).body).toEqual({ success: true, runId: first.body.runId, jobId: 'job-1', status: 'queued' })
+    const other = await applyOne(app, 'job-2')
+    expect(other.status).toBe(409)
+    expect(other.body.code).toBe('WORKER_BUSY')
+    updateV2Run(first.body.runId, { status: 'submitted', submitClicked: true })
+    const applied = await applyOne(app, 'job-1')
+    expect(applied.status).toBe(409)
+    expect(applied.body.code).toBe('ALREADY_APPLIED')
+    updateV2Run(first.body.runId, { status: 'submission_uncertain' })
+    expect((await applyOne(app, 'job-1')).body.code).toBe('ALREADY_APPLIED')
+    expect(listV2Runs()).toHaveLength(1)
+  })
 })
 
 describe('V2 page classification', () => {
@@ -462,6 +645,17 @@ describe('V2 page classification', () => {
     expect(classify('Senior Engineer responsibilities qualifications', { hasApplyControl: true })).toBe('JOB_PAGE')
     expect(classify('404 page not found')).toBe('ERROR_PAGE')
     expect(classify('Welcome to our site')).toBe('UNKNOWN')
+  })
+
+  it('only treats a visible challenge or a challenge interstitial as a CAPTCHA', () => {
+    const invisibleEnterprise =
+      '<script src="https://www.recaptcha.net/recaptcha/enterprise.js?render=explicit"></script><form><input name="first_name"><input type="file"></form>'
+    expect(classify('Apply for this job First Name Resume Submit application', { fieldCount: 6, hasFileInput: true }, invisibleEnterprise)).toBe(
+      'APPLICATION_PAGE',
+    )
+    expect(classify('Apply First Name', { fieldCount: 6, hasFileInput: true, hasVisibleCaptcha: true })).toBe('CAPTCHA_PAGE')
+    expect(classify('Just a moment... Checking your browser before accessing the site')).toBe('CAPTCHA_PAGE')
+    expect(classify('Press & Hold to confirm you are a human (and not a bot).')).toBe('CAPTCHA_PAGE')
   })
 
   it('detects providers from URL evidence only', () => {
@@ -506,6 +700,13 @@ describe('V2 error model', () => {
       'SUBMISSION_FAILED',
       'SUBMISSION_UNCERTAIN',
       'PROFILE_INCOMPLETE',
+      'QUEUE_NOT_CONSUMED',
+      'BROWSER_START_FAILED',
+      'NAVIGATION_FAILED',
+      'APPLICATION_PAGE_NOT_FOUND',
+      'FORM_NOT_FOUND',
+      'RESUME_UPLOAD_FAILED',
+      'CONFIRMATION_NOT_FOUND',
     ]) {
       expect(V2_ERROR_CODES).toContain(code)
     }
@@ -516,7 +717,7 @@ describe('V2 persistence rules', () => {
   it('persists only confirmed submissions with both URLs, no scores, and the submitted resume snapshot', async () => {
     const { writes } = seedAccount()
     rememberLiveJobs([liveJob({ id: 'job-1' })])
-    const started = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const started = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     const resume = await loadV2Resume(USER_ID, RESUME_ID)
     expect(await persistV2Application(getV2Run(started.runId)!, resume)).toBeNull()
     expect(writes.filter((write) => write.table === 'applications')).toHaveLength(0)
@@ -711,7 +912,7 @@ describe('V2 HTTP endpoints', () => {
       .set('Authorization', bearer())
       .send({ jobId: 'job-1', userId: OTHER_USER_ID })
     expect(response.status).toBe(200)
-    expect(response.body).toEqual({ success: true, status: 'queued', runId: expect.any(String) })
+    expect(response.body).toEqual({ success: true, status: 'queued', runId: expect.any(String), jobId: 'job-1' })
     expect(getV2Run(response.body.runId)?.userId).toBe(USER_ID)
   })
 
@@ -780,7 +981,7 @@ describe('V2 HTTP endpoints', () => {
     rememberLiveJobs([liveJob({ id: 'job-1' })])
     const legacy = legacySyntheticRun()
     await memoryStore.save(legacy.run, legacy.items)
-    const { runId } = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const { runId } = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     const app = createApp({ config: getServerConfig() })
 
     const list = await request(app).get('/api/jobs/auto-apply').query({ userId: USER_ID })
@@ -808,7 +1009,7 @@ describe('V2 score independence', () => {
     rememberLiveJobs([liveJob({ id: 'job-1', matchScore: 97, matchedSkills: ['java'], missingSkills: [] })])
     const job = loadV2Job(USER_ID, 'job-1')
     expect(job).not.toHaveProperty('matchScore')
-    const started = await startV2AutoApply({ userId: USER_ID, jobId: 'job-1' })
+    const started = await startOneClickApply({ userId: USER_ID, jobId: 'job-1' })
     const run = getV2Run(started.runId)
     expect(JSON.stringify(run)).not.toMatch(/matchScore|tailoredScore|matchedSkills/)
   })

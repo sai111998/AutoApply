@@ -21,7 +21,7 @@ export function isSyntheticV2Url(url: string): boolean {
 
 export function validateV2ApplicationUrl(applicationUrl: string, options: V2JobOptions = {}): void {
   if (!applicationUrl?.trim()) {
-    throw new V2Error('INVALID_APPLICATION_URL', 'Job is missing an application URL.', 422)
+    throw new V2Error('APPLICATION_URL_MISSING', 'Job is missing an application URL.', 422)
   }
   if (options.allowSyntheticEmployer && isSyntheticV2Url(applicationUrl)) return
   let parsed: URL
@@ -104,9 +104,15 @@ export function firstValidV2Job(
   return null
 }
 
-export function resolveV2ApplicationUrl(snapshot: { jobUrl?: string | null; url?: string | null }): string | null {
-  const value = (snapshot.jobUrl || snapshot.url || '').trim()
-  return value || null
+export function resolveV2ApplicationUrl(snapshot: {
+  applicationUrl?: string | null
+  jobUrl?: string | null
+  url?: string | null
+}): string | null {
+  // applicationUrl is the canonical apply link; null means the provider exposed no usable one (for example a
+  // JSearch listing that only links to a publisher page). Snapshots stored before it existed leave it undefined.
+  const value = (snapshot.applicationUrl === undefined ? snapshot.jobUrl || snapshot.url : snapshot.applicationUrl) ?? ''
+  return value.trim() || null
 }
 
 export function loadV2Job(userId: string, jobId: string, options: V2JobOptions = {}): V2JobRef {
@@ -119,7 +125,7 @@ export function loadV2Job(userId: string, jobId: string, options: V2JobOptions =
   }
   const applicationUrl = resolveV2ApplicationUrl(snapshot)
   if (!applicationUrl) {
-    throw new V2Error('INVALID_APPLICATION_URL', 'Job is missing an application URL.', 422)
+    throw new V2Error('APPLICATION_URL_MISSING', 'This job has no employer application URL.', 422)
   }
   validateV2ApplicationUrl(applicationUrl, options)
   if (isV2JobAlreadyApplied(userId, { id: snapshot.id, applicationUrl })) {

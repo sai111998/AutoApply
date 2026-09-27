@@ -4,9 +4,10 @@ import type { V2Resume } from './types'
 export interface V2RunInputs {
   profile: CanonicalCandidateProfile
   resume: V2Resume
+  accessToken: string | null
 }
 
-// Kept in memory only: the profile and resume file loaded with the user's session never touch the queue file.
+// Kept in memory only: the profile, resume file, and session token loaded for the user never touch the queue file.
 const inputsByRun = new Map<string, V2RunInputs>()
 
 export function rememberV2RunInputs(runId: string, inputs: V2RunInputs) {
