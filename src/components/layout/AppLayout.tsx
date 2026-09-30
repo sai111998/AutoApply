@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   Briefcase,
+  Compass,
   FileText,
   LogOut,
   ScanSearch,
@@ -18,6 +19,7 @@ const links = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/profile', label: 'My Profile', icon: UserRound },
   { to: '/resume', label: 'Master Resume', icon: FileText },
+  { to: '/jobs', label: 'Live Jobs', icon: Compass },
   { to: '/analyze', label: 'Job Analysis', icon: ScanSearch },
   { to: '/applications', label: 'Applications', icon: Briefcase },
   { to: '/settings', label: 'Settings', icon: Settings },

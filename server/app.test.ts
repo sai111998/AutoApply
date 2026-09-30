@@ -11,6 +11,22 @@ const config: ServerConfig = {
   llmModel: 'test-model',
   supabaseUrl: '',
   supabaseServiceRoleKey: '',
+  supabaseAnonKey: '',
+  joobleApiKey: '',
+  joobleEnabled: false,
+  joobleApiBaseUrl: 'https://jooble.org/api',
+  usajobsApiKey: '',
+  usajobsUserAgentEmail: '',
+  usajobsEnabled: false,
+  jobOpportunitiesEnabled: false,
+  jobOpportunitiesApiBaseUrl: 'https://api.jobopportunitiesapi.org',
+  greenhouseEnabled: false,
+  greenhouseBoardTokens: [],
+  greenhouseJobBoardApiKey: '',
+  leverEnabled: false,
+  leverSites: [],
+  ashbyEnabled: false,
+  ashbyBoards: [],
 }
 
 const llmResult = {

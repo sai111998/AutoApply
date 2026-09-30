@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { analyzeJobRequest } from '@/lib/ai/client'
+import { analyzeJobRequest, type AutoApplyQueueItem, type DiscoveredJobResult } from '@/lib/ai/client'
 import { mapApiResultToMatchFields } from '@/lib/ai/map-response'
 import {
   deleteAnalysisRecords,
@@ -69,6 +69,12 @@ interface WorkspaceContextValue extends WorkspaceSnapshot {
   deleteAnalysis: (matchId: string) => Promise<void>
   updateApplication: (id: string, patch: Partial<Pick<Application, 'status' | 'notes' | 'dateApplied'>>) => Promise<void>
   savePreferences: (preferences: UserPreferences) => Promise<void>
+  saveDiscoveredJob: (job: Job, extras?: { resumeVersionId?: string | null }) => Promise<Job>
+  syncAutoApplyApplication: (input: {
+    item: AutoApplyQueueItem
+    listedJob?: DiscoveredJobResult | null
+  }) => Promise<Application>
+  savedJobIds: string[]
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
@@ -98,6 +104,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [savedJobIds, setSavedJobIds] = useState<string[]>([])
   const analyzeLock = useRef(false)
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
@@ -505,6 +512,59 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [isDemo, replace],
   )
 
+  const saveDiscoveredJob = useCallback(
+    async (job: Job) => {
+      if (!user) throw new Error('Not signed in')
+      const stored: Job = { ...job, userId: user.id }
+      replace((current) => ({ ...current, jobs: upsertById(current.jobs, stored) }))
+      setSavedJobIds((current) => (current.includes(stored.id) ? current : [...current, stored.id]))
+      return stored
+    },
+    [replace, user],
+  )
+
+  const syncAutoApplyApplication = useCallback(
+    async (input: { item: AutoApplyQueueItem; listedJob?: DiscoveredJobResult | null }) => {
+      if (!user) throw new Error('Not signed in')
+      const now = new Date().toISOString()
+      const status: ApplicationStatus = input.item.applicationStatus === 'submitted' ? 'applied' : 'ready'
+      const listed = input.listedJob
+      const application: Application = {
+        id: input.item.applicationId || createId(),
+        userId: user.id,
+        jobId: input.item.jobId,
+        matchId: null,
+        resumeId: snapshotRef.current.resumes.find((resume) => resume.isMaster)?.id ?? snapshotRef.current.resumes[0]?.id ?? null,
+        status,
+        dateAdded: input.item.createdAt || now,
+        dateApplied: status === 'applied' ? input.item.submittedAt || now : null,
+        nextAction: nextActionForStatus(status),
+        notes: input.item.failureReason || '',
+        updatedAt: now,
+      }
+      const job: Job = {
+        id: input.item.jobId,
+        userId: user.id,
+        title: listed?.title || input.item.title,
+        company: listed?.company || input.item.company || 'Unknown company',
+        location: listed?.location || input.item.location || '',
+        jobUrl: listed?.jobUrl || listed?.url || input.item.applicationUrl || '',
+        description: listed?.description || input.item.jobDescriptionSnapshot || '',
+        createdAt: listed?.discoveredAt || now,
+        provider: listed?.provider ?? null,
+        providerJobId: listed?.providerJobId ?? null,
+        identityKey: input.item.identityKey,
+      }
+      replace((current) => ({
+        ...current,
+        jobs: upsertById(current.jobs, job),
+        applications: upsertById(current.applications, application),
+      }))
+      return application
+    },
+    [replace, user],
+  )
+
   const savePreferences = useCallback(
     async (preferences: UserPreferences) => {
       const next = { ...preferences, updatedAt: new Date().toISOString() }
@@ -534,6 +594,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteAnalysis,
       updateApplication,
       savePreferences,
+      saveDiscoveredJob,
+      syncAutoApplyApplication,
+      savedJobIds,
     }),
     [
       analyzeJob,
@@ -544,10 +607,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loading,
       masterResume,
       refreshAnalyses,
+      saveDiscoveredJob,
       savePreferences,
       saveProfile,
+      savedJobIds,
       setMasterResume,
       snapshot,
+      syncAutoApplyApplication,
       updateApplication,
       uploadResume,
     ],
