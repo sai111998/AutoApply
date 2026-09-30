@@ -19,6 +19,8 @@ import {
   getLiveJobRequest,
   listAutoApplyRunsRequest,
   listLiveJobsRequest,
+  LiveJobsRequestError,
+  visibleLiveJobsWarning,
   PREPARE_PERSIST_TIMEOUT_MS,
   pauseAutoApplyRunRequest,
   prepareAutoApplyItemRequest,
@@ -200,6 +202,7 @@ export function JobDiscoveryPage() {
   const [sort, setSort] = useState<LiveJobSort>('match')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sourceUnavailable, setSourceUnavailable] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
   const [listed, setListed] = useState<DiscoveredJobResult[] | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -232,6 +235,7 @@ export function JobDiscoveryPage() {
   async function onSearch() {
     setLoading(true)
     setError(null)
+    setSourceUnavailable(false)
     setWarning(null)
     try {
       const response = await listLiveJobsRequest({
@@ -251,12 +255,19 @@ export function JobDiscoveryPage() {
       })
       const rows = sortDiscoveredJobs(response.jobs.map(normalizeListedJob), sort, query)
       setListed(rows)
-      setWarning(response.warning?.message ?? null)
+      setSourceUnavailable(false)
+      setWarning(visibleLiveJobsWarning(response.warning?.message))
       if (!rows.length) setExpandedId(null)
     } catch (searchError) {
       setListed([])
       setExpandedId(null)
-      setError(searchError instanceof Error ? searchError.message : 'Live job source temporarily unavailable.')
+      if (searchError instanceof LiveJobsRequestError) {
+        setSourceUnavailable(searchError.sourceUnavailable)
+        setError(searchError.message)
+      } else {
+        setSourceUnavailable(false)
+        setError(searchError instanceof Error ? searchError.message : 'Could not load live jobs.')
+      }
     } finally {
       setLoading(false)
     }
@@ -915,7 +926,11 @@ export function JobDiscoveryPage() {
 
       {error && (
         <div className="mt-4">
-          <ErrorState title="Live job source temporarily unavailable." description={error} onRetry={() => void onSearch()} />
+          <ErrorState
+            title={sourceUnavailable ? 'Live job source temporarily unavailable.' : 'Could not load live jobs.'}
+            description={error}
+            onRetry={() => void onSearch()}
+          />
         </div>
       )}
 

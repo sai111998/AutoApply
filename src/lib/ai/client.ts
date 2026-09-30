@@ -230,6 +230,38 @@ export interface LiveJobsResponse {
   warning?: { provider: string; code: string; message: string }
 }
 
+export const LIVE_JOB_SOURCE_UNAVAILABLE = 'Live job source temporarily unavailable.'
+
+export class LiveJobsRequestError extends Error {
+  readonly status: number | null
+  readonly sourceUnavailable: boolean
+
+  constructor(message: string, status: number | null, sourceUnavailable: boolean) {
+    super(message)
+    this.name = 'LiveJobsRequestError'
+    this.status = status
+    this.sourceUnavailable = sourceUnavailable
+  }
+}
+
+export function visibleLiveJobsWarning(message: string | null | undefined): string | null {
+  if (!message || message === LIVE_JOB_SOURCE_UNAVAILABLE) return null
+  return message
+}
+
+function liveJobsErrorMessage(body: unknown, fallback: string): string {
+  const message =
+    body && typeof body === 'object' && 'error' in body && typeof (body as { error?: unknown }).error === 'string'
+      ? (body as { error: string }).error
+      : fallback
+  return /key|secret|service.role/i.test(message) ? LIVE_JOB_SOURCE_UNAVAILABLE : message
+}
+
+function logLiveJobs(details: { url: string; status: number | null; body: unknown; jobsCount: number | null }) {
+  if (!import.meta.env.DEV) return
+  console.info('[live-jobs]', details)
+}
+
 export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<LiveJobsResponse> {
   const payload = {
     q: query.q?.trim() || undefined,
@@ -259,19 +291,52 @@ export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<Li
   if (payload.sort) params.set('sort', payload.sort)
   if (payload.jobType) params.set('jobType', payload.jobType)
 
-  const response = payload.resumeText
-    ? await fetch(apiUrl('/api/jobs'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-    : await fetch(apiUrl(`/api/jobs?${params.toString()}`))
-  const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
-  if (!response.ok || !body || !('jobs' in body)) {
-    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
-    throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
+  const url = payload.resumeText ? apiUrl('/api/jobs') : apiUrl(`/api/jobs?${params.toString()}`)
+  let response: Response
+  try {
+    response = payload.resumeText
+      ? await fetch(apiUrl('/api/jobs'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      : await fetch(apiUrl(`/api/jobs?${params.toString()}`))
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === 'TimeoutError'
+    const message = timedOut
+      ? LIVE_JOB_SOURCE_UNAVAILABLE
+      : error instanceof Error && error.message
+        ? error.message
+        : LIVE_JOB_SOURCE_UNAVAILABLE
+    logLiveJobs({ url, status: null, body: message, jobsCount: null })
+    throw new LiveJobsRequestError(
+      /key|secret|service.role/i.test(message) ? LIVE_JOB_SOURCE_UNAVAILABLE : message,
+      null,
+      true,
+    )
   }
-  return body
+
+  const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
+  const jobs =
+    body && typeof body === 'object' && 'jobs' in body && Array.isArray((body as { jobs?: unknown }).jobs)
+      ? (body as { jobs: unknown[] }).jobs
+      : null
+  logLiveJobs({ url, status: response.status, body, jobsCount: jobs?.length ?? null })
+
+  if (response.status >= 500) {
+    throw new LiveJobsRequestError(liveJobsErrorMessage(body, LIVE_JOB_SOURCE_UNAVAILABLE), response.status, true)
+  }
+  if (!response.ok) {
+    throw new LiveJobsRequestError(
+      liveJobsErrorMessage(body, `Live jobs request failed (${response.status}).`),
+      response.status,
+      false,
+    )
+  }
+  if (!body || jobs === null) {
+    throw new LiveJobsRequestError('Live jobs response did not include a jobs array.', response.status, false)
+  }
+  return body as LiveJobsResponse
 }
 
 export interface LiveTailorPreviewResult {
