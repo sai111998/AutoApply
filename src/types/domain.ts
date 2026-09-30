@@ -68,6 +68,21 @@ export interface Job {
   jobUrl: string
   description: string
   createdAt: string
+  provider?: string | null
+  providerJobId?: string | null
+  remote?: boolean | null
+  workArrangement?: string | null
+  employmentType?: string | null
+  seniority?: string | null
+  postedAt?: string | null
+  discoveredAt?: string | null
+  lastVerifiedAt?: string | null
+  salaryMin?: number | null
+  salaryMax?: number | null
+  salaryCurrency?: string | null
+  source?: string | null
+  identityKey?: string | null
+  matchScore?: number | null
 }
 
 export interface SkillSignal {
