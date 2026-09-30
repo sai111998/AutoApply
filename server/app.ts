@@ -10,6 +10,9 @@ import {
   type PersistFn,
 } from './services/analysis'
 import { HttpError } from './types'
+import { listLiveJobs } from './jobs/list'
+import { rememberLiveJobs } from './jobs/live-store'
+import { parseLiveJobsRequest } from './jobs/parse'
 
 export interface AppOptions {
   config: ServerConfig
@@ -31,6 +34,36 @@ export function createApp(options: AppOptions): Express {
       llmConfigured: Boolean(options.config.llmApiKey),
       databaseConfigured: Boolean(options.config.supabaseUrl && options.config.supabaseServiceRoleKey),
     })
+  })
+
+  app.get('/api/jobs', async (req: Request, res: Response) => {
+    try {
+      const request = parseLiveJobsRequest(req.query)
+      const result = await listLiveJobs(options.config, request)
+      rememberLiveJobs(result.jobs)
+      res.json(result)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Live job source temporarily unavailable.'
+      res.status(status).json({
+        error: /key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message,
+      })
+    }
+  })
+
+  app.post('/api/jobs', async (req: Request, res: Response) => {
+    try {
+      const request = parseLiveJobsRequest(req.query, req.body)
+      const result = await listLiveJobs(options.config, request)
+      rememberLiveJobs(result.jobs)
+      res.json(result)
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500
+      const message = error instanceof Error ? error.message : 'Live job source temporarily unavailable.'
+      res.status(status).json({
+        error: /key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message,
+      })
+    }
   })
 
   app.post('/api/jobs/analyze', async (req: Request, res: Response) => {
