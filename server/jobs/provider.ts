@@ -4,9 +4,10 @@ import { ashbyFromConfig } from './providers/ashby'
 import { greenhouseFromConfig } from './providers/greenhouse'
 import { jobOpportunitiesFromConfig } from './providers/job-opportunities'
 import { joobleFromConfig } from './providers/jooble'
+import { jsearchFromConfig } from './providers/jsearch'
 import { leverFromConfig } from './providers/lever'
 import { usajobsFromConfig } from './providers/usajobs'
-import type { JobProvider, JobProviderName, NormalizedJob, ProviderStatus } from './types'
+import type { JobProvider, JobProviderName, NormalizedJob, ProviderAvailability, ProviderStatus } from './types'
 
 export function withJobProviderMethods(provider: JobProvider): JobProvider {
   const search = provider.search.bind(provider)
@@ -27,7 +28,13 @@ export function createJobProviders(config: ServerConfig, fetchImpl?: FetchLike):
     greenhouseFromConfig(config, fetchImpl),
     leverFromConfig(config, fetchImpl),
     ashbyFromConfig(config, fetchImpl),
+    jsearchFromConfig(config, fetchImpl),
   ].map(withJobProviderMethods)
+}
+
+function providerAvailability(provider: JobProvider): ProviderAvailability {
+  if (provider.isAvailable()) return 'available'
+  return provider.connectionLabel() === 'Disabled' ? 'disabled' : 'not_configured'
 }
 
 export function providerStatuses(providers: JobProvider[]): ProviderStatus[] {
@@ -37,6 +44,7 @@ export function providerStatuses(providers: JobProvider[]): ProviderStatus[] {
     enabled: provider.isEnabled(),
     available: provider.isAvailable(),
     connectionLabel: provider.connectionLabel(),
+    status: providerAvailability(provider),
   }))
 }
 

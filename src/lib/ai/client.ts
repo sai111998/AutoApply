@@ -1,9 +1,15 @@
 import type { AnalyzeJobApiRequest, AnalyzeJobApiResult, AnalyzeJobClientResponse } from './types'
 import type { Job } from '@/types/domain'
+import { supabase } from '@/lib/supabase'
 
-function apiUrl(path: string): string {
+export function apiUrl(path: string): string {
   const base = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') ?? ''
   return `${base}${path}`
+}
+
+async function sessionHeaders(): Promise<Record<string, string>> {
+  const token = supabase ? (await supabase.auth.getSession()).data.session?.access_token : null
+  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 function isAnalysisResult(value: unknown): value is AnalyzeJobApiResult {
@@ -224,6 +230,38 @@ export interface LiveJobsResponse {
   warning?: { provider: string; code: string; message: string }
 }
 
+export const LIVE_JOB_SOURCE_UNAVAILABLE = 'Live job source temporarily unavailable.'
+
+export class LiveJobsRequestError extends Error {
+  readonly status: number | null
+  readonly sourceUnavailable: boolean
+
+  constructor(message: string, status: number | null, sourceUnavailable: boolean) {
+    super(message)
+    this.name = 'LiveJobsRequestError'
+    this.status = status
+    this.sourceUnavailable = sourceUnavailable
+  }
+}
+
+export function visibleLiveJobsWarning(message: string | null | undefined): string | null {
+  if (!message || message === LIVE_JOB_SOURCE_UNAVAILABLE) return null
+  return message
+}
+
+function liveJobsErrorMessage(body: unknown, fallback: string): string {
+  const message =
+    body && typeof body === 'object' && 'error' in body && typeof (body as { error?: unknown }).error === 'string'
+      ? (body as { error: string }).error
+      : fallback
+  return /key|secret|service.role/i.test(message) ? LIVE_JOB_SOURCE_UNAVAILABLE : message
+}
+
+function logLiveJobs(details: { url: string; status: number | null; body: unknown; jobsCount: number | null }) {
+  if (!import.meta.env.DEV) return
+  console.info('[live-jobs]', details)
+}
+
 export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<LiveJobsResponse> {
   const payload = {
     q: query.q?.trim() || undefined,
@@ -253,19 +291,52 @@ export async function listLiveJobsRequest(query: LiveJobsQuery = {}): Promise<Li
   if (payload.sort) params.set('sort', payload.sort)
   if (payload.jobType) params.set('jobType', payload.jobType)
 
-  const response = payload.resumeText
-    ? await fetch(apiUrl('/api/jobs'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-    : await fetch(apiUrl(`/api/jobs?${params.toString()}`))
-  const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
-  if (!response.ok || !body || !('jobs' in body)) {
-    const message = body && 'error' in body && typeof body.error === 'string' ? body.error : 'Live job source temporarily unavailable.'
-    throw new Error(/key|secret|service.role/i.test(message) ? 'Live job source temporarily unavailable.' : message)
+  const url = payload.resumeText ? apiUrl('/api/jobs') : apiUrl(`/api/jobs?${params.toString()}`)
+  let response: Response
+  try {
+    response = payload.resumeText
+      ? await fetch(apiUrl('/api/jobs'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      : await fetch(apiUrl(`/api/jobs?${params.toString()}`))
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === 'TimeoutError'
+    const message = timedOut
+      ? LIVE_JOB_SOURCE_UNAVAILABLE
+      : error instanceof Error && error.message
+        ? error.message
+        : LIVE_JOB_SOURCE_UNAVAILABLE
+    logLiveJobs({ url, status: null, body: message, jobsCount: null })
+    throw new LiveJobsRequestError(
+      /key|secret|service.role/i.test(message) ? LIVE_JOB_SOURCE_UNAVAILABLE : message,
+      null,
+      true,
+    )
   }
-  return body
+
+  const body = (await response.json().catch(() => null)) as LiveJobsResponse | { error?: string } | null
+  const jobs =
+    body && typeof body === 'object' && 'jobs' in body && Array.isArray((body as { jobs?: unknown }).jobs)
+      ? (body as { jobs: unknown[] }).jobs
+      : null
+  logLiveJobs({ url, status: response.status, body, jobsCount: jobs?.length ?? null })
+
+  if (response.status >= 500) {
+    throw new LiveJobsRequestError(liveJobsErrorMessage(body, LIVE_JOB_SOURCE_UNAVAILABLE), response.status, true)
+  }
+  if (!response.ok) {
+    throw new LiveJobsRequestError(
+      liveJobsErrorMessage(body, `Live jobs request failed (${response.status}).`),
+      response.status,
+      false,
+    )
+  }
+  if (!body || jobs === null) {
+    throw new LiveJobsRequestError('Live jobs response did not include a jobs array.', response.status, false)
+  }
+  return body as LiveJobsResponse
 }
 
 export interface LiveTailorPreviewResult {
@@ -531,6 +602,7 @@ export interface AutoApplyConfigPayload {
 export interface AutoApplyProfilePayload {
   fullName: string
   email: string
+  phone?: string | null
   location: string
   yearsOfExperience: number | null
   workAuthorization: string | null
@@ -683,6 +755,11 @@ export function normalizeAutoApplyResult(body: unknown): AutoApplyRunResult | nu
   return null
 }
 
+const WITHHELD_ERROR_MESSAGES: Record<string, string> = {
+  SUPABASE_NOT_CONFIGURED: "The server's Supabase settings are missing or invalid (SUPABASE_NOT_CONFIGURED).",
+  PROFILE_DATABASE_ERROR: 'The server could not read your profile from Supabase (PROFILE_DATABASE_ERROR).',
+}
+
 export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare the application.'): string {
   if (!body || typeof body !== 'object') return fallback
   const record = body as { code?: unknown; message?: unknown; error?: unknown }
@@ -691,7 +768,8 @@ export function prepareErrorMessage(body: unknown, fallback = 'Could not prepare
   }
   const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
   if (raw && !/key|secret|service.role/i.test(raw)) return raw
-  return fallback
+  const withheld = typeof record.code === 'string' ? WITHHELD_ERROR_MESSAGES[record.code] : undefined
+  return withheld ?? fallback
 }
 
 async function readAutoApplyResult(response: Response, fallback: string): Promise<AutoApplyRunResult> {
@@ -720,14 +798,16 @@ export async function startAutoApplyRequest(payload: {
 }): Promise<AutoApplyRunResult> {
   const response = await fetch(apiUrl('/api/jobs/auto-apply/start'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
     body: JSON.stringify(payload),
   })
   return readAutoApplyResult(response, 'Could not start Auto Apply.')
 }
 
 export async function listAutoApplyRunsRequest(userId: string): Promise<AutoApplyRunResult[]> {
-  const response = await fetch(apiUrl(`/api/jobs/auto-apply?userId=${encodeURIComponent(userId)}`))
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply?userId=${encodeURIComponent(userId)}`), {
+    headers: await sessionHeaders(),
+  })
   const body = (await response.json().catch(() => null)) as { runs?: AutoApplyRunResult[]; error?: string } | null
   if (!response.ok || !body) {
     throw new Error(body?.error && !/key|secret|service.role/i.test(body.error) ? body.error : 'Could not load Auto Apply.')
@@ -736,7 +816,9 @@ export async function listAutoApplyRunsRequest(userId: string): Promise<AutoAppl
 }
 
 export async function getAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
-  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}`))
+  const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}`), {
+    headers: await sessionHeaders(),
+  })
   return readAutoApplyResult(response, 'Could not load Auto Apply.')
 }
 
@@ -836,7 +918,87 @@ export async function resumeAutoApplyRunRequest(runId: string): Promise<AutoAppl
 export async function cancelAutoApplyRunRequest(runId: string): Promise<AutoApplyRunResult> {
   const response = await fetch(apiUrl(`/api/jobs/auto-apply/${encodeURIComponent(runId)}/cancel`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
   })
   return readAutoApplyResult(response, 'Could not cancel Auto Apply.')
+}
+
+export interface ApplyOneStarted {
+  success: true
+  runId: string
+  jobId: string
+  status: string
+}
+
+export interface ApplyOneStatus {
+  runId: string
+  applicationId: string | null
+  jobId: string
+  employer: string
+  title: string
+  applicationSystem: 'Lever' | 'Greenhouse' | 'Other'
+  currentStage: string | null
+  state: string
+  provider: string | null
+  currentUrl: string | null
+  queueState: 'queued' | 'processing' | 'finished' | 'not_consumed'
+  workerState: string
+  browserState: string
+  submissionAttempted: boolean
+  submissionConfirmed: boolean
+  blocker: { code: string; message: string } | null
+  trace: Array<{ stage: string; at: string }>
+  firstMissingStage: string | null
+}
+
+export class ApplyOneError extends Error {
+  code: string | null
+  reason: string | null
+  applicationSystem: string | null
+
+  constructor(code: string | null, message: string, reason: string | null = null, applicationSystem: string | null = null) {
+    super(message)
+    this.name = 'ApplyOneError'
+    this.code = code
+    this.reason = reason
+    this.applicationSystem = applicationSystem
+  }
+}
+
+function applyOneError(body: unknown, fallback: string): ApplyOneError {
+  const record =
+    body && typeof body === 'object'
+      ? (body as { code?: unknown; error?: unknown; message?: unknown; reason?: unknown; applicationSystem?: unknown })
+      : {}
+  const code = typeof record.code === 'string' ? record.code : null
+  const reason = typeof record.reason === 'string' ? record.reason : null
+  const raw = typeof record.message === 'string' ? record.message : typeof record.error === 'string' ? record.error : ''
+  const detail = raw && !/key|secret|service.role|token/i.test(raw) ? raw : fallback
+  const label = [code, reason].filter(Boolean).join(': ')
+  return new ApplyOneError(
+    code,
+    label ? `${detail} (${label})` : detail,
+    reason,
+    typeof record.applicationSystem === 'string' ? record.applicationSystem : null,
+  )
+}
+
+export async function applyOneRequest(jobId: string, resumeId?: string | null): Promise<ApplyOneStarted> {
+  const response = await fetch(apiUrl('/api/jobs/apply-one'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
+    body: JSON.stringify(resumeId ? { jobId, resumeId } : { jobId }),
+  })
+  const body = (await response.json().catch(() => null)) as ApplyOneStarted | null
+  if (!response.ok || !body?.runId) throw applyOneError(body, 'Could not start Apply Now.')
+  return body
+}
+
+export async function getApplyOneStatusRequest(runId: string): Promise<ApplyOneStatus> {
+  const response = await fetch(apiUrl(`/api/jobs/apply-one/${encodeURIComponent(runId)}`), {
+    headers: await sessionHeaders(),
+  })
+  const body = (await response.json().catch(() => null)) as ApplyOneStatus | null
+  if (!response.ok || !body?.runId) throw applyOneError(body, 'Could not load the application status.')
+  return body
 }

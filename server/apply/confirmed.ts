@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import type { ServerConfig } from '../config'
 import type { AutoApplyQueueItem } from './types'
@@ -189,13 +189,14 @@ export async function persistConfirmedSubmission(input: {
   item: AutoApplyQueueItem
   provider?: string | null
   config?: ServerConfig
+  client?: SupabaseClient
 }): Promise<ConfirmedApplicationRecord | null> {
   const record = buildConfirmedApplicationRecord(input)
   if (!record) return null
   const existing = findConfirmedApplication(input.userId, input.item)
   if (existing) return existing
   const stored = rememberConfirmedApplication(record)
-  const supabase = database(input.config)
+  const supabase = input.client ?? database(input.config)
   if (!supabase || !isUuidValue(input.userId) || !isUuidValue(stored.jobId) || !isUuidValue(stored.applicationId)) {
     return stored
   }
@@ -289,7 +290,7 @@ export async function persistConfirmedSubmission(input: {
     confirmation_number: stored.confirmationNumber,
     confirmation_text: stored.confirmationText,
     submitted_at: stored.submittedAt,
-    application_url: stored.applicationUrl,
+    application_url: stored.finalUrl || stored.applicationUrl,
   }
   let applicationResult = await supabase.from('applications').upsert(applicationRow, { onConflict: 'id', defaultToNull: false })
   if (applicationResult.error) {

@@ -7,6 +7,10 @@ import './index.css'
 
 applyStoredTheme()
 
+if (import.meta.env.DEV) {
+  void import('./lib/auth-diagnostics').then(({ registerAuthDiagnostics }) => registerAuthDiagnostics())
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>

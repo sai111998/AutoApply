@@ -465,11 +465,27 @@ describe('GET /api/health', () => {
       'greenhouse',
       'lever',
       'ashby',
+      'jsearch',
     ])
     expect(response.body.jobProviders.find((item: { name: string }) => item.name === 'jooble').connectionLabel).toBe(
       'Not configured',
     )
+    expect(response.body.jobProviders.find((item: { name: string }) => item.name === 'jsearch')).toMatchObject({
+      status: 'not_configured',
+      available: false,
+    })
     expect(JSON.stringify(response.body)).not.toContain('test-key')
+  })
+
+  it('reports JSearch as available without returning RAPIDAPI_KEY', async () => {
+    const app = createApp({ config: { ...config, rapidApiKey: 'rapid-secret-value', jsearchEnabled: true } })
+    const response = await request(app).get('/api/health')
+    expect(response.body.jobProviders.find((item: { name: string }) => item.name === 'jsearch')).toMatchObject({
+      status: 'available',
+      available: true,
+      connectionLabel: 'Connected',
+    })
+    expect(JSON.stringify(response.body)).not.toContain('rapid-secret-value')
   })
 })
 

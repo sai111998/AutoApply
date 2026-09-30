@@ -368,7 +368,13 @@ describe('discover aggregation', () => {
       'greenhouse',
       'lever',
       'ashby',
+      'jsearch',
     ])
+    expect(result.providers.find((item) => item.name === 'jsearch')).toMatchObject({
+      status: 'not_configured',
+      available: false,
+      connectionLabel: 'Not configured',
+    })
     expect(result.providers.find((item) => item.name === 'jooble')?.connectionLabel).toBe('Connected')
     expect(result.providers.find((item) => item.name === 'usajobs')?.connectionLabel).toBe('Connected')
     expect(result.providers.find((item) => item.name === 'job-opportunities')?.connectionLabel).toBe('Connected')

@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { defaultAutoApplyConfig } from '../apply/engine'
+import { cancelRun, defaultAutoApplyConfig, listAutoApplyRuns } from '../apply/engine'
 import { emptyCounts, recount, syncRunStatus } from '../apply/counts'
 import { memoryStore, persistRun } from '../apply/store'
 import { saveCandidateProfile } from '../application/candidate-store'
+import { hydrateCandidateStoreFromSupabase } from '../application/candidate-profile'
 import { rememberAutoApplyProfile, rememberQueueResume } from '../extension/profile-store'
 import { touchAgentHeartbeat } from '../automation/heartbeat'
 import type { AutoApplyQueueItem, AutoApplyRun, AutoApplyStartInput } from '../apply/types'
 import type { ServerConfig } from '../config'
 import { evaluateSyntheticJobEligibility } from './eligibility'
 import { persistCampaignQueue, wakeApplicationWorker } from './queue'
-import { createCampaignRecord, getCampaign, persistExecutionState } from './state'
+import { createCampaignRecord, getCampaign, listActiveCampaigns, patchCampaign, persistExecutionState } from './state'
 import { AgentError } from './errors'
 import { isAutoApplySmokeTestEnabled, startSmokeTestCampaign } from './smoke-test'
 
@@ -35,6 +36,27 @@ export function syntheticSliceJobUrl(port = 8787) {
 
 export function logExecution(event: string) {
   console.info(`[AutoApply] ${event}`)
+}
+
+export async function retireLegacyAutoApplyRuns(serverConfig?: ServerConfig, userId?: string): Promise<number> {
+  const runs = userId
+    ? await listAutoApplyRuns(userId, {}, serverConfig)
+    : memoryStore.listAll
+      ? await memoryStore.listAll()
+      : []
+  let retired = 0
+  for (const stored of runs) {
+    if (!['running', 'needs_attention', 'paused'].includes(stored.run.status)) continue
+    await cancelRun(stored.run.id, {}, serverConfig)
+    patchCampaign(stored.run.id, { status: 'cancelled' })
+    retired += 1
+  }
+  for (const campaign of listActiveCampaigns()) {
+    if (userId && campaign.userId !== userId) continue
+    const stored = await memoryStore.get(campaign.runId)
+    if (!stored || stored.run.status === 'cancelled') patchCampaign(campaign.runId, { status: 'cancelled' })
+  }
+  return retired
 }
 
 function createQueuedItem(run: AutoApplyRun, input: AutoApplyStartInput, port: number): AutoApplyQueueItem {
@@ -80,7 +102,7 @@ function createQueuedItem(run: AutoApplyRun, input: AutoApplyStartInput, port: n
   }
 }
 
-export async function startExecutionCampaign(serverConfig: ServerConfig, input: AutoApplyStartInput) {
+export async function startSyntheticSliceCampaign(serverConfig: ServerConfig, input: AutoApplyStartInput) {
   if (isAutoApplySmokeTestEnabled()) {
     return startSmokeTestCampaign(serverConfig, input)
   }
@@ -119,6 +141,7 @@ export async function startExecutionCampaign(serverConfig: ServerConfig, input: 
     resumeText: input.resumeText ?? input.masterResumeText,
     resumeVersionId: input.resumeVersionId,
   })
+  await hydrateCandidateStoreFromSupabase(input.userId, { config: serverConfig })
   rememberAutoApplyProfile(input.userId, input.profile)
   touchAgentHeartbeat({ currentCampaignId: run.id, lastDiscoveryAt: createdAt })
   logExecution('AGENT_STARTED')

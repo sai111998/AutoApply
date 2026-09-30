@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Compass, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -11,12 +11,16 @@ import { useToast } from '@/context/ToastContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import {
   answerAutoApplyItemRequest,
+  applyOneRequest,
   cancelAutoApplyItemRequest,
   cancelAutoApplyRunRequest,
+  getApplyOneStatusRequest,
   getAutoApplyRunRequest,
   getLiveJobRequest,
   listAutoApplyRunsRequest,
   listLiveJobsRequest,
+  LiveJobsRequestError,
+  visibleLiveJobsWarning,
   PREPARE_PERSIST_TIMEOUT_MS,
   pauseAutoApplyRunRequest,
   prepareAutoApplyItemRequest,
@@ -47,6 +51,14 @@ import {
 } from '@/lib/live-job'
 import { matchBandLabel, matchBandTone } from '@/lib/match-band'
 import { DEFAULT_AUTO_APPLY } from '@/lib/auto-apply-defaults'
+import {
+  applyOneDebugFromError,
+  applyOneDebugFromStatus,
+  applyOneOutcome,
+  applicationSystemForUrl,
+  waitForApplyOneOutcome,
+  type ApplyOneDebug,
+} from '@/lib/one-click-apply'
 
 const US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
@@ -108,8 +120,41 @@ function SkillLine({ label, skills }: { label: string; skills: string[] }) {
   )
 }
 
-function ApplyNowLink({ href, className = '' }: { href: string | null; className?: string }) {
-  if (!href) {
+function ApplyNowDebug({ debug }: { debug: ApplyOneDebug }) {
+  const rows: Array<[string, string]> = [
+    ['Employer', debug.employer],
+    ['Job title', debug.title],
+    ['Application system', debug.applicationSystem],
+    ['Current stage', debug.stage],
+    ['Final status', debug.status],
+    ['Failure reason', debug.failure || '—'],
+  ]
+  return (
+    <dl className="mt-3 grid gap-1 text-xs text-muted sm:grid-cols-2">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt className="inline font-semibold text-charcoal">{label}: </dt>
+          <dd className="inline break-words">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function ApplyNowButton({
+  canApply,
+  applying,
+  busy,
+  onApply,
+  className = '',
+}: {
+  canApply: boolean
+  applying: boolean
+  busy: boolean
+  onApply: () => void
+  className?: string
+}) {
+  if (!canApply) {
     return (
       <Button type="button" disabled>
         Apply Now
@@ -117,14 +162,14 @@ function ApplyNowLink({ href, className = '' }: { href: string | null; className
     )
   }
   return (
-    <a
-      className={`inline-flex items-center justify-center rounded-xl bg-olive px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgb(85,99,56,0.16)] transition hover:bg-olive-dark ${className}`}
-      href={href}
-      target="_blank"
-      rel="noreferrer"
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center rounded-xl bg-olive px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgb(85,99,56,0.16)] transition hover:bg-olive-dark disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+      onClick={onApply}
+      disabled={busy}
     >
-      Apply Now
-    </a>
+      {applying ? 'Applying…' : 'Apply Now'}
+    </button>
   )
 }
 
@@ -138,6 +183,7 @@ export function JobDiscoveryPage() {
     savedJobIds,
     saveDiscoveredJob,
     syncAutoApplyApplication,
+    refreshAnalyses,
     masterResume,
     resumes,
     loading: workspaceLoading,
@@ -156,6 +202,7 @@ export function JobDiscoveryPage() {
   const [sort, setSort] = useState<LiveJobSort>('match')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sourceUnavailable, setSourceUnavailable] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
   const [listed, setListed] = useState<DiscoveredJobResult[] | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -177,12 +224,18 @@ export function JobDiscoveryPage() {
   const [autoRun, setAutoRun] = useState<AutoApplyRun | null>(null)
   const [autoItems, setAutoItems] = useState<AutoApplyQueueItem[]>([])
   const [autoAnswers, setAutoAnswers] = useState<Record<string, string>>({})
+  const [applyingJobId, setApplyingJobId] = useState<string | null>(null)
+  const [applyDebug, setApplyDebug] = useState<ApplyOneDebug | null>(null)
+  const applyPolling = useRef<AbortController | null>(null)
+
+  useEffect(() => () => applyPolling.current?.abort(), [])
 
   const visibleJobs = useMemo(() => (listed ? sortDiscoveredJobs(listed, sort, query) : null), [listed, query, sort])
 
   async function onSearch() {
     setLoading(true)
     setError(null)
+    setSourceUnavailable(false)
     setWarning(null)
     try {
       const response = await listLiveJobsRequest({
@@ -202,12 +255,19 @@ export function JobDiscoveryPage() {
       })
       const rows = sortDiscoveredJobs(response.jobs.map(normalizeListedJob), sort, query)
       setListed(rows)
-      setWarning(response.warning?.message ?? null)
+      setSourceUnavailable(false)
+      setWarning(visibleLiveJobsWarning(response.warning?.message))
       if (!rows.length) setExpandedId(null)
     } catch (searchError) {
       setListed([])
       setExpandedId(null)
-      setError(searchError instanceof Error ? searchError.message : 'Live job source temporarily unavailable.')
+      if (searchError instanceof LiveJobsRequestError) {
+        setSourceUnavailable(searchError.sourceUnavailable)
+        setError(searchError.message)
+      } else {
+        setSourceUnavailable(false)
+        setError(searchError instanceof Error ? searchError.message : 'Could not load live jobs.')
+      }
     } finally {
       setLoading(false)
     }
@@ -260,6 +320,7 @@ export function JobDiscoveryPage() {
     return {
       fullName: profile.fullName || user?.fullName || '',
       email: profile.email || user?.email || '',
+      phone: profile.phone || '',
       location: profile.location,
       yearsOfExperience: profile.yearsOfExperience ?? null,
       workAuthorization: profile.workAuthorization,
@@ -285,6 +346,41 @@ export function JobDiscoveryPage() {
       notify(saveError instanceof Error ? saveError.message : 'Could not save the job.', 'error')
     } finally {
       setSavingId(null)
+    }
+  }
+
+  async function onApplyNow(job: DiscoveredJobResult) {
+    if (!user || applyingJobId) return
+    setApplyingJobId(job.id)
+    setApplyDebug({
+      jobId: job.id,
+      employer: job.company || 'Unknown company',
+      title: job.title,
+      applicationSystem: applicationSystemForUrl(job.jobUrl || job.url),
+      stage: 'START',
+      status: 'starting',
+      failure: null,
+    })
+    const polling = new AbortController()
+    applyPolling.current = polling
+    try {
+      const started = await applyOneRequest(job.id, resume?.id ?? null)
+      notify(`Applying to ${job.title} at ${job.company || 'the employer'}…`, 'info')
+      const status = await waitForApplyOneOutcome(started.runId, getApplyOneStatusRequest, {
+        signal: polling.signal,
+        onStatus: (next) => setApplyDebug(applyOneDebugFromStatus(next)),
+      })
+      setApplyDebug(applyOneDebugFromStatus(status))
+      const outcome = applyOneOutcome(status, job)
+      notify(outcome.message, outcome.tone)
+      if (status.submissionConfirmed) await refreshAnalyses()
+    } catch (applyError) {
+      if (applyError instanceof DOMException && applyError.name === 'AbortError') return
+      setApplyDebug(applyOneDebugFromError(applyError, job))
+      notify(applyError instanceof Error ? applyError.message : 'Could not start Apply Now.', 'error')
+    } finally {
+      if (applyPolling.current === polling) applyPolling.current = null
+      setApplyingJobId(null)
     }
   }
 
@@ -352,7 +448,7 @@ export function JobDiscoveryPage() {
   async function onUseCurrentResume() {
     if (!reviewing) return
     await onSave(reviewing)
-    notify('Current resume kept. Open Apply Now to continue on the employer site.', 'success')
+    notify('Current resume kept. Click Apply Now to apply with it.', 'success')
   }
 
   async function onTailorResume() {
@@ -830,7 +926,11 @@ export function JobDiscoveryPage() {
 
       {error && (
         <div className="mt-4">
-          <ErrorState title="Live job source temporarily unavailable." description={error} onRetry={() => void onSearch()} />
+          <ErrorState
+            title={sourceUnavailable ? 'Live job source temporarily unavailable.' : 'Could not load live jobs.'}
+            description={error}
+            onRetry={() => void onSearch()}
+          />
         </div>
       )}
 
@@ -870,7 +970,7 @@ export function JobDiscoveryPage() {
         {!loading &&
           visibleJobs?.map((job) => {
             const match = liveMatch(job)
-            const href = employerApplyHref(job)
+            const canApply = Boolean(employerApplyHref(job))
             const expanded = expandedId === job.id
             return (
               <Card key={job.id} className="p-5">
@@ -891,7 +991,12 @@ export function JobDiscoveryPage() {
                   <SkillLine label="Missing" skills={topSkills(match.missingSkills)} />
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <ApplyNowLink href={href} />
+                  <ApplyNowButton
+                    canApply={canApply}
+                    applying={applyingJobId === job.id}
+                    busy={applyingJobId !== null}
+                    onApply={() => void onApplyNow(job)}
+                  />
                   <Button type="button" variant="secondary" onClick={() => void onReview(job)}>
                     Review & Apply
                   </Button>
@@ -902,6 +1007,7 @@ export function JobDiscoveryPage() {
                     {expanded ? 'Hide Details' : 'View Details'}
                   </Button>
                 </div>
+                {applyDebug?.jobId === job.id ? <ApplyNowDebug debug={applyDebug} /> : null}
                 {expanded && (
                   <div className="mt-4 rounded-2xl border border-line bg-canvas px-4 py-3">
                     {hydratingId === job.id && !job.description ? (
@@ -1004,8 +1110,18 @@ export function JobDiscoveryPage() {
               <Button type="button" variant="secondary" onClick={() => void onTailorResume()} disabled={!resume?.parsedText?.trim()}>
                 Tailor Resume
               </Button>
-              <ApplyNowLink href={employerApplyHref(reviewing)} />
+              <ApplyNowButton
+                canApply={Boolean(employerApplyHref(reviewing))}
+                applying={applyingJobId === reviewing.id}
+                busy={applyingJobId !== null}
+                onApply={() => void onApplyNow(reviewing)}
+              />
             </div>
+            {applyDebug?.jobId === reviewing.id ? (
+              <div className="border-t border-line px-6 pb-4">
+                <ApplyNowDebug debug={applyDebug} />
+              </div>
+            ) : null}
           </aside>
         </div>
       )}

@@ -134,7 +134,7 @@ async function main() {
       'Cannot apply SQL from this environment. Set SUPABASE_ACCESS_TOKEN and VITE_SUPABASE_URL (or SUPABASE_PROJECT_REF).',
     )
     console.error(
-      'Until then, paste supabase/migrations/001_initial_schema.sql through 006_job_discovery.sql into the Supabase SQL Editor and run them.',
+      'Until then, paste supabase/migrations/001_initial_schema.sql through 011_application_profile.sql into the Supabase SQL Editor and run them.',
     )
     process.exit(2)
   }
@@ -146,6 +146,11 @@ async function main() {
     'supabase/migrations/004_resume_version_status.sql',
     'supabase/migrations/005_application_selected_resume.sql',
     'supabase/migrations/006_job_discovery.sql',
+    'supabase/migrations/007_job_seniority.sql',
+    'supabase/migrations/008_auto_apply.sql',
+    'supabase/migrations/009_confirmed_submissions.sql',
+    'supabase/migrations/010_answer_library.sql',
+    'supabase/migrations/011_application_profile.sql',
   ]
   for (const relative of migrations) {
     const sqlPath = path.resolve(process.cwd(), relative)

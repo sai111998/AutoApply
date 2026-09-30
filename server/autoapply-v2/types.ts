@@ -1,0 +1,176 @@
+import type { AutoApplyConfig } from '../apply/types'
+
+export const V2_RUN_STATUSES = [
+  'queued',
+  'opening',
+  'application_page',
+  'filling',
+  'uploading_resume',
+  'navigating',
+  'ready_to_submit',
+  'submitting',
+  'submitted',
+  'needs_user_input',
+  'captcha_required',
+  'login_required',
+  'mfa_required',
+  'unsupported',
+  'failed',
+  'submission_uncertain',
+  'cancelled',
+] as const
+
+export type V2RunStatus = (typeof V2_RUN_STATUSES)[number]
+
+export const V2_TERMINAL_STATUSES: ReadonlySet<V2RunStatus> = new Set([
+  'submitted',
+  'needs_user_input',
+  'captcha_required',
+  'login_required',
+  'mfa_required',
+  'unsupported',
+  'failed',
+  'submission_uncertain',
+  'cancelled',
+])
+
+export type V2RunSource = 'auto-apply' | 'one-click' | 'synthetic-test'
+
+export const V2_STAGES = [
+  'START',
+  'JOB_LOADED',
+  'APPLICATION_URL_OPENED',
+  'PAGE_CLASSIFIED',
+  'APPLY_FORM_FOUND',
+  'BASIC_FIELDS_DETECTED',
+  'BASIC_FIELDS_FILLED',
+  'RESUME_INPUT_FOUND',
+  'RESUME_UPLOADED',
+  'SUBMIT_BUTTON_FOUND',
+  'SUBMIT_CLICKED',
+  'CONFIRMATION_DETECTED',
+  'APPLICATION_PERSISTED',
+] as const
+
+export type V2Stage = (typeof V2_STAGES)[number]
+
+// Milestones recorded alongside the flow stages; they are logged but not part of the Apply Now flow.
+export type V2TraceEvent =
+  | V2Stage
+  | 'PROFILE_LOADED'
+  | 'RESUME_LOADED'
+  | 'QUEUED'
+  | 'WORKER_STARTED'
+  | 'BROWSER_STARTED'
+  | 'APPLY_FOUND'
+  | 'APPLY_CLICKED'
+
+export interface V2TraceEntry {
+  stage: V2TraceEvent
+  at: string
+}
+
+export type V2PageState =
+  | 'JOB_PAGE'
+  | 'APPLICATION_PAGE'
+  | 'LOGIN_PAGE'
+  | 'CAPTCHA_PAGE'
+  | 'MFA_PAGE'
+  | 'ERROR_PAGE'
+  | 'UNKNOWN'
+
+export type V2Provider =
+  | 'workday'
+  | 'greenhouse'
+  | 'lever'
+  | 'ashby'
+  | 'icims'
+  | 'smartrecruiters'
+  | 'workable'
+  | 'generic'
+  | 'unknown'
+
+export interface V2JobRef {
+  id: string
+  title: string
+  company: string
+  location: string | null
+  description: string | null
+  applicationUrl: string
+}
+
+export interface V2QueueItem {
+  runId: string
+  source: V2RunSource
+  campaignConfig: AutoApplyConfig | null
+  jobsFound: number
+  jobId: string
+  title: string
+  company: string
+  location: string | null
+  applicationUrl: string
+  initialUrl: string | null
+  finalUrl: string | null
+  redirectChain: string[]
+  resumeVersionId: string
+  resumeVersionName: string
+  userId: string
+  status: V2RunStatus
+  failureReason: string | null
+  pageState: V2PageState | null
+  provider: V2Provider | null
+  fieldsDetected: string[]
+  fieldsFilled: string[]
+  resumeUploaded: boolean
+  submitClicked: boolean
+  confirmationNumber: string | null
+  confirmationText: string | null
+  confirmationEvidence: string[]
+  submittedAt: string | null
+  jdSnapshot: string | null
+  applicationRecordId: string | null
+  persistedJobId: string | null
+  submittedResumeVersionId: string | null
+  submittedResumeText: string | null
+  trace?: V2TraceEntry[]
+  persistenceError?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface V2Resume {
+  versionId: string
+  versionName: string
+  fileName: string
+  mimeType: string
+  buffer: Buffer
+  text: string
+}
+
+export interface V2DetectedField {
+  key: string
+  label: string
+  required: boolean
+  kinds: string[]
+}
+
+export interface V2Confirmation {
+  attempted: boolean
+  confirmed: boolean
+  confirmationNumber: string | null
+  confirmationText: string | null
+  finalUrl: string | null
+  evidence: string[]
+}
+
+export interface V2Session {
+  runId: string
+  jobId: string
+  userId: string
+  resumeVersionId: string
+  currentUrl: string | null
+  provider: V2Provider | null
+  state: V2RunStatus
+  step: number
+  updatedAt: string
+}
