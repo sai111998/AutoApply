@@ -104,6 +104,7 @@ export interface V2QueueItem {
   source: V2RunSource
   campaignConfig: AutoApplyConfig | null
   jobsFound: number
+  skippedJobIds?: string[]
   jobId: string
   title: string
   company: string

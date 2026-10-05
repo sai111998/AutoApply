@@ -6,6 +6,7 @@ import { isProfileAccessError, supabaseDataClient } from '../application/supabas
 import { getServerConfig } from '../config'
 import { readRuntimeJson, writeRuntimeJson } from '../automation/runtime-io'
 import { runV2Application, type V2AgentResult } from './agent'
+import { continueUnsupportedCampaign } from './campaign'
 import { isV2BrowserAvailable, launchV2Browser, type V2BrowserHandle } from './browser'
 import { isV2Error, V2Error } from './errors'
 import { takeV2RunInputs } from './inputs'
@@ -218,6 +219,24 @@ async function processV2Run(runId: string): Promise<V2QueueItem | null> {
     )
   }
   await handle.close().catch(() => null)
+  if (result.status === 'unsupported') {
+    const continued = continueUnsupportedCampaign(run)
+    if (continued) {
+      processedRunIds.delete(runId)
+      createV2Session({
+        runId,
+        jobId: continued.jobId,
+        userId: run.userId,
+        resumeVersionId: run.resumeVersionId,
+      })
+      logV2(
+        'JOB_SKIPPED',
+        { jobId: run.jobId, reason: result.failureReason, nextJobId: continued.jobId },
+        v2LogChannel(run.source),
+      )
+      return continued
+    }
+  }
   updateV2Run(runId, {
     status: result.status,
     failureReason: result.failureReason,
