@@ -16,11 +16,12 @@ import { useAutomationRuntimeForTests } from '../automation/runtime-io'
 import { fakeSessionToken, installFakeSupabase, uninstallFakeSupabase } from '../testing/fake-supabase'
 import { classifyV2Page, detectV2Provider } from './agent'
 import { firstValidV2Job, isV2JobAlreadyApplied, loadV2Job, validateV2ApplicationUrl } from './application'
-import { startOneClickApply, startV2AutoApplyCampaign, toAutoApplyRunResult, V2_START_ONE_CONFIG } from './campaign'
+import { continueUnsupportedCampaign, startOneClickApply, startV2AutoApplyCampaign, toAutoApplyRunResult, V2_START_ONE_CONFIG } from './campaign'
 import { detectV2Confirmation } from './confirmation'
 import { V2_ERROR_CODES } from './errors'
 import { classifyV2Field, mapV2Fields, type V2FieldDescriptor } from './fields'
 import { V2_APPLY_LABEL, V2_APPLY_MANUAL_LABEL, V2_NEXT_LABEL, V2_SUBMIT_LABEL } from './navigation'
+import { resetV2RunInputsForTests } from './inputs'
 import { loadV2Profile, requireV2Profile } from './profile'
 import { cancelV2Run, getV2Run, listV2Runs, resetV2QueueForTests, updateV2Run } from './queue'
 import { loadV2Resume } from './resume'
@@ -30,6 +31,8 @@ import { currentV2Stage, firstMissingV2Stage } from './trace'
 import { V2_STAGES, type V2Stage, type V2TraceEvent } from './types'
 import type { CanonicalCandidateProfile } from '../application/candidate-profile'
 import { persistV2Application, processV2QueueOnce, resetV2WorkerForTests } from './worker'
+import * as agentModule from './agent'
+import * as browserModule from './browser'
 
 const USER_ID = '33333333-3333-4333-8333-333333333333'
 const OTHER_USER_ID = '55555555-5555-4555-8555-555555555555'
@@ -166,6 +169,7 @@ beforeEach(() => {
   resetV2QueueForTests()
   resetV2SessionsForTests()
   resetV2WorkerForTests()
+  resetV2RunInputsForTests()
   clearAutoApplyMemory()
 })
 
@@ -523,6 +527,122 @@ describe('V2 production Start Auto Apply', () => {
       resumeVersionId: RESUME_ID,
     })
     expect(getV2Run(started.campaignId)?.source).toBe('auto-apply')
+  })
+
+  it('skips a complex form and queues the next live job in the same Auto Apply run', async () => {
+    seedAccount()
+    rememberLiveJobs([
+      liveJob({
+        id: 'gitlab',
+        title: 'Staff Frontend Engineer',
+        company: 'GitLab',
+        fetchedAt: '2026-09-30T00:00:00.000Z',
+        jobUrl: 'https://job-boards.greenhouse.io/gitlab/jobs/1',
+      }),
+      liveJob({
+        id: 'next-job',
+        title: 'Backend Engineer',
+        company: 'Globex',
+        fetchedAt: '2026-09-29T00:00:00.000Z',
+        jobUrl: 'https://jobs.example.com/next/apply',
+      }),
+    ])
+    const started = await startV2AutoApplyCampaign({
+      userId: USER_ID,
+      resumeId: RESUME_ID,
+      resumeVersionId: RESUME_ID,
+      resumeText: 'resume',
+      masterResumeText: 'resume',
+      profile: startProfile,
+      config: uiConfig,
+    })
+    const first = getV2Run(started.campaignId)
+    expect(first?.jobId).toBe('gitlab')
+    const continued = continueUnsupportedCampaign(first!)
+    expect(continued).toMatchObject({
+      jobId: 'next-job',
+      title: 'Backend Engineer',
+      company: 'Globex',
+      status: 'queued',
+      failureReason: null,
+      skippedJobIds: ['gitlab'],
+    })
+    const visible = toAutoApplyRunResult(continued!)
+    expect(visible.run.status).toBe('running')
+    expect(visible.run.counts.skipped).toBe(1)
+    expect(visible.run.counts.blocked).toBe(0)
+    expect(visible.items[0]).toMatchObject({ title: 'Backend Engineer', applicationStatus: 'queued' })
+    expect(continueUnsupportedCampaign(continued!)).toBeNull()
+    const blocked = toAutoApplyRunResult(updateV2Run(started.campaignId, { status: 'unsupported', failureReason: 'UNSUPPORTED_COMPLEX: LARGE_QUESTIONNAIRE: 8 required questions cannot be answered from the profile.' })!)
+    expect(blocked.run.counts.blocked).toBe(1)
+    expect(blocked.run.counts.skipped).toBe(2)
+    expect(blocked.items[0]?.applicationStatus).toBe('automation_blocked')
+    const oneClick = updateV2Run(started.campaignId, { source: 'one-click', status: 'queued', jobId: 'gitlab', skippedJobIds: [] })
+    expect(continueUnsupportedCampaign(oneClick!)).toBeNull()
+  })
+
+  it('keeps the loaded profile when a complex form is skipped and the next job starts', async () => {
+    seedAccount()
+    rememberLiveJobs([
+      liveJob({
+        id: 'gitlab',
+        title: 'Staff Frontend Engineer',
+        company: 'GitLab',
+        fetchedAt: '2026-09-30T00:00:00.000Z',
+        jobUrl: 'https://job-boards.greenhouse.io/gitlab/jobs/1',
+      }),
+      liveJob({
+        id: 'senior-frontend',
+        title: 'Senior Frontend Engineer',
+        company: 'GitLab',
+        fetchedAt: '2026-09-29T00:00:00.000Z',
+        jobUrl: 'https://job-boards.greenhouse.io/gitlab/jobs/2',
+      }),
+    ])
+    const browser = vi.spyOn(browserModule, 'launchV2Browser').mockResolvedValue({
+      browser: {} as never,
+      context: {} as never,
+      page: {} as never,
+      close: async () => undefined,
+    })
+    const agent = vi.spyOn(agentModule, 'runV2Application').mockResolvedValue({
+      status: 'unsupported',
+      failureReason: 'UNSUPPORTED_COMPLEX: LARGE_QUESTIONNAIRE: 8 required questions cannot be answered from the profile.',
+      pageState: 'APPLICATION_PAGE',
+      provider: 'greenhouse',
+      finalUrl: 'https://job-boards.greenhouse.io/gitlab/jobs/1',
+      redirectChain: [],
+      fieldsDetected: [],
+      fieldsFilled: [],
+      resumeUploaded: false,
+      submitClicked: false,
+      confirmation: null,
+    })
+    try {
+      const started = await startV2AutoApplyCampaign({
+        userId: USER_ID,
+        resumeId: RESUME_ID,
+        resumeVersionId: RESUME_ID,
+        resumeText: 'resume',
+        masterResumeText: 'resume',
+        profile: startProfile,
+        config: uiConfig,
+      })
+      const first = await processV2QueueOnce()
+      expect(first).toMatchObject({ jobId: 'senior-frontend', status: 'queued', skippedJobIds: ['gitlab'] })
+      const second = await processV2QueueOnce()
+      expect(second?.failureReason ?? '').not.toMatch(/SUPABASE_NOT_CONFIGURED/)
+      expect(second).toMatchObject({
+        jobId: 'senior-frontend',
+        status: 'unsupported',
+        failureReason: 'UNSUPPORTED_COMPLEX: LARGE_QUESTIONNAIRE: 8 required questions cannot be answered from the profile.',
+      })
+      expect(browser).toHaveBeenCalledTimes(2)
+      expect(agent).toHaveBeenCalledTimes(2)
+    } finally {
+      browser.mockRestore()
+      agent.mockRestore()
+    }
   })
 
   it('refuses to start without a complete profile or any real live job', async () => {

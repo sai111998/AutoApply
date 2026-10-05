@@ -15,7 +15,7 @@ import { isV2Error, V2Error } from './errors'
 import { rememberV2RunInputs } from './inputs'
 import { logV2, v2LogChannel } from './log'
 import { requireV2Profile, v2Access } from './profile'
-import { activeV2Run, createV2Run } from './queue'
+import { activeV2Run, createV2Run, updateV2Run } from './queue'
 import { loadV2Resume } from './resume'
 import { detectV2Provider, unsupportedV2System, v2ApplicationSystem } from './system'
 import { v2TraceEntry } from './trace'
@@ -221,6 +221,56 @@ export async function startV2AutoApplyCampaign(input: AutoApplyStartInput, acces
   return { campaignId: run.runId, status: 'running' as const, ...toAutoApplyRunResult(run) }
 }
 
+export function nextCampaignJob(run: V2QueueItem): V2JobRef | null {
+  const excluded = new Set([...(run.skippedJobIds ?? []), run.jobId])
+  if (excluded.size > Math.max(run.jobsFound, 1)) return null
+  const liveJobs = listLiveJobSnapshots()
+    .filter((job) => job.provider !== 'synthetic' && job.source !== 'synthetic' && !excluded.has(job.id))
+    .sort((left, right) => (right.fetchedAt ?? '').localeCompare(left.fetchedAt ?? ''))
+  return firstValidV2Job(
+    run.userId,
+    liveJobs.map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      company: entry.company,
+      location: entry.location,
+      description: entry.description,
+      applicationUrl: resolveV2ApplicationUrl(entry) ?? '',
+    })),
+  )
+}
+
+export function continueUnsupportedCampaign(run: V2QueueItem): V2QueueItem | null {
+  if (run.source !== 'auto-apply') return null
+  const next = nextCampaignJob(run)
+  if (!next) return null
+  return updateV2Run(run.runId, {
+    status: 'queued',
+    failureReason: null,
+    skippedJobIds: [...(run.skippedJobIds ?? []), run.jobId],
+    jobId: next.id,
+    title: next.title,
+    company: next.company,
+    location: next.location,
+    applicationUrl: next.applicationUrl,
+    jdSnapshot: next.description,
+    initialUrl: null,
+    finalUrl: null,
+    redirectChain: [],
+    pageState: null,
+    provider: null,
+    fieldsDetected: [],
+    fieldsFilled: [],
+    resumeUploaded: false,
+    submitClicked: false,
+    confirmationNumber: null,
+    confirmationText: null,
+    confirmationEvidence: [],
+    submittedAt: null,
+    trace: [v2TraceEntry('QUEUED')],
+  })
+}
+
 const IN_PROGRESS_STATUSES: ReadonlySet<V2RunStatus> = new Set([
   'opening',
   'application_page',
@@ -277,12 +327,12 @@ export function toAutoApplyRunResult(run: V2QueueItem): { run: AutoApplyRun; ite
     ready: run.status === 'ready_to_submit' ? 1 : 0,
     needsInput: run.status === 'needs_user_input' ? 1 : 0,
     submitted: submitted ? 1 : 0,
-    skipped: run.status === 'unsupported' ? 1 : 0,
+    skipped: (run.skippedJobIds?.length ?? 0) + (run.status === 'unsupported' ? 1 : 0),
     failed: run.status === 'failed' ? 1 : 0,
     queued: run.status === 'queued' ? 1 : 0,
     processing: IN_PROGRESS_STATUSES.has(run.status) ? 1 : 0,
     processed: V2_TERMINAL_STATUSES.has(run.status) && run.status !== 'cancelled' ? 1 : 0,
-    blocked: ['captcha_required', 'login_required', 'mfa_required'].includes(run.status) ? 1 : 0,
+    blocked: ['captcha_required', 'login_required', 'mfa_required', 'unsupported'].includes(run.status) ? 1 : 0,
     captcha: run.status === 'captcha_required' ? 1 : 0,
   }
   const item: AutoApplyQueueItem = {
